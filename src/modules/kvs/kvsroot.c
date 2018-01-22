@@ -145,6 +145,7 @@ struct kvsroot *kvsroot_mgr_create_root (kvsroot_mgr_t *km,
 
     root->flags = flags;
     root->remove = false;
+    root->km = km;
 
     if (zhash_insert (km->roothash, namespace, root) < 0) {
         flux_log_error (km->h, "zhash_insert");

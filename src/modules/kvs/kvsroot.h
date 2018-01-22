@@ -20,6 +20,7 @@ struct kvsroot {
     int watchlist_lastrun_epoch;
     int flags;
     bool remove;
+    kvsroot_mgr_t *km;
 };
 
 /* return -1 on error, 0 on success, 1 on success & to stop iterating */
