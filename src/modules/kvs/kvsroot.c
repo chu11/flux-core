@@ -246,6 +246,81 @@ error:
     return -1;
 }
 
+const char *kvsroot_get_namespace (struct kvsroot *root)
+{
+    return root->namespace;
+}
+
+commit_mgr_t *kvsroot_get_commit_mgr (struct kvsroot *root)
+{
+    return root->cm;
+}
+
+waitqueue_t *kvsroot_get_watchlist (struct kvsroot *root)
+{
+    return root->watchlist;
+}
+
+void kvsroot_set_remove_flag (struct kvsroot *root, bool remove)
+{
+    root->remove = remove;
+}
+
+bool kvsroot_get_remove_flag (struct kvsroot *root)
+{
+    return root->remove;
+}
+
+void kvsroot_set_sequence (struct kvsroot *root, int sequence)
+{
+    root->seq = sequence;
+}
+
+int kvsroot_get_sequence (struct kvsroot *root)
+{
+    return root->seq;
+}
+
+void kvsroot_set_rootref (struct kvsroot *root, const char *rootref)
+{
+    assert (strlen (rootref) < sizeof (blobref_t));
+    strcpy (root->ref, rootref);
+}
+
+const char *kvsroot_get_rootref (struct kvsroot *root)
+{
+    return root->ref;
+}
+
+void kvsroot_set_flags (struct kvsroot *root, int flags)
+{
+    root->flags = flags;
+}
+
+int kvsroot_get_flags (struct kvsroot *root)
+{
+    return root->flags;
+}
+
+void kvsroot_set_watchlist_lastrun_epoch (struct kvsroot *root, int epoch)
+{
+    root->watchlist_lastrun_epoch = epoch;
+}
+
+int kvsroot_get_watchlist_lastrun_epoch (struct kvsroot *root)
+{
+    return root->watchlist_lastrun_epoch;
+}
+
+bool kvsroot_processing_done (struct kvsroot *root)
+{
+    if (!wait_queue_length (root->watchlist)
+        && !commit_mgr_fences_count (root->cm)
+        && !commit_mgr_ready_commit_count (root->cm))
+        return true;
+    return false;
+}
+
 /*
  * vi:tabstop=4 shiftwidth=4 expandtab
  */

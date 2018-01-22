@@ -291,16 +291,15 @@ cleanup:
 static void setroot (kvs_ctx_t *ctx, struct kvsroot *root,
                      const char *rootref, int rootseq)
 {
-    if (rootseq == 0 || rootseq > root->seq) {
-        assert (strlen (rootref) < sizeof (blobref_t));
-        strcpy (root->ref, rootref);
-        root->seq = rootseq;
+    if (rootseq == 0 || rootseq > kvsroot_get_sequence (root)) {
+        kvsroot_set_rootref (root, rootref);
+        kvsroot_set_sequence (root, rootseq);
         /* log error on wait_runqueue(), don't error out.  watchers
          * may miss value change, but will never get older one.
          * Maintains consistency model */
-        if (wait_runqueue (root->watchlist) < 0)
+        if (wait_runqueue (kvsroot_get_watchlist (root)) < 0)
             flux_log_error (ctx->h, "%s: wait_runqueue", __FUNCTION__);
-        root->watchlist_lastrun_epoch = ctx->epoch;
+        kvsroot_set_watchlist_lastrun_epoch (root, ctx->epoch);
     }
 }
 
@@ -360,7 +359,7 @@ static void getroot_completion (flux_future_t *f, void *arg)
     /* if root now in process of being removed, error will be handled via
      * the original callback
      */
-    if (!root->remove)
+    if (!kvsroot_get_remove_flag (root))
         setroot (ctx, root, ref, rootseq);
 
     msg_cb_handler_call (mcb);
@@ -723,7 +722,8 @@ static int setroot_event_send (kvs_ctx_t *ctx, struct kvsroot *root,
     if (event_includes_rootdir) {
         struct cache_entry *entry;
 
-        if ((entry = cache_lookup (ctx->cache, root->ref, ctx->epoch)))
+        if ((entry = cache_lookup (ctx->cache, kvsroot_get_rootref (root),
+                                   ctx->epoch)))
             root_dir = cache_entry_get_treeobj (entry);
         assert (root_dir != NULL); // root entry is always in cache on rank 0
     }
@@ -736,16 +736,17 @@ static int setroot_event_send (kvs_ctx_t *ctx, struct kvsroot *root,
         root_dir = nullobj;
     }
 
-    if (asprintf (&setroot_topic, "kvs.setroot.%s", root->namespace) < 0) {
+    if (asprintf (&setroot_topic, "kvs.setroot.%s",
+                  kvsroot_get_namespace (root)) < 0) {
         saved_errno = ENOMEM;
         flux_log_error (ctx->h, "%s: asprintf", __FUNCTION__);
         goto done;
     }
 
     if (!(msg = flux_event_pack (setroot_topic, "{ s:s s:i s:s s:O s:O }",
-                                 "namespace", root->namespace,
-                                 "rootseq", root->seq,
-                                 "rootref", root->ref,
+                                 "namespace", kvsroot_get_namespace (root),
+                                 "rootseq", kvsroot_get_sequence (root),
+                                 "rootref", kvsroot_get_rootref (root),
                                  "names", names,
                                  "rootdir", root_dir))) {
         saved_errno = errno;
@@ -853,7 +854,7 @@ static void commit_apply (commit_t *c)
     root = kvsroot_mgr_lookup_root (ctx->km, namespace);
     assert (root);
 
-    if (root->remove) {
+    if (kvsroot_get_remove_flag (root)) {
         flux_log (ctx->h, LOG_DEBUG, "%s: namespace %s removed", __FUNCTION__,
                   namespace);
         errnum = ENOTSUP;
@@ -863,9 +864,8 @@ static void commit_apply (commit_t *c)
     if ((errnum = commit_get_aux_errnum (c)))
         goto done;
 
-    if ((ret = commit_process (c,
-                               ctx->epoch,
-                               root->ref)) == COMMIT_PROCESS_ERROR) {
+    ret = commit_process (c, ctx->epoch, kvsroot_get_rootref (root));
+    if (ret == COMMIT_PROCESS_ERROR) {
         errnum = commit_get_errnum (c);
         goto done;
     }
@@ -927,8 +927,9 @@ static void commit_apply (commit_t *c)
     /* else ret == COMMIT_PROCESS_FINISHED */
 
     /* This is the transaction that finalizes the commit by replacing
-     * root->ref with newroot, incrementing root->seq, and sending out
-     * the setroot event for "eventual consistency" of other nodes.
+     * root reference with newroot, incrementing root sequence number,
+     * and sending out the setroot event for "eventual consistency" of
+     * other nodes.
      */
 done:
     if (errnum == 0) {
@@ -940,21 +941,22 @@ done:
             flux_log (ctx->h, LOG_DEBUG, "aggregated %d commits (%d ops)",
                       count, opcount);
         }
-        setroot (ctx, root, commit_get_newroot_ref (c), root->seq + 1);
+        setroot (ctx, root, commit_get_newroot_ref (c),
+                 kvsroot_get_sequence (root) + 1);
         setroot_event_send (ctx, root, fence_get_json_names (f));
     } else {
         fence_t *f = commit_get_fence (c);
         flux_log (ctx->h, LOG_ERR, "commit failed: %s",
                   flux_strerror (errnum));
-        error_event_send (ctx, root->namespace, fence_get_json_names (f),
-                          errnum);
+        error_event_send (ctx, kvsroot_get_namespace (root),
+                          fence_get_json_names (f), errnum);
     }
     wait_destroy (wait);
 
     /* Completed: remove from 'ready' list.
      * N.B. fence_t remains in the fences hash until event is received.
      */
-    commit_mgr_remove_commit (root->cm, c);
+    commit_mgr_remove_commit (kvsroot_get_commit_mgr (root), c);
     return;
 
 stall:
@@ -969,7 +971,7 @@ static int commit_prep_root_cb (struct kvsroot *root, void *arg)
 {
     struct kvs_cb_data *cbd = arg;
 
-    if (commit_mgr_commits_ready (root->cm)) {
+    if (commit_mgr_commits_ready (kvsroot_get_commit_mgr (root))) {
         cbd->ready = true;
         return 1;
     }
@@ -995,14 +997,15 @@ static void commit_prep_cb (flux_reactor_t *r, flux_watcher_t *w,
 static int commit_check_root_cb (struct kvsroot *root, void *arg)
 {
     struct kvs_cb_data *cbd = arg;
+    commit_mgr_t *cm = kvsroot_get_commit_mgr (root);
     commit_t *c;
 
-    if ((c = commit_mgr_get_ready_commit (root->cm))) {
+    if ((c = commit_mgr_get_ready_commit (cm))) {
         if (cbd->ctx->commit_merge) {
             /* if merge fails, set errnum in commit_t, let
              * commit_apply() handle error handling.
              */
-            if (commit_mgr_merge_ready_commits (root->cm) < 0)
+            if (commit_mgr_merge_ready_commits (cm) < 0)
                 commit_set_aux_errnum (c, errno);
         }
 
@@ -1083,46 +1086,45 @@ static int heartbeat_root_cb (struct kvsroot *root, void *arg)
 {
     kvs_ctx_t *ctx = arg;
 
-    if (root->remove) {
-        if (!wait_queue_length (root->watchlist)
-            && !commit_mgr_fences_count (root->cm)
-            && !commit_mgr_ready_commit_count (root->cm)) {
+    if (kvsroot_get_remove_flag (root)) {
+        if (kvsroot_processing_done (root)) {
 
-            if (event_unsubscribe (ctx, root->namespace) < 0)
+            if (event_unsubscribe (ctx, kvsroot_get_namespace (root)) < 0)
                 flux_log_error (ctx->h, "%s: event_unsubscribe",
                                 __FUNCTION__);
 
-            if (kvsroot_mgr_remove_root (ctx->km, root->namespace) < 0)
+            if (kvsroot_mgr_remove_root (ctx->km,
+                                         kvsroot_get_namespace (root)) < 0)
                 flux_log_error (ctx->h, "%s: kvsroot_mgr_remove_root",
                                 __FUNCTION__);
         }
     }
     else if (ctx->rank != 0
-             && !root->remove
-             && strcasecmp (root->namespace, KVS_PRIMARY_NAMESPACE)
-             && (ctx->epoch - root->watchlist_lastrun_epoch) > max_namespace_age
-             && !wait_queue_length (root->watchlist)
-             && !commit_mgr_fences_count (root->cm)
-             && !commit_mgr_ready_commit_count (root->cm)) {
+             && !kvsroot_get_remove_flag (root)
+             && strcasecmp (kvsroot_get_namespace (root), KVS_PRIMARY_NAMESPACE)
+             && (ctx->epoch - kvsroot_get_watchlist_lastrun_epoch (root))
+                  > max_namespace_age
+             && kvsroot_processing_done (root)) {
         /* remove a root if it not the primary one, has timed out
          * on a follower node, and it does not have any watchers,
          * and no one is trying to commit/change something.
          */
-        start_root_remove (ctx, root->namespace);
+        start_root_remove (ctx, kvsroot_get_namespace (root));
     }
     else {
         /* "touch" objects involved in watched keys */
-        if (wait_queue_length (root->watchlist) > 0
-            && (ctx->epoch - root->watchlist_lastrun_epoch) > max_lastuse_age) {
+        if (wait_queue_length (kvsroot_get_watchlist (root)) > 0
+            && (ctx->epoch - kvsroot_get_watchlist_lastrun_epoch (root))
+                 > max_lastuse_age) {
             /* log error on wait_runqueue(), don't error out.  watchers
              * may miss value change, but will never get older one.
              * Maintains consistency model */
-            if (wait_runqueue (root->watchlist) < 0)
+            if (wait_runqueue (kvsroot_get_watchlist (root)) < 0)
                 flux_log_error (ctx->h, "%s: wait_runqueue", __FUNCTION__);
-            root->watchlist_lastrun_epoch = ctx->epoch;
+            kvsroot_set_watchlist_lastrun_epoch (root, ctx->epoch);
         }
         /* "touch" root */
-        (void)cache_lookup (ctx->cache, root->ref, ctx->epoch);
+        (void)cache_lookup (ctx->cache, kvsroot_get_rootref (root), ctx->epoch);
     }
 
     return 0;
@@ -1218,7 +1220,8 @@ static void get_request_cb (flux_t *h, flux_msg_handler_t *mh,
         if (!(lh = lookup_create (ctx->cache,
                                   ctx->epoch,
                                   namespace,
-                                  root_ref ? root_ref : root->ref,
+                                  root_ref ? root_ref :
+                                    kvsroot_get_rootref (root),
                                   key,
                                   h,
                                   flags)))
@@ -1363,7 +1366,7 @@ static void watch_request_cb (flux_t *h, flux_msg_handler_t *mh,
         if (!(lh = lookup_create (ctx->cache,
                                   ctx->epoch,
                                   namespace,
-                                  root->ref,
+                                  kvsroot_get_rootref (root),
                                   key,
                                   h,
                                   flags)))
@@ -1463,7 +1466,7 @@ static void watch_request_cb (flux_t *h, flux_msg_handler_t *mh,
         out = true;
 
     /* No reply sent or this is a multi-response watch request.
-     * Arrange to wait on root->watchlist for each new commit.
+     * Arrange to wait on root watchlist for each new commit.
      * Reconstruct the payload with 'first' flag clear, and updated value.
      */
     if (!out || !(flags & KVS_WATCH_ONCE)) {
@@ -1482,7 +1485,7 @@ static void watch_request_cb (flux_t *h, flux_msg_handler_t *mh,
         if (!(watcher = wait_create_msg_handler (h, mh, cpy, ctx,
                                                  watch_request_cb)))
             goto done;
-        if (wait_addqueue (root->watchlist, watcher) < 0) {
+        if (wait_addqueue (kvsroot_get_watchlist (root), watcher) < 0) {
             saved_errno = errno;
             wait_destroy (watcher);
             errno = saved_errno;
@@ -1586,7 +1589,7 @@ static void unwatch_request_cb (flux_t *h, flux_msg_handler_t *mh,
      * but cache_wait_destroy_msg() fails, it's not that big of a
      * deal.  The current state is still maintained.
      */
-    if (wait_destroy_msg (root->watchlist, unwatch_cmp, &p) < 0) {
+    if (wait_destroy_msg (kvsroot_get_watchlist (root), unwatch_cmp, &p) < 0) {
         errnum = errno;
         flux_log_error (h, "%s: wait_destroy_msg", __FUNCTION__);
         goto done;
@@ -1619,6 +1622,7 @@ static void finalize_fences_bynames (kvs_ctx_t *ctx, struct kvsroot *root,
     int i, len;
     json_t *name;
     fence_t *f;
+    commit_mgr_t *cm = kvsroot_get_commit_mgr (root);
     struct kvs_cb_data cbd = { .ctx = ctx, .errnum = errnum };
 
     if (!(len = json_array_size (names))) {
@@ -1630,9 +1634,9 @@ static void finalize_fences_bynames (kvs_ctx_t *ctx, struct kvsroot *root,
             flux_log_error (ctx->h, "%s: parsing array[%d]", __FUNCTION__, i);
             return;
         }
-        if ((f = commit_mgr_lookup_fence (root->cm, json_string_value (name)))) {
+        if ((f = commit_mgr_lookup_fence (cm, json_string_value (name)))) {
             fence_iter_request_copies (f, finalize_fence_req, &cbd);
-            if (commit_mgr_remove_fence (root->cm, json_string_value (name)) < 0)
+            if (commit_mgr_remove_fence (cm, json_string_value (name)) < 0)
                 flux_log_error (ctx->h, "%s: commit_mgr_remove_fence",
                                 __FUNCTION__);
         }
@@ -1670,12 +1674,12 @@ static void relayfence_request_cb (flux_t *h, flux_msg_handler_t *mh,
         goto error;
     }
 
-    if (!(f = commit_mgr_lookup_fence (root->cm, name))) {
+    if (!(f = commit_mgr_lookup_fence (kvsroot_get_commit_mgr (root), name))) {
         if (!(f = fence_create (name, nprocs, flags))) {
             flux_log_error (h, "%s: fence_create", __FUNCTION__);
             goto error;
         }
-        if (commit_mgr_add_fence (root->cm, f) < 0) {
+        if (commit_mgr_add_fence (kvsroot_get_commit_mgr (root), f) < 0) {
             flux_log_error (h, "%s: commit_mgr_add_fence", __FUNCTION__);
             fence_destroy (f);
             goto error;
@@ -1689,7 +1693,8 @@ static void relayfence_request_cb (flux_t *h, flux_msg_handler_t *mh,
         goto error;
     }
 
-    if (commit_mgr_process_fence_request (root->cm, name) < 0) {
+    if (commit_mgr_process_fence_request (kvsroot_get_commit_mgr (root),
+                                          name) < 0) {
         flux_log_error (h, "%s: commit_mgr_process_fence_request", __FUNCTION__);
         goto error;
     }
@@ -1736,12 +1741,12 @@ static void fence_request_cb (flux_t *h, flux_msg_handler_t *mh,
         goto error;
     }
 
-    if (!(f = commit_mgr_lookup_fence (root->cm, name))) {
+    if (!(f = commit_mgr_lookup_fence (kvsroot_get_commit_mgr (root), name))) {
         if (!(f = fence_create (name, nprocs, flags))) {
             flux_log_error (h, "%s: fence_create", __FUNCTION__);
             goto error;
         }
-        if (commit_mgr_add_fence (root->cm, f) < 0) {
+        if (commit_mgr_add_fence (kvsroot_get_commit_mgr (root), f) < 0) {
             saved_errno = errno;
             flux_log_error (h, "%s: commit_mgr_add_fence", __FUNCTION__);
             fence_destroy (f);
@@ -1760,7 +1765,8 @@ static void fence_request_cb (flux_t *h, flux_msg_handler_t *mh,
             goto error;
         }
 
-        if (commit_mgr_process_fence_request (root->cm, name) < 0) {
+        if (commit_mgr_process_fence_request (kvsroot_get_commit_mgr (root),
+                                              name) < 0) {
             flux_log_error (h, "%s: commit_mgr_process_fence_request",
                             __FUNCTION__);
             goto error;
@@ -1817,11 +1823,11 @@ static void sync_request_cb (flux_t *h, flux_msg_handler_t *mh,
         goto error;
     }
 
-    if (root->seq < rootseq) {
+    if (kvsroot_get_sequence (root) < rootseq) {
         if (!(wait = wait_create_msg_handler (h, mh, msg, arg,
                                               sync_request_cb)))
             goto error;
-        if (wait_addqueue (root->watchlist, wait) < 0) {
+        if (wait_addqueue (kvsroot_get_watchlist (root), wait) < 0) {
             saved_errno = errno;
             wait_destroy (wait);
             errno = saved_errno;
@@ -1830,8 +1836,8 @@ static void sync_request_cb (flux_t *h, flux_msg_handler_t *mh,
         return; /* stall */
     }
     if (flux_respond_pack (h, msg, "{ s:i s:s }",
-                           "rootseq", root->seq,
-                           "rootref", root->ref) < 0) {
+                           "rootseq", kvsroot_get_sequence (root),
+                           "rootref", kvsroot_get_rootref (root)) < 0) {
         flux_log_error (h, "%s: flux_respond_pack", __FUNCTION__);
         goto error;
     }
@@ -1880,9 +1886,9 @@ static void getroot_request_cb (flux_t *h, flux_msg_handler_t *mh,
     }
 
     if (flux_respond_pack (h, msg, "{ s:i s:s s:i }",
-                           "rootseq", root->seq,
-                           "rootref", root->ref,
-                           "flags", root->flags) < 0) {
+                           "rootseq", kvsroot_get_sequence (root),
+                           "rootref", kvsroot_get_rootref (root),
+                           "flags", kvsroot_get_flags (root)) < 0) {
         flux_log_error (h, "%s: flux_respond_pack", __FUNCTION__);
         goto error;
     }
@@ -2003,7 +2009,7 @@ static void setroot_event_cb (flux_t *h, flux_msg_handler_t *mh,
 
     /* in rare chance we receive setroot on removed namespace, return
      * ENOTSUP to client callers */
-    if (root->remove)
+    if (kvsroot_get_remove_flag (root))
         errnum = ENOTSUP;
 
     finalize_fences_bynames (ctx, root, names, errnum);
@@ -2041,7 +2047,8 @@ static int disconnect_request_root_cb (struct kvsroot *root, void *arg)
 
     /* Log error, but don't return -1, can continue to iterate
      * remaining roots */
-    if (wait_destroy_msg (root->watchlist, disconnect_cmp, cbd->sender) < 0)
+    if (wait_destroy_msg (kvsroot_get_watchlist (root), disconnect_cmp,
+                          cbd->sender) < 0)
         flux_log_error (cbd->ctx->h, "%s: wait_destroy_msg", __FUNCTION__);
 
     return 0;
@@ -2079,22 +2086,23 @@ static int stats_get_root_cb (struct kvsroot *root, void *arg)
 {
     json_t *nsstats = arg;
     json_t *s;
+    commit_mgr_t *cm = kvsroot_get_commit_mgr (root);
 
     if (!(s = json_pack ("{ s:i s:i s:i s:i s:i }",
                          "#watchers",
-                         wait_queue_length (root->watchlist),
+                         wait_queue_length (kvsroot_get_watchlist (root)),
                          "#no-op stores",
-                         commit_mgr_get_noop_stores (root->cm),
+                         commit_mgr_get_noop_stores (cm),
                          "#fences",
-                         commit_mgr_fences_count (root->cm),
+                         commit_mgr_fences_count (cm),
                          "#readycommits",
-                         commit_mgr_ready_commit_count (root->cm),
-                         "store revision", root->seq))) {
+                         commit_mgr_ready_commit_count (cm),
+                         "store revision", kvsroot_get_sequence (root)))) {
         errno = ENOMEM;
         return -1;
     }
 
-    json_object_set_new (nsstats, root->namespace, s);
+    json_object_set_new (nsstats, kvsroot_get_namespace (root), s);
     return 0;
 }
 
@@ -2188,7 +2196,7 @@ static void stats_get_cb (flux_t *h, flux_msg_handler_t *mh,
 
 static int stats_clear_root_cb (struct kvsroot *root, void *arg)
 {
-    commit_mgr_clear_noop_stores (root->cm);
+    commit_mgr_clear_noop_stores (kvsroot_get_commit_mgr (root));
     return 0;
 }
 
@@ -2323,14 +2331,14 @@ static void start_root_remove (kvs_ctx_t *ctx, const char *namespace)
     if ((root = kvsroot_mgr_lookup_root_safe (ctx->km, namespace))) {
         struct kvs_cb_data cbd = { .ctx = ctx, .root = root };
 
-        root->remove = true;
+        kvsroot_set_remove_flag (root, true);
 
         /* Now that root has been marked for removal from roothash, run
          * the watchlist.  watch requests will notice root removed, return
          * ENOTSUP to watchers.
          */
 
-        if (wait_runqueue (root->watchlist) < 0)
+        if (wait_runqueue (kvsroot_get_watchlist (root)) < 0)
             flux_log_error (ctx->h, "%s: wait_runqueue", __FUNCTION__);
 
         /* Ready fences will be processed and errors returned to
@@ -2342,7 +2350,7 @@ static void start_root_remove (kvs_ctx_t *ctx, const char *namespace)
          * fence_request_cb() and relayfence_request_cb() ensure this.
          */
 
-        if (commit_mgr_iter_not_ready_fences (root->cm,
+        if (commit_mgr_iter_not_ready_fences (kvsroot_get_commit_mgr (root),
                                               root_remove_process_fences,
                                               &cbd) < 0)
             flux_log_error (ctx->h, "%s: commit_mgr_iter_fences", __FUNCTION__);

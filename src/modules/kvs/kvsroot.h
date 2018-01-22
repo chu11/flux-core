@@ -48,6 +48,29 @@ struct kvsroot *kvsroot_mgr_lookup_root_safe (kvsroot_mgr_t *km,
 
 int kvsroot_mgr_iter_roots (kvsroot_mgr_t *km, kvsroot_root_f cb, void *arg);
 
+const char *kvsroot_get_namespace (struct kvsroot *root);
+commit_mgr_t *kvsroot_get_commit_mgr (struct kvsroot *root);
+waitqueue_t *kvsroot_get_watchlist (struct kvsroot *root);
+
+void kvsroot_set_remove_flag (struct kvsroot *root, bool remove);
+bool kvsroot_get_remove_flag (struct kvsroot *root);
+
+void kvsroot_set_sequence (struct kvsroot *root, int sequence);
+int kvsroot_get_sequence (struct kvsroot *root);
+
+void kvsroot_set_rootref (struct kvsroot *root, const char *rootref);
+const char *kvsroot_get_rootref (struct kvsroot *root);
+
+void kvsroot_set_flags (struct kvsroot *root, int flags);
+int kvsroot_get_flags (struct kvsroot *root);
+
+void kvsroot_set_watchlist_lastrun_epoch (struct kvsroot *root, int epoch);
+int kvsroot_get_watchlist_lastrun_epoch (struct kvsroot *root);
+
+/* indicates if no processing remains in kvsroot (no watchers, no
+ * fences, no committing).  Used for checks before cleaning up */
+bool kvsroot_processing_done (struct kvsroot *root);
+
 #endif /* !_FLUX_KVS_KVSROOT_H */
 
 /*
