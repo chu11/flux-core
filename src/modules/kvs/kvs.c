@@ -288,20 +288,6 @@ cleanup:
  * set/get root
  */
 
-static void setroot (kvs_ctx_t *ctx, kvsroot_t *root,
-                     const char *rootref, int rootseq)
-{
-    if (rootseq == 0 || rootseq > kvsroot_get_sequence (root)) {
-        kvsroot_set_rootref (root, rootref);
-        kvsroot_set_sequence (root, rootseq);
-        /* log error on kvsroot_watchlist_run(), but don't error out.
-         * watchers may miss value change, but will never get older
-         * one.  Maintains consistency model */
-        if (kvsroot_watchlist_run (root, ctx->epoch) < 0)
-            flux_log_error (ctx->h, "%s: kvsroot_watchlist_run", __FUNCTION__);
-    }
-}
-
 static void getroot_completion (flux_future_t *f, void *arg)
 {
     kvs_ctx_t *ctx = arg;
@@ -358,8 +344,12 @@ static void getroot_completion (flux_future_t *f, void *arg)
     /* if root now in process of being removed, error will be handled via
      * the original callback
      */
-    if (!kvsroot_get_remove_flag (root))
-        setroot (ctx, root, ref, rootseq);
+    if (!kvsroot_get_remove_flag (root)) {
+        if (kvsroot_setroot (root, ref, rootseq, ctx->epoch) < 0) {
+            flux_log_error (ctx->h, "%s: kvsroot_setroot", __FUNCTION__);
+            goto error;
+        }
+    }
 
     msg_cb_handler_call (mcb);
 
@@ -838,6 +828,7 @@ static void commit_apply (commit_t *c)
     wait_t *wait = NULL;
     int errnum = 0;
     commit_process_t ret;
+    fence_t *f;
 
     namespace = commit_get_namespace (c);
     assert (namespace);
@@ -932,7 +923,7 @@ static void commit_apply (commit_t *c)
      */
 done:
     if (errnum == 0) {
-        fence_t *f = commit_get_fence (c);
+        f = commit_get_fence (c);
         int count;
         if ((count = json_array_size (fence_get_json_names (f))) > 1) {
             int opcount = 0;
@@ -940,11 +931,18 @@ done:
             flux_log (ctx->h, LOG_DEBUG, "aggregated %d commits (%d ops)",
                       count, opcount);
         }
-        setroot (ctx, root, commit_get_newroot_ref (c),
-                 kvsroot_get_sequence (root) + 1);
+        if (kvsroot_setroot (root,
+                             commit_get_newroot_ref (c),
+                             kvsroot_get_sequence (root) + 1,
+                             ctx->epoch) < 0) {
+            errnum = errno;
+            flux_log_error (ctx->h, "%s: kvsroot_setroot", __FUNCTION__);
+            goto error_path;
+        }
         setroot_event_send (ctx, root, fence_get_json_names (f));
     } else {
-        fence_t *f = commit_get_fence (c);
+    error_path:
+        f = commit_get_fence (c);
         flux_log (ctx->h, LOG_ERR, "commit failed: %s",
                   flux_strerror (errnum));
         error_event_send (ctx, kvsroot_get_namespace (root),
@@ -2022,7 +2020,8 @@ static void setroot_event_cb (flux_t *h, flux_msg_handler_t *mh,
     if (!json_is_null (rootdir))
         prime_cache_with_rootdir (ctx, rootdir);
 
-    setroot (ctx, root, rootref, rootseq);
+    if (kvsroot_setroot (root, rootref, rootseq, ctx->epoch) < 0)
+        flux_log_error (ctx->h, "%s: kvsroot_setroot", __FUNCTION__);
 }
 
 static bool disconnect_cmp (const flux_msg_t *msg, void *arg)
@@ -2265,7 +2264,10 @@ static int namespace_create (kvs_ctx_t *ctx, const char *namespace, int flags)
         goto cleanup_remove_root;
     }
 
-    setroot (ctx, root, ref, 0);
+    if (kvsroot_setroot (root, ref, 0, ctx->epoch) < 0) {
+        flux_log_error (ctx->h, "%s: kvsroot_setroot", __FUNCTION__);
+        goto cleanup_remove_root;
+    }
 
     if (event_subscribe (ctx, namespace) < 0) {
         flux_log_error (ctx->h, "%s: event_subscribe", __FUNCTION__);
@@ -2581,7 +2583,10 @@ int mod_main (flux_t *h, int argc, char **argv)
             }
         }
 
-        setroot (ctx, root, rootref, 0);
+        if (kvsroot_setroot (root, rootref, 0, ctx->epoch) < 0) {
+            flux_log_error (h, "kvsroot_setroot");
+            goto done;
+        }
 
         if (event_subscribe (ctx, KVS_PRIMARY_NAMESPACE) < 0) {
             flux_log_error (h, "event_subscribe");

@@ -263,6 +263,16 @@ const char *kvsroot_get_namespace (kvsroot_t *root)
     return root->namespace;
 }
 
+int kvsroot_get_sequence (kvsroot_t *root)
+{
+    return root->seq;
+}
+
+const char *kvsroot_get_rootref (kvsroot_t *root)
+{
+    return root->ref;
+}
+
 commit_mgr_t *kvsroot_get_commit_mgr (kvsroot_t *root)
 {
     return root->cm;
@@ -276,27 +286,6 @@ void kvsroot_set_remove_flag (kvsroot_t *root, bool remove)
 bool kvsroot_get_remove_flag (kvsroot_t *root)
 {
     return root->remove;
-}
-
-void kvsroot_set_sequence (kvsroot_t *root, int sequence)
-{
-    root->seq = sequence;
-}
-
-int kvsroot_get_sequence (kvsroot_t *root)
-{
-    return root->seq;
-}
-
-void kvsroot_set_rootref (kvsroot_t *root, const char *rootref)
-{
-    assert (strlen (rootref) < sizeof (blobref_t));
-    strcpy (root->ref, rootref);
-}
-
-const char *kvsroot_get_rootref (kvsroot_t *root)
-{
-    return root->ref;
 }
 
 void kvsroot_set_flags (kvsroot_t *root, int flags)
@@ -346,6 +335,24 @@ int kvsroot_watchlist_wait_destroy_msg (kvsroot_t *root, wait_test_msg_f cb,
     if (wait_destroy_msg (root->watchlist, cb, arg) < 0) {
         flux_log_error (root->km->h, "%s: wait_destroy_msg", __FUNCTION__);
         return -1;
+    }
+    return 0;
+}
+
+int kvsroot_setroot (kvsroot_t *root, const char *rootref, int rootseq,
+                     int epoch)
+{
+    if (rootseq == 0 || rootseq > kvsroot_get_sequence (root)) {
+        assert (strlen (rootref) < sizeof (blobref_t));
+        strcpy (root->ref, rootref);
+        root->seq = rootseq;
+        if (kvsroot_watchlist_run (root, epoch) < 0) {
+            /* Technically should save orig values and revert them on
+             * error here, but won't to avoid excessive copies */
+            flux_log_error (root->km->h, "%s: kvsroot_watchlist_run",
+                            __FUNCTION__);
+            return -1;
+        }
     }
     return 0;
 }
