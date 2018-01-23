@@ -294,12 +294,11 @@ static void setroot (kvs_ctx_t *ctx, kvsroot_t *root,
     if (rootseq == 0 || rootseq > kvsroot_get_sequence (root)) {
         kvsroot_set_rootref (root, rootref);
         kvsroot_set_sequence (root, rootseq);
-        /* log error on wait_runqueue(), don't error out.  watchers
-         * may miss value change, but will never get older one.
-         * Maintains consistency model */
-        if (wait_runqueue (kvsroot_get_watchlist (root)) < 0)
-            flux_log_error (ctx->h, "%s: wait_runqueue", __FUNCTION__);
-        kvsroot_set_watchlist_lastrun_epoch (root, ctx->epoch);
+        /* log error on kvsroot_watchlist_run(), but don't error out.
+         * watchers may miss value change, but will never get older
+         * one.  Maintains consistency model */
+        if (kvsroot_watchlist_run (root, ctx->epoch) < 0)
+            flux_log_error (ctx->h, "%s: kvsroot_watchlist_run", __FUNCTION__);
     }
 }
 
@@ -1102,8 +1101,7 @@ static int heartbeat_root_cb (kvsroot_t *root, void *arg)
     else if (ctx->rank != 0
              && !kvsroot_get_remove_flag (root)
              && strcasecmp (kvsroot_get_namespace (root), KVS_PRIMARY_NAMESPACE)
-             && (ctx->epoch - kvsroot_get_watchlist_lastrun_epoch (root))
-                  > max_namespace_age
+             && kvsroot_watchlist_age (root, ctx->epoch) > max_namespace_age
              && kvsroot_processing_done (root)) {
         /* remove a root if it not the primary one, has timed out
          * on a follower node, and it does not have any watchers,
@@ -1113,15 +1111,13 @@ static int heartbeat_root_cb (kvsroot_t *root, void *arg)
     }
     else {
         /* "touch" objects involved in watched keys */
-        if (wait_queue_length (kvsroot_get_watchlist (root)) > 0
-            && (ctx->epoch - kvsroot_get_watchlist_lastrun_epoch (root))
-                 > max_lastuse_age) {
-            /* log error on wait_runqueue(), don't error out.  watchers
-             * may miss value change, but will never get older one.
-             * Maintains consistency model */
-            if (wait_runqueue (kvsroot_get_watchlist (root)) < 0)
-                flux_log_error (ctx->h, "%s: wait_runqueue", __FUNCTION__);
-            kvsroot_set_watchlist_lastrun_epoch (root, ctx->epoch);
+        if (kvsroot_watchlist_age (root, ctx->epoch) > max_namespace_age) {
+            /* log error on kvsroot_watchlist_run(), but don't error out.
+             * watchers may miss value change, but will never get older
+             * one.  Maintains consistency model */
+            if (kvsroot_watchlist_run (root, ctx->epoch) < 0)
+                flux_log_error (ctx->h, "%s: kvsroot_watchlist_run",
+                                __FUNCTION__);
         }
         /* "touch" root */
         (void)cache_lookup (ctx->cache, kvsroot_get_rootref (root), ctx->epoch);
@@ -1485,7 +1481,7 @@ static void watch_request_cb (flux_t *h, flux_msg_handler_t *mh,
         if (!(watcher = wait_create_msg_handler (h, mh, cpy, ctx,
                                                  watch_request_cb)))
             goto done;
-        if (wait_addqueue (kvsroot_get_watchlist (root), watcher) < 0) {
+        if (kvsroot_watchlist_add (root, watcher) < 0) {
             saved_errno = errno;
             wait_destroy (watcher);
             errno = saved_errno;
@@ -1585,13 +1581,14 @@ static void unwatch_request_cb (flux_t *h, flux_msg_handler_t *mh,
     /* N.B. impossible for a watch to be on watchlist and cache waiter
      * at the same time (i.e. on watchlist means we're watching, if on
      * cache waiter we're not done processing towards being on the
-     * watchlist).  So if wait_destroy_msg() on the waitlist succeeds
-     * but cache_wait_destroy_msg() fails, it's not that big of a
-     * deal.  The current state is still maintained.
+     * watchlist).  So if kvsroot_watchlist_wait_destroy_msg()
+     * succeeds but cache_wait_destroy_msg() fails, it's not that big
+     * of a deal.  The current state is still maintained.
      */
-    if (wait_destroy_msg (kvsroot_get_watchlist (root), unwatch_cmp, &p) < 0) {
+    if (kvsroot_watchlist_wait_destroy_msg (root, unwatch_cmp, &p) < 0) {
         errnum = errno;
-        flux_log_error (h, "%s: wait_destroy_msg", __FUNCTION__);
+        flux_log_error (h, "%s: kvsroot_watchlist_wait_destroy_msg",
+                        __FUNCTION__);
         goto done;
     }
     if (cache_wait_destroy_msg (ctx->cache, unwatch_cmp, &p) < 0) {
@@ -1827,7 +1824,7 @@ static void sync_request_cb (flux_t *h, flux_msg_handler_t *mh,
         if (!(wait = wait_create_msg_handler (h, mh, msg, arg,
                                               sync_request_cb)))
             goto error;
-        if (wait_addqueue (kvsroot_get_watchlist (root), wait) < 0) {
+        if (kvsroot_watchlist_add (root, wait) < 0) {
             saved_errno = errno;
             wait_destroy (wait);
             errno = saved_errno;
@@ -2047,9 +2044,10 @@ static int disconnect_request_root_cb (kvsroot_t *root, void *arg)
 
     /* Log error, but don't return -1, can continue to iterate
      * remaining roots */
-    if (wait_destroy_msg (kvsroot_get_watchlist (root), disconnect_cmp,
-                          cbd->sender) < 0)
-        flux_log_error (cbd->ctx->h, "%s: wait_destroy_msg", __FUNCTION__);
+    if (kvsroot_watchlist_wait_destroy_msg (root, disconnect_cmp,
+                                            cbd->sender) < 0)
+        flux_log_error (cbd->ctx->h, "%s: kvsroot_watchlist_wait_destroy_msg",
+                        __FUNCTION__);
 
     return 0;
 }
@@ -2090,7 +2088,7 @@ static int stats_get_root_cb (kvsroot_t *root, void *arg)
 
     if (!(s = json_pack ("{ s:i s:i s:i s:i s:i }",
                          "#watchers",
-                         wait_queue_length (kvsroot_get_watchlist (root)),
+                         kvsroot_watchlist_length (root),
                          "#no-op stores",
                          commit_mgr_get_noop_stores (cm),
                          "#fences",
@@ -2338,8 +2336,8 @@ static void start_root_remove (kvs_ctx_t *ctx, const char *namespace)
          * ENOTSUP to watchers.
          */
 
-        if (wait_runqueue (kvsroot_get_watchlist (root)) < 0)
-            flux_log_error (ctx->h, "%s: wait_runqueue", __FUNCTION__);
+        if (kvsroot_watchlist_run (root, ctx->epoch) < 0)
+            flux_log_error (ctx->h, "%s: kvsroot_watchlist_run", __FUNCTION__);
 
         /* Ready fences will be processed and errors returned to
          * callers via the code path in commit_apply().  But not ready

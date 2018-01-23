@@ -268,11 +268,6 @@ commit_mgr_t *kvsroot_get_commit_mgr (kvsroot_t *root)
     return root->cm;
 }
 
-waitqueue_t *kvsroot_get_watchlist (kvsroot_t *root)
-{
-    return root->watchlist;
-}
-
 void kvsroot_set_remove_flag (kvsroot_t *root, bool remove)
 {
     root->remove = remove;
@@ -314,14 +309,45 @@ int kvsroot_get_flags (kvsroot_t *root)
     return root->flags;
 }
 
-void kvsroot_set_watchlist_lastrun_epoch (kvsroot_t *root, int epoch)
+int kvsroot_watchlist_add (kvsroot_t *root, wait_t *wait)
 {
-    root->watchlist_lastrun_epoch = epoch;
+    if (wait_addqueue (root->watchlist, wait) < 0) {
+        flux_log_error (root->km->h, "%s: wait_addqueue", __FUNCTION__);
+        return -1;
+    }
+    return 0;
 }
 
-int kvsroot_get_watchlist_lastrun_epoch (kvsroot_t *root)
+int kvsroot_watchlist_run (kvsroot_t *root, int current_epoch)
 {
-    return root->watchlist_lastrun_epoch;
+    if (wait_queue_length (root->watchlist) > 0) {
+        if (wait_runqueue (root->watchlist) < 0) {
+            flux_log_error (root->km->h, "%s: wait_runqueue", __FUNCTION__);
+            return -1;
+        }
+        root->watchlist_lastrun_epoch = current_epoch;
+    }
+    return 0;
+}
+
+int kvsroot_watchlist_age (kvsroot_t *root, int current_epoch)
+{
+    return (current_epoch - root->watchlist_lastrun_epoch);
+}
+
+int kvsroot_watchlist_length (kvsroot_t *root)
+{
+    return wait_queue_length (root->watchlist);
+}
+
+int kvsroot_watchlist_wait_destroy_msg (kvsroot_t *root, wait_test_msg_f cb,
+                                        void *arg)
+{
+    if (wait_destroy_msg (root->watchlist, cb, arg) < 0) {
+        flux_log_error (root->km->h, "%s: wait_destroy_msg", __FUNCTION__);
+        return -1;
+    }
+    return 0;
 }
 
 bool kvsroot_processing_done (kvsroot_t *root)
