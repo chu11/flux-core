@@ -46,6 +46,18 @@ struct kvsroot_mgr {
     void *arg;
 };
 
+struct kvsroot {
+    char *namespace;
+    int seq;
+    blobref_t ref;
+    commit_mgr_t *cm;
+    waitqueue_t *watchlist;
+    int watchlist_lastrun_epoch;
+    int flags;
+    bool remove;
+    kvsroot_mgr_t *km;
+};
+
 kvsroot_mgr_t *kvsroot_mgr_create (flux_t *h, void *arg)
 {
     kvsroot_mgr_t *km = NULL;
@@ -104,13 +116,13 @@ static void kvsroot_destroy (void *data)
     }
 }
 
-struct kvsroot *kvsroot_mgr_create_root (kvsroot_mgr_t *km,
-                                         struct cache *cache,
-                                         const char *hash_name,
-                                         const char *namespace,
-                                         int flags)
+kvsroot_t *kvsroot_mgr_create_root (kvsroot_mgr_t *km,
+                                    struct cache *cache,
+                                    const char *hash_name,
+                                    const char *namespace,
+                                    int flags)
 {
-    struct kvsroot *root;
+    kvsroot_t *root;
     int save_errnum;
 
     /* Don't modify hash while iterating */
@@ -192,16 +204,16 @@ int kvsroot_mgr_remove_root (kvsroot_mgr_t *km, const char *namespace)
     return 0;
 }
 
-struct kvsroot *kvsroot_mgr_lookup_root (kvsroot_mgr_t *km,
-                                         const char *namespace)
+kvsroot_t *kvsroot_mgr_lookup_root (kvsroot_mgr_t *km,
+                                    const char *namespace)
 {
     return zhash_lookup (km->roothash, namespace);
 }
 
-struct kvsroot *kvsroot_mgr_lookup_root_safe (kvsroot_mgr_t *km,
-                                              const char *namespace)
+kvsroot_t *kvsroot_mgr_lookup_root_safe (kvsroot_mgr_t *km,
+                                         const char *namespace)
 {
-    struct kvsroot *root;
+    kvsroot_t *root;
 
     if ((root = kvsroot_mgr_lookup_root (km, namespace))) {
         if (root->remove)
@@ -212,7 +224,7 @@ struct kvsroot *kvsroot_mgr_lookup_root_safe (kvsroot_mgr_t *km,
 
 int kvsroot_mgr_iter_roots (kvsroot_mgr_t *km, kvsroot_root_f cb, void *arg)
 {
-    struct kvsroot *root;
+    kvsroot_t *root;
     char *namespace;
 
     km->iterating_roots = true;
@@ -246,73 +258,73 @@ error:
     return -1;
 }
 
-const char *kvsroot_get_namespace (struct kvsroot *root)
+const char *kvsroot_get_namespace (kvsroot_t *root)
 {
     return root->namespace;
 }
 
-commit_mgr_t *kvsroot_get_commit_mgr (struct kvsroot *root)
+commit_mgr_t *kvsroot_get_commit_mgr (kvsroot_t *root)
 {
     return root->cm;
 }
 
-waitqueue_t *kvsroot_get_watchlist (struct kvsroot *root)
+waitqueue_t *kvsroot_get_watchlist (kvsroot_t *root)
 {
     return root->watchlist;
 }
 
-void kvsroot_set_remove_flag (struct kvsroot *root, bool remove)
+void kvsroot_set_remove_flag (kvsroot_t *root, bool remove)
 {
     root->remove = remove;
 }
 
-bool kvsroot_get_remove_flag (struct kvsroot *root)
+bool kvsroot_get_remove_flag (kvsroot_t *root)
 {
     return root->remove;
 }
 
-void kvsroot_set_sequence (struct kvsroot *root, int sequence)
+void kvsroot_set_sequence (kvsroot_t *root, int sequence)
 {
     root->seq = sequence;
 }
 
-int kvsroot_get_sequence (struct kvsroot *root)
+int kvsroot_get_sequence (kvsroot_t *root)
 {
     return root->seq;
 }
 
-void kvsroot_set_rootref (struct kvsroot *root, const char *rootref)
+void kvsroot_set_rootref (kvsroot_t *root, const char *rootref)
 {
     assert (strlen (rootref) < sizeof (blobref_t));
     strcpy (root->ref, rootref);
 }
 
-const char *kvsroot_get_rootref (struct kvsroot *root)
+const char *kvsroot_get_rootref (kvsroot_t *root)
 {
     return root->ref;
 }
 
-void kvsroot_set_flags (struct kvsroot *root, int flags)
+void kvsroot_set_flags (kvsroot_t *root, int flags)
 {
     root->flags = flags;
 }
 
-int kvsroot_get_flags (struct kvsroot *root)
+int kvsroot_get_flags (kvsroot_t *root)
 {
     return root->flags;
 }
 
-void kvsroot_set_watchlist_lastrun_epoch (struct kvsroot *root, int epoch)
+void kvsroot_set_watchlist_lastrun_epoch (kvsroot_t *root, int epoch)
 {
     root->watchlist_lastrun_epoch = epoch;
 }
 
-int kvsroot_get_watchlist_lastrun_epoch (struct kvsroot *root)
+int kvsroot_get_watchlist_lastrun_epoch (kvsroot_t *root)
 {
     return root->watchlist_lastrun_epoch;
 }
 
-bool kvsroot_processing_done (struct kvsroot *root)
+bool kvsroot_processing_done (kvsroot_t *root)
 {
     if (!wait_queue_length (root->watchlist)
         && !commit_mgr_fences_count (root->cm)

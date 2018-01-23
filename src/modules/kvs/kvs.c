@@ -89,7 +89,7 @@ typedef struct {
 
 struct kvs_cb_data {
     kvs_ctx_t *ctx;
-    struct kvsroot *root;
+    kvsroot_t *root;
     wait_t *wait;
     int errnum;
     bool ready;
@@ -288,7 +288,7 @@ cleanup:
  * set/get root
  */
 
-static void setroot (kvs_ctx_t *ctx, struct kvsroot *root,
+static void setroot (kvs_ctx_t *ctx, kvsroot_t *root,
                      const char *rootref, int rootseq)
 {
     if (rootseq == 0 || rootseq > kvsroot_get_sequence (root)) {
@@ -311,7 +311,7 @@ static void getroot_completion (flux_future_t *f, void *arg)
     const char *namespace;
     int rootseq, flags;
     const char *ref;
-    struct kvsroot *root;
+    kvsroot_t *root;
     int save_errno;
 
     mcb = flux_future_aux_get (f, "handler");
@@ -415,13 +415,13 @@ error:
     return -1;
 }
 
-static struct kvsroot *getroot (kvs_ctx_t *ctx, const char *namespace,
-                                flux_msg_handler_t *mh,
-                                const flux_msg_t *msg,
-                                flux_msg_handler_f cb,
-                                bool *stall)
+static kvsroot_t *getroot (kvs_ctx_t *ctx, const char *namespace,
+                           flux_msg_handler_t *mh,
+                           const flux_msg_t *msg,
+                           flux_msg_handler_f cb,
+                           bool *stall)
 {
-    struct kvsroot *root;
+    kvsroot_t *root;
     blobref_t rootref;
     int rootseq, flags;
 
@@ -708,7 +708,7 @@ static int commit_cache_cb (commit_t *c, struct cache_entry *entry, void *data)
     return 0;
 }
 
-static int setroot_event_send (kvs_ctx_t *ctx, struct kvsroot *root,
+static int setroot_event_send (kvs_ctx_t *ctx, kvsroot_t *root,
                                json_t *names)
 {
     const json_t *root_dir = NULL;
@@ -835,7 +835,7 @@ static void commit_apply (commit_t *c)
 {
     kvs_ctx_t *ctx = commit_get_aux (c);
     const char *namespace;
-    struct kvsroot *root = NULL;
+    kvsroot_t *root = NULL;
     wait_t *wait = NULL;
     int errnum = 0;
     commit_process_t ret;
@@ -967,7 +967,7 @@ stall:
  * pre/check event callbacks
  */
 
-static int commit_prep_root_cb (struct kvsroot *root, void *arg)
+static int commit_prep_root_cb (kvsroot_t *root, void *arg)
 {
     struct kvs_cb_data *cbd = arg;
 
@@ -994,7 +994,7 @@ static void commit_prep_cb (flux_reactor_t *r, flux_watcher_t *w,
         flux_watcher_start (ctx->idle_w);
 }
 
-static int commit_check_root_cb (struct kvsroot *root, void *arg)
+static int commit_check_root_cb (kvsroot_t *root, void *arg)
 {
     struct kvs_cb_data *cbd = arg;
     commit_mgr_t *cm = kvsroot_get_commit_mgr (root);
@@ -1082,7 +1082,7 @@ static void dropcache_event_cb (flux_t *h, flux_msg_handler_t *mh,
                   expcount, size);
 }
 
-static int heartbeat_root_cb (struct kvsroot *root, void *arg)
+static int heartbeat_root_cb (kvsroot_t *root, void *arg)
 {
     kvs_ctx_t *ctx = arg;
 
@@ -1182,7 +1182,7 @@ static void get_request_cb (flux_t *h, flux_msg_handler_t *mh,
 
     /* if bad lh, then first time rpc and not a replay */
     if (lookup_validate (arg) == false) {
-        struct kvsroot *root;
+        kvsroot_t *root;
 
         ctx = arg;
 
@@ -1330,7 +1330,7 @@ static void watch_request_cb (flux_t *h, flux_msg_handler_t *mh,
     json_t *oval = NULL;
     json_t *val = NULL;
     flux_msg_t *cpy = NULL;
-    struct kvsroot *root = NULL;
+    kvsroot_t *root = NULL;
     const char *key;
     const char *namespace;
     int flags;
@@ -1553,7 +1553,7 @@ static void unwatch_request_cb (flux_t *h, flux_msg_handler_t *mh,
                                 const flux_msg_t *msg, void *arg)
 {
     kvs_ctx_t *ctx = arg;
-    struct kvsroot *root;
+    kvsroot_t *root;
     const char *namespace;
     const char *key;
     unwatch_param_t p = { NULL, NULL };
@@ -1616,7 +1616,7 @@ static int finalize_fence_req (fence_t *f, const flux_msg_t *req, void *data)
     return 0;
 }
 
-static void finalize_fences_bynames (kvs_ctx_t *ctx, struct kvsroot *root,
+static void finalize_fences_bynames (kvs_ctx_t *ctx, kvsroot_t *root,
                                      json_t *names, int errnum)
 {
     int i, len;
@@ -1649,7 +1649,7 @@ static void relayfence_request_cb (flux_t *h, flux_msg_handler_t *mh,
                                    const flux_msg_t *msg, void *arg)
 {
     kvs_ctx_t *ctx = arg;
-    struct kvsroot *root;
+    kvsroot_t *root;
     const char *namespace;
     const char *name;
     int nprocs, flags;
@@ -1716,7 +1716,7 @@ static void fence_request_cb (flux_t *h, flux_msg_handler_t *mh,
                               const flux_msg_t *msg, void *arg)
 {
     kvs_ctx_t *ctx = arg;
-    struct kvsroot *root;
+    kvsroot_t *root;
     const char *namespace;
     const char *name;
     int saved_errno, nprocs, flags;
@@ -1804,7 +1804,7 @@ static void sync_request_cb (flux_t *h, flux_msg_handler_t *mh,
 {
     kvs_ctx_t *ctx = arg;
     const char *namespace;
-    struct kvsroot *root;
+    kvsroot_t *root;
     int saved_errno, rootseq;
     wait_t *wait = NULL;
     bool stall = false;
@@ -1856,7 +1856,7 @@ static void getroot_request_cb (flux_t *h, flux_msg_handler_t *mh,
 {
     kvs_ctx_t *ctx = arg;
     const char *namespace;
-    struct kvsroot *root;
+    kvsroot_t *root;
 
     if (flux_request_unpack (msg, NULL, "{ s:s }",
                              "namespace", &namespace) < 0) {
@@ -1905,7 +1905,7 @@ static void error_event_cb (flux_t *h, flux_msg_handler_t *mh,
                               const flux_msg_t *msg, void *arg)
 {
     kvs_ctx_t *ctx = arg;
-    struct kvsroot *root;
+    kvsroot_t *root;
     const char *namespace;
     json_t *names = NULL;
     int errnum;
@@ -1977,7 +1977,7 @@ static void setroot_event_cb (flux_t *h, flux_msg_handler_t *mh,
                               const flux_msg_t *msg, void *arg)
 {
     kvs_ctx_t *ctx = arg;
-    struct kvsroot *root;
+    kvsroot_t *root;
     const char *namespace;
     int rootseq;
     const char *rootref;
@@ -2041,7 +2041,7 @@ static bool disconnect_cmp (const flux_msg_t *msg, void *arg)
     return match;
 }
 
-static int disconnect_request_root_cb (struct kvsroot *root, void *arg)
+static int disconnect_request_root_cb (kvsroot_t *root, void *arg)
 {
     struct kvs_cb_data *cbd = arg;
 
@@ -2082,7 +2082,7 @@ static void disconnect_request_cb (flux_t *h, flux_msg_handler_t *mh,
     free (sender);
 }
 
-static int stats_get_root_cb (struct kvsroot *root, void *arg)
+static int stats_get_root_cb (kvsroot_t *root, void *arg)
 {
     json_t *nsstats = arg;
     json_t *s;
@@ -2194,7 +2194,7 @@ static void stats_get_cb (flux_t *h, flux_msg_handler_t *mh,
     json_decref (nsstats);
 }
 
-static int stats_clear_root_cb (struct kvsroot *root, void *arg)
+static int stats_clear_root_cb (kvsroot_t *root, void *arg)
 {
     commit_mgr_clear_noop_stores (kvsroot_get_commit_mgr (root));
     return 0;
@@ -2229,7 +2229,7 @@ static void stats_clear_request_cb (flux_t *h, flux_msg_handler_t *mh,
 
 static int namespace_create (kvs_ctx_t *ctx, const char *namespace, int flags)
 {
-    struct kvsroot *root;
+    kvsroot_t *root;
     json_t *rootdir = NULL;
     blobref_t ref;
     void *data = NULL;
@@ -2325,7 +2325,7 @@ static int root_remove_process_fences (fence_t *f, void *data)
 
 static void start_root_remove (kvs_ctx_t *ctx, const char *namespace)
 {
-    struct kvsroot *root;
+    kvsroot_t *root;
 
     /* safe lookup, if root removal in process, let it continue */
     if ((root = kvsroot_mgr_lookup_root_safe (ctx->km, namespace))) {
@@ -2559,7 +2559,7 @@ int mod_main (flux_t *h, int argc, char **argv)
     }
     process_args (ctx, argc, argv);
     if (ctx->rank == 0) {
-        struct kvsroot *root;
+        kvsroot_t *root;
         blobref_t rootref;
 
         if (store_initial_rootdir (ctx, rootref) < 0) {
