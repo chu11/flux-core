@@ -280,6 +280,50 @@ int kvsroot_mgr_commits_ready (kvsroot_mgr_t *km, bool *ready)
     return 0;
 }
 
+struct commits_apply_data {
+    bool merge;
+    kvsroot_commit_apply_f cb;
+    void *arg;
+};
+
+static int commit_check_root_cb (kvsroot_t *root, void *arg)
+{
+    struct commits_apply_data
+    struct kvs_cb_data *cbd = arg;
+    commit_mgr_t *cm = kvsroot_get_commit_mgr (root);
+    commit_t *c;
+
+    if ((c = commit_mgr_get_ready_commit (cm))) {
+        if (cbd->ctx->commit_merge) {
+            /* if merge fails, set errnum in commit_t, let
+             * commit_apply() handle error handling.
+             */
+            if (commit_mgr_merge_ready_commits (cm) < 0)
+                commit_set_aux_errnum (c, errno);
+        }
+
+        /* It does not matter if root has been marked for removal,
+         * we want to process and clear all lingering ready
+         * commits in this commit mgr
+         */
+        commit_apply (c);
+    }
+
+    return 0;
+}
+
+int kvsroot_mgr_commits_apply (kvsroot_mgr_t *km, bool merge,
+                               kvsroot_commit_apply_f cb, void *arg)
+{
+    struct commits_apply_data cad = { .merge = merge .cb = cb, .arg = arg };
+
+    if (kvsroot_mgr_iter_roots (km, _commit_apply_cb, &cad) < 0) {
+        flux_log_error (km->h, "%s: kvsroot_mgr_iter_roots", __FUNCTION__);
+        return -1;
+    }
+    return 0;
+}
+
 const char *kvsroot_get_namespace (kvsroot_t *root)
 {
     return root->namespace;
