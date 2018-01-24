@@ -283,22 +283,20 @@ int kvsroot_mgr_commits_ready (kvsroot_mgr_t *km, bool *ready)
 struct commits_apply_data {
     bool merge;
     kvsroot_commit_apply_f cb;
-    void *arg;
 };
 
-static int commit_check_root_cb (kvsroot_t *root, void *arg)
+static int _commit_apply_cb (kvsroot_t *root, void *arg)
 {
-    struct commits_apply_data
-    struct kvs_cb_data *cbd = arg;
-    commit_mgr_t *cm = kvsroot_get_commit_mgr (root);
+    struct commits_apply_data *cad = arg;
     commit_t *c;
 
-    if ((c = commit_mgr_get_ready_commit (cm))) {
-        if (cbd->ctx->commit_merge) {
-            /* if merge fails, set errnum in commit_t, let
+    if ((c = commit_mgr_get_ready_commit (root->cm))) {
+        if (cad->merge) {
+            /* if merge fails, set errnum in commit_t.  Responsibility
+             * of commit_apply callback to recognize and handle.
              * commit_apply() handle error handling.
              */
-            if (commit_mgr_merge_ready_commits (cm) < 0)
+            if (commit_mgr_merge_ready_commits (root->cm) < 0)
                 commit_set_aux_errnum (c, errno);
         }
 
@@ -306,16 +304,17 @@ static int commit_check_root_cb (kvsroot_t *root, void *arg)
          * we want to process and clear all lingering ready
          * commits in this commit mgr
          */
-        commit_apply (c);
+
+        cad->cb (c);
     }
 
     return 0;
 }
 
 int kvsroot_mgr_commits_apply (kvsroot_mgr_t *km, bool merge,
-                               kvsroot_commit_apply_f cb, void *arg)
+                               kvsroot_commit_apply_f cb)
 {
-    struct commits_apply_data cad = { .merge = merge .cb = cb, .arg = arg };
+    struct commits_apply_data cad = { .merge = merge, .cb = cb};
 
     if (kvsroot_mgr_iter_roots (km, _commit_apply_cb, &cad) < 0) {
         flux_log_error (km->h, "%s: kvsroot_mgr_iter_roots", __FUNCTION__);

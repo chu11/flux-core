@@ -978,41 +978,16 @@ static void commit_prep_cb (flux_reactor_t *r, flux_watcher_t *w,
         flux_watcher_start (ctx->idle_w);
 }
 
-static int commit_check_root_cb (kvsroot_t *root, void *arg)
-{
-    struct kvs_cb_data *cbd = arg;
-    commit_mgr_t *cm = kvsroot_get_commit_mgr (root);
-    commit_t *c;
-
-    if ((c = commit_mgr_get_ready_commit (cm))) {
-        if (cbd->ctx->commit_merge) {
-            /* if merge fails, set errnum in commit_t, let
-             * commit_apply() handle error handling.
-             */
-            if (commit_mgr_merge_ready_commits (cm) < 0)
-                commit_set_aux_errnum (c, errno);
-        }
-
-        /* It does not matter if root has been marked for removal,
-         * we want to process and clear all lingering ready
-         * commits in this commit mgr
-         */
-        commit_apply (c);
-    }
-
-    return 0;
-}
-
 static void commit_check_cb (flux_reactor_t *r, flux_watcher_t *w,
                              int revents, void *arg)
 {
     kvs_ctx_t *ctx = arg;
-    struct kvs_cb_data cbd = { .ctx = ctx };
 
     flux_watcher_stop (ctx->idle_w);
 
-    if (kvsroot_mgr_iter_roots (ctx->km, commit_check_root_cb, &cbd) < 0) {
-        flux_log_error (ctx->h, "%s: kvsroot_mgr_iter_roots", __FUNCTION__);
+    if (kvsroot_mgr_commits_apply (ctx->km, ctx->commit_merge,
+                                   commit_apply) < 0) {
+        flux_log_error (ctx->h, "%s: kvsroot_mgr_commits_apply", __FUNCTION__);
         return;
     }
 }

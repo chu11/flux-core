@@ -15,7 +15,7 @@ typedef struct kvsroot kvsroot_t;
 
 /* return -1 on error, 0 on success, 1 on success & to stop iterating */
 typedef int (*kvsroot_root_f)(kvsroot_t *root, void *arg);
-typedef int (*kvsroot_commit_apply_f)(kvsroot_t *root, void *arg);
+typedef void (*kvsroot_commit_apply_f)(commit_t *c);
 
 kvsroot_mgr_t *kvsroot_mgr_create (flux_t *h, void *arg);
 
@@ -41,7 +41,7 @@ int kvsroot_mgr_iter_roots (kvsroot_mgr_t *km, kvsroot_root_f cb, void *arg);
 
 int kvsroot_mgr_commits_ready (kvsroot_mgr_t *km, bool *ready);
 int kvsroot_mgr_commits_apply (kvsroot_mgr_t *km, bool merge,
-                               kvsroot_commit_apply_f cb, void *arg);
+                               kvsroot_commit_apply_f cb);
 
 const char *kvsroot_get_namespace (kvsroot_t *root);
 int kvsroot_get_sequence (kvsroot_t *root);
