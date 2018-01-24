@@ -258,6 +258,28 @@ error:
     return -1;
 }
 
+static int _commit_ready_cb (kvsroot_t *root, void *arg)
+{
+    bool *ready = arg;
+
+    if (commit_mgr_commits_ready (root->cm)) {
+        if (ready)
+            (*ready) = true;
+        return 1;
+    }
+
+    return 0;
+}
+
+int kvsroot_mgr_commits_ready (kvsroot_mgr_t *km, bool *ready)
+{
+    if (kvsroot_mgr_iter_roots (km, _commit_ready_cb, ready) < 0) {
+        flux_log_error (km->h, "%s: kvsroot_mgr_iter_roots", __FUNCTION__);
+        return -1;
+    }
+    return 0;
+}
+
 const char *kvsroot_get_namespace (kvsroot_t *root)
 {
     return root->namespace;

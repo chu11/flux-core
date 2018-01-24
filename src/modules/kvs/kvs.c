@@ -92,7 +92,6 @@ struct kvs_cb_data {
     kvsroot_t *root;
     wait_t *wait;
     int errnum;
-    bool ready;
     char *sender;
 };
 
@@ -964,30 +963,18 @@ stall:
  * pre/check event callbacks
  */
 
-static int commit_prep_root_cb (kvsroot_t *root, void *arg)
-{
-    struct kvs_cb_data *cbd = arg;
-
-    if (commit_mgr_commits_ready (kvsroot_get_commit_mgr (root))) {
-        cbd->ready = true;
-        return 1;
-    }
-
-    return 0;
-}
-
 static void commit_prep_cb (flux_reactor_t *r, flux_watcher_t *w,
                             int revents, void *arg)
 {
     kvs_ctx_t *ctx = arg;
-    struct kvs_cb_data cbd = { .ctx = ctx, .ready = false };
+    bool ready = false;
 
-    if (kvsroot_mgr_iter_roots (ctx->km, commit_prep_root_cb, &cbd) < 0) {
-        flux_log_error (ctx->h, "%s: kvsroot_mgr_iter_roots", __FUNCTION__);
+    if (kvsroot_mgr_commits_ready (ctx->km, &ready) < 0) {
+        flux_log_error (ctx->h, "%s: kvsroot_mgr_commits_ready", __FUNCTION__);
         return;
     }
 
-    if (cbd.ready)
+    if (ready)
         flux_watcher_start (ctx->idle_w);
 }
 
@@ -1020,7 +1007,7 @@ static void commit_check_cb (flux_reactor_t *r, flux_watcher_t *w,
                              int revents, void *arg)
 {
     kvs_ctx_t *ctx = arg;
-    struct kvs_cb_data cbd = { .ctx = ctx, .ready = false };
+    struct kvs_cb_data cbd = { .ctx = ctx };
 
     flux_watcher_stop (ctx->idle_w);
 

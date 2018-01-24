@@ -38,6 +38,8 @@ kvsroot_t *kvsroot_mgr_lookup_root_safe (kvsroot_mgr_t *km,
 
 int kvsroot_mgr_iter_roots (kvsroot_mgr_t *km, kvsroot_root_f cb, void *arg);
 
+int kvsroot_mgr_commits_ready (kvsroot_mgr_t *km, bool *ready);
+
 const char *kvsroot_get_namespace (kvsroot_t *root);
 int kvsroot_get_sequence (kvsroot_t *root);
 const char *kvsroot_get_rootref (kvsroot_t *root);
