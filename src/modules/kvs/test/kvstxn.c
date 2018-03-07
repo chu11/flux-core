@@ -692,7 +692,7 @@ void kvstxn_basic_kvstxn_process_test_multiple_transactions_merge (void)
     /* process the lingering transaction */
 
     ok ((kt = kvstxn_mgr_get_ready_transaction (ktm)) != NULL,
-        "kvstxn_mgr_get_ready_transaction returns NULL, no more kvstxns");
+        "kvstxn_mgr_get_ready_transaction returns != NULL for next transaction");
 
     ok (kvstxn_process (kt, 1, newroot) == KVSTXN_PROCESS_DIRTY_CACHE_ENTRIES,
         "kvstxn_process returns KVSTXN_PROCESS_DIRTY_CACHE_ENTRIES");
