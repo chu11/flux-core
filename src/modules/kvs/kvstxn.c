@@ -52,6 +52,7 @@ struct kvstxn_mgr {
     const char *namespace;
     const char *hash_name;
     int noop_stores;            /* for kvs.stats.get, etc.*/
+    zlist_t *ready_merged;
     zlist_t *ready;
     flux_t *h;
     void *aux;
@@ -977,6 +978,10 @@ kvstxn_mgr_t *kvstxn_mgr_create (struct cache *cache,
     ktm->cache = cache;
     ktm->namespace = namespace;
     ktm->hash_name = hash_name;
+    if (!(ktm->ready_merged = zlist_new ())) {
+        saved_errno = ENOMEM;
+        goto error;
+    }
     if (!(ktm->ready = zlist_new ())) {
         saved_errno = ENOMEM;
         goto error;
@@ -994,6 +999,8 @@ kvstxn_mgr_t *kvstxn_mgr_create (struct cache *cache,
 void kvstxn_mgr_destroy (kvstxn_mgr_t *ktm)
 {
     if (ktm) {
+        if (ktm->ready_merged)
+            zlist_destroy (&ktm->ready_merged);
         if (ktm->ready)
             zlist_destroy (&ktm->ready);
         free (ktm);
@@ -1032,17 +1039,31 @@ bool kvstxn_mgr_transaction_ready (kvstxn_mgr_t *ktm)
 {
     kvstxn_t *kt;
 
-    if ((kt = zlist_first (ktm->ready)) && !kt->blocked)
-        return true;
+    if ((kt = zlist_first (ktm->ready_merged))) {
+        if (!kt->blocked)
+            return true;
+        return false;
+    }
+    else if ((kt = zlist_first (ktm->ready))) {
+        if (!kt->blocked)
+            return true;
+        return false;
+    }
     return false;
 }
 
 kvstxn_t *kvstxn_mgr_get_ready_transaction (kvstxn_mgr_t *ktm)
 {
     if (kvstxn_mgr_transaction_ready (ktm)) {
-        kvstxn_t *kt = zlist_first (ktm->ready);
-        kt->internal_flags |= KVSTXN_PROCESSING;
-        return kt;
+        kvstxn_t *kt = zlist_first (ktm->ready_merged);
+        if (kt) {
+            kt->internal_flags |= KVSTXN_PROCESSING;
+            return kt;
+        }
+        else if ((kt = zlist_first (ktm->ready))) {
+            kt->internal_flags |= KVSTXN_PROCESSING;
+            return kt;
+        }
     }
     return NULL;
 }
@@ -1051,26 +1072,29 @@ void kvstxn_mgr_remove_transaction (kvstxn_mgr_t *ktm, kvstxn_t *kt,
                                     bool fallback)
 {
     if (kt->internal_flags & KVSTXN_PROCESSING) {
-        bool kvstxn_is_merged = false;
+        if (kt->internal_flags & KVSTXN_MERGED
+            || kt->internal_flags & KVSTXN_MERGE_COMPONENT) {
 
-        if (kt->internal_flags & KVSTXN_MERGED)
-            kvstxn_is_merged = true;
+            zlist_remove (ktm->ready_merged, kt);
 
-        zlist_remove (ktm->ready, kt);
+            if (kt->internal_flags & KVSTXN_MERGED) {
+                kvstxn_t *kt_tmp = zlist_first (ktm->ready_merged);
+                while (kt_tmp) {
 
-        if (kvstxn_is_merged) {
-            kvstxn_t *kt_tmp = zlist_first (ktm->ready);
-            while (kt_tmp && (kt_tmp->internal_flags & KVSTXN_MERGE_COMPONENT)) {
-                if (fallback) {
-                    kt_tmp->internal_flags &= ~KVSTXN_MERGE_COMPONENT;
-                    kt_tmp->flags |= FLUX_KVS_NO_MERGE;
+                    /* This must be true if we're on the ready_merged queue */
+                    assert (kt_tmp->internal_flags & KVSTXN_MERGE_COMPONENT);
+
+                    if (fallback)
+                        kt_tmp->flags |= FLUX_KVS_NO_MERGE;
+                    else
+                        zlist_remove (ktm->ready_merged, kt_tmp);
+
+                    kt_tmp = zlist_next (ktm->ready_merged);
                 }
-                else
-                    zlist_remove (ktm->ready, kt_tmp);
-
-                kt_tmp = zlist_next (ktm->ready);
             }
         }
+        else
+            zlist_remove (ktm->ready, kt);
     }
 }
 
@@ -1086,7 +1110,7 @@ void kvstxn_mgr_clear_noop_stores (kvstxn_mgr_t *ktm)
 
 int kvstxn_mgr_ready_transaction_count (kvstxn_mgr_t *ktm)
 {
-    return zlist_size (ktm->ready);
+    return (zlist_size (ktm->ready_merged) + zlist_size (ktm->ready));
 }
 
 static int kvstxn_merge (kvstxn_t *dest, kvstxn_t *src)
@@ -1173,6 +1197,10 @@ int kvstxn_mgr_merge_ready_transactions (kvstxn_mgr_t *ktm)
     kvstxn_t *nextkt;
     int count = 0;
 
+    /* If there is already a merged transaction, don't merge further */
+    if (zlist_size (ktm->ready_merged) > 0)
+        return 0;
+
     /* transaction must still be in state where merged in ops can be
      * applied */
     first = zlist_first (ktm->ready);
@@ -1180,8 +1208,7 @@ int kvstxn_mgr_merge_ready_transactions (kvstxn_mgr_t *ktm)
         || first->errnum != 0
         || first->aux_errnum != 0
         || first->state > KVSTXN_STATE_APPLY_OPS
-        || (first->flags & FLUX_KVS_NO_MERGE)
-        || first->internal_flags & KVSTXN_MERGED)
+        || (first->flags & FLUX_KVS_NO_MERGE))
         return 0;
 
     second = zlist_next (ktm->ready);
@@ -1212,20 +1239,33 @@ int kvstxn_mgr_merge_ready_transactions (kvstxn_mgr_t *ktm)
     /* if count is zero, checks at beginning of function are invalid */
     assert (count);
 
-    if (zlist_push (ktm->ready, new) < 0) {
+    if (zlist_push (ktm->ready_merged, new) < 0) {
         kvstxn_destroy (new);
         return -1;
     }
-    zlist_freefn (ktm->ready, new, (zlist_free_fn *)kvstxn_destroy, false);
+    zlist_freefn (ktm->ready_merged, new, (zlist_free_fn *)kvstxn_destroy, false);
 
-    nextkt = zlist_first (ktm->ready);
+    nextkt = zlist_pop (ktm->ready);
     do {
+        int ret;
+
         /* Wipe out KVSTXN_PROCESSING flag if user previously got
          * the kvstxn_t
          */
         nextkt->internal_flags &= ~KVSTXN_PROCESSING;
         nextkt->internal_flags |= KVSTXN_MERGE_COMPONENT;
-    } while (--count && (nextkt = zlist_next (ktm->ready)));
+
+        /* Generally speaking, we've recovered enough memory from the
+         * zlist_pop() above that a fail on the zlist_append() here
+         * should be impossible.  So we assert on failure here.  In
+         * addition, if we failed, there's no recovery option.  We
+         * have lost the transaction from the ready queue and are
+         * unable to put it on the ready_merged queue.
+         */
+
+        ret = zlist_append (ktm->ready_merged, nextkt);
+        assert (ret == 0);
+    } while (--count && (nextkt = zlist_pop (ktm->ready)));
 
     return 0;
 }
