@@ -1212,6 +1212,12 @@ int kvstxn_mgr_merge_ready_transactions (kvstxn_mgr_t *ktm)
     /* if count is zero, checks at beginning of function are invalid */
     assert (count);
 
+    if (zlist_push (ktm->ready, new) < 0) {
+        kvstxn_destroy (new);
+        return -1;
+    }
+    zlist_freefn (ktm->ready, new, (zlist_free_fn *)kvstxn_destroy, false);
+
     nextkt = zlist_first (ktm->ready);
     do {
         /* Wipe out KVSTXN_PROCESSING flag if user previously got
@@ -1221,8 +1227,6 @@ int kvstxn_mgr_merge_ready_transactions (kvstxn_mgr_t *ktm)
         nextkt->internal_flags |= KVSTXN_MERGE_COMPONENT;
     } while (--count && (nextkt = zlist_next (ktm->ready)));
 
-    zlist_push (ktm->ready, new);
-    zlist_freefn (ktm->ready, new, (zlist_free_fn *)kvstxn_destroy, false);
     return 0;
 }
 
