@@ -688,8 +688,11 @@ void kvstxn_basic_kvstxn_process_test_multiple_transactions_merge (void)
     verify_value (cache, newroot, "bar.key2", "2");
 
     kvstxn_mgr_remove_transaction (ktm, kt, false);
+<<<<<<< HEAD
 
     memcpy (rootref, newroot, sizeof (blobref_t));
+=======
+>>>>>>> 5dc1611addcaca43af45da06f0673e9b375a69ad
 
     /* process the lingering transaction */
 
@@ -2296,12 +2299,19 @@ void kvstxn_process_fallback_merge (void)
 
     memcpy (rootref, newroot, sizeof (blobref_t));
 
+<<<<<<< HEAD
     /* now we try the process the next transaction, which should be the bad one */
+=======
+    /* now we try and transaction the next fence, which should be the bad one */
+>>>>>>> 5dc1611addcaca43af45da06f0673e9b375a69ad
 
     ok ((kt = kvstxn_mgr_get_ready_transaction (ktm)) != NULL,
         "kvstxn_mgr_get_ready_transaction returns ready transaction");
 
+<<<<<<< HEAD
 #if 0
+=======
+>>>>>>> 5dc1611addcaca43af45da06f0673e9b375a69ad
     ok (kvstxn_fallback_mergeable (kt) == false,
         "kvstxn_fallback_mergeable returns false on unmerged transaction");
 
@@ -2317,7 +2327,10 @@ void kvstxn_process_fallback_merge (void)
 
     ok ((kt = kvstxn_mgr_get_ready_transaction (ktm)) == NULL,
         "kvstxn_mgr_get_ready_transaction returns NULL, no more transactions");
+<<<<<<< HEAD
 #endif
+=======
+>>>>>>> 5dc1611addcaca43af45da06f0673e9b375a69ad
 
     kvstxn_mgr_destroy (ktm);
     cache_destroy (cache);

@@ -1084,6 +1084,7 @@ void kvstxn_mgr_remove_transaction (kvstxn_mgr_t *ktm, kvstxn_t *kt,
                     /* This must be true if we're on the ready_merged queue */
                     assert (kt_tmp->internal_flags & KVSTXN_MERGE_COMPONENT);
 
+<<<<<<< HEAD
                     if (fallback)
                         kt_tmp->flags |= FLUX_KVS_NO_MERGE;
                     else
@@ -1091,6 +1092,19 @@ void kvstxn_mgr_remove_transaction (kvstxn_mgr_t *ktm, kvstxn_t *kt,
 
                     kt_tmp = zlist_next (ktm->ready_merged);
                 }
+=======
+        if (kvstxn_is_merged) {
+            kvstxn_t *kt_tmp = zlist_first (ktm->ready);
+            while (kt_tmp && (kt_tmp->internal_flags & KVSTXN_MERGE_COMPONENT)) {
+                if (fallback) {
+                    kt_tmp->internal_flags &= ~KVSTXN_MERGE_COMPONENT;
+                    kt_tmp->flags |= FLUX_KVS_NO_MERGE;
+                }
+                else
+                    zlist_remove (ktm->ready, kt_tmp);
+
+                kt_tmp = zlist_next (ktm->ready);
+>>>>>>> 5dc1611addcaca43af45da06f0673e9b375a69ad
             }
         }
         else
