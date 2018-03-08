@@ -1197,53 +1197,102 @@ int kvstxn_mgr_merge_ready_transactions (kvstxn_mgr_t *ktm)
     kvstxn_t *nextkt;
     int count = 0;
 
-    /* If there is already a merged transaction, don't merge further */
-    if (zlist_size (ktm->ready_merged) > 0)
-        return 0;
+    if (zlist_size (ktm->ready_merged) > 0) {
+        kvstxn_t *merge_head;
 
-    /* transaction must still be in state where merged in ops can be
-     * applied */
-    first = zlist_first (ktm->ready);
-    if (!first
-        || first->errnum != 0
-        || first->aux_errnum != 0
-        || first->state > KVSTXN_STATE_APPLY_OPS
-        || (first->flags & FLUX_KVS_NO_MERGE))
-        return 0;
+        /* If there are no transactions on the ready queue, we can't
+         * merge further
+         */
+        if (!zlist_size (ktm->ready))
+            return 0;
 
-    second = zlist_next (ktm->ready);
-    if (!second
-        || (second->flags & FLUX_KVS_NO_MERGE)
-        || (first->flags != second->flags))
-        return 0;
+        merge_head = zlist_first (ktm->ready_merged);
 
-    if (!(new = kvstxn_create_empty (ktm, first->flags)))
-        return -1;
-    new->internal_flags |= KVSTXN_MERGED;
+        /* If the merge_head transaction in the ready_merged queue does not
+         * have KVSTXN_MERGED set, that means we've fallback'ed on a
+         * merged transaction.  Allow user to move through each of
+         * these merged transactions individually and do not merge
+         * further.
+         */
+        if (!(merge_head->internal_flags & KVSTXN_MERGED))
+            return 0;
 
-    nextkt = zlist_first (ktm->ready);
-    do {
-        int ret;
+        /* If any of these conditions are true, we can't merge
+         * further
+         */
+        if (merge_head->errnum != 0
+            || merge_head->aux_errnum != 0
+            || merge_head->state > KVSTXN_STATE_APPLY_OPS)
+            return 0;
 
-        if ((ret = kvstxn_merge (new, nextkt)) < 0) {
+        first = zlist_first (ktm->ready);
+        if ((first->flags & FLUX_KVS_NO_MERGE)
+            || (first->flags != first->flags))
+            return 0;
+
+        /* At this point, we can merge more transaction from the ready
+         * queue into the head merge on the ready_merged queue.
+         */
+
+        nextkt = first;
+        do {
+            int ret;
+
+            if ((ret = kvstxn_merge (merge_head, nextkt)) < 0)
+                return -1;
+
+            if (!ret)
+                break;
+
+            count++;
+        } while ((nextkt = zlist_next (ktm->ready)));
+    }
+    else {
+
+        /* transaction must still be in state where merged in ops can be
+         * applied */
+        first = zlist_first (ktm->ready);
+        if (!first
+            || first->errnum != 0
+            || first->aux_errnum != 0
+            || first->state > KVSTXN_STATE_APPLY_OPS
+            || (first->flags & FLUX_KVS_NO_MERGE))
+            return 0;
+
+        second = zlist_next (ktm->ready);
+        if (!second
+            || (second->flags & FLUX_KVS_NO_MERGE)
+            || (first->flags != second->flags))
+            return 0;
+
+        if (!(new = kvstxn_create_empty (ktm, first->flags)))
+            return -1;
+        new->internal_flags |= KVSTXN_MERGED;
+
+        nextkt = zlist_first (ktm->ready);
+        do {
+            int ret;
+
+            if ((ret = kvstxn_merge (new, nextkt)) < 0) {
+                kvstxn_destroy (new);
+                return -1;
+            }
+
+            if (!ret)
+                break;
+
+            count++;
+        } while ((nextkt = zlist_next (ktm->ready)));
+
+        if (zlist_push (ktm->ready_merged, new) < 0) {
             kvstxn_destroy (new);
             return -1;
         }
-
-        if (!ret)
-            break;
-
-        count++;
-    } while ((nextkt = zlist_next (ktm->ready)));
-
-    /* if count is zero, checks at beginning of function are invalid */
-    assert (count);
-
-    if (zlist_push (ktm->ready_merged, new) < 0) {
-        kvstxn_destroy (new);
-        return -1;
+        zlist_freefn (ktm->ready_merged, new, (zlist_free_fn *)kvstxn_destroy, false);
     }
-    zlist_freefn (ktm->ready_merged, new, (zlist_free_fn *)kvstxn_destroy, false);
+
+    /* if count is zero, logic in checks above is invalid */
+    assert (count);
 
     nextkt = zlist_pop (ktm->ready);
     do {
