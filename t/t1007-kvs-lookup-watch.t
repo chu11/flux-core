@@ -168,13 +168,13 @@ test_expect_success NO_CHAIN_LINT 'flux kvs get --waitcreate works on non-existe
 '
 
 test_expect_success NO_CHAIN_LINT 'flux kvs get --waitcreate works on non-existent namespace' '
-        ! flux kvs get --namespace=ns_waitcreate test.waitcreate3 &&
-        flux kvs get --namespace=ns_waitcreate --waitcreate \
+        ! flux kvs get --namespace=ns_waitcreate3 test.waitcreate3 &&
+        flux kvs get --namespace=ns_waitcreate3 --waitcreate \
                      test.waitcreate3 > waitcreate3.out &
         pid=$! &&
-        wait_watcherscount_nonzero ns_waitcreate &&
-        flux kvs namespace create ns_waitcreate &&
-        flux kvs put --namespace=ns_waitcreate test.waitcreate3=3 &&
+        wait_watcherscount_nonzero ns_waitcreate3 &&
+        flux kvs namespace create ns_waitcreate3 &&
+        flux kvs put --namespace=ns_waitcreate3 test.waitcreate3=3 &&
 	$waitfile --count=1 --timeout=10 \
 		  --pattern="3" waitcreate3.out >/dev/null &&
         wait $pid
@@ -190,54 +190,54 @@ test_expect_success 'flux_kvs_lookup with waitcreate can be canceled' '
 test_expect_success NO_CHAIN_LINT 'flux kvs get, basic --watch & --waitcreate works' '
         ! flux kvs get --watch test.create_later &&
         flux kvs get --watch --waitcreate --count=1 \
-                     test.create_later > waitcreate.out &
+                     test.create_later > waitcreate4.out &
         pid=$! &&
         wait_watcherscount_nonzero primary &&
         flux kvs put test.create_later=0 &&
 	$waitfile --count=1 --timeout=10 \
-		  --pattern="0" waitcreate.out >/dev/null &&
+		  --pattern="0" waitcreate4.out >/dev/null &&
         wait $pid
 '
 
 test_expect_success NO_CHAIN_LINT 'flux kvs get, --watch & --waitcreate & remove key works' '
         ! flux kvs get --watch test.create_and_remove &&
         flux kvs get --watch --waitcreate --count=2 \
-                     test.create_and_remove > waitcreate2.out 2>&1 &
+                     test.create_and_remove > waitcreate6.out 2>&1 &
         pid=$! &&
         wait_watcherscount_nonzero primary &&
         flux kvs put test.create_and_remove=0 &&
 	$waitfile --count=1 --timeout=10 \
-		  --pattern="0" waitcreate2.out >/dev/null &&
+		  --pattern="0" waitcreate6.out >/dev/null &&
         flux kvs unlink test.create_and_remove &&
         ! wait $pid &&
-        grep "No such file or directory" waitcreate2.out
+        grep "No such file or directory" waitcreate6.out
 '
 
 test_expect_success NO_CHAIN_LINT 'flux kvs get, --watch & --waitcreate, create & remove namespace works' '
         ! flux kvs get --namespace=ns_create_and_remove --watch test.ns_create_and_remove &&
         flux kvs get --namespace=ns_create_and_remove --watch --waitcreate --count=2 \
-                     test.ns_create_and_remove > waitcreate4.out 2>&1 &
+                     test.ns_create_and_remove > waitcreate7.out 2>&1 &
         pid=$! &&
         wait_watcherscount_nonzero ns_create_and_remove &&
         flux kvs namespace create ns_create_and_remove &&
         flux kvs put --namespace=ns_create_and_remove test.ns_create_and_remove=0 &&
         $waitfile --count=1 --timeout=10 \
-                  --pattern="0" waitcreate4.out >/dev/null &&
+                  --pattern="0" waitcreate7.out >/dev/null &&
         flux kvs namespace remove ns_create_and_remove &&
         ! wait $pid &&
-        grep "Operation not supported" waitcreate4.out
+        grep "Operation not supported" waitcreate7.out
 '
 
 test_expect_success NO_CHAIN_LINT 'flux kvs get, --watch & --waitcreate, doesnt work on removed namespace' '
         flux kvs namespace create ns_remove &&
         ! flux kvs get --namespace=ns_remove --watch test.ns_remove &&
         flux kvs get --namespace=ns_remove --watch --waitcreate --count=1 \
-                     test.ns_remove > waitcreate5.out 2>&1 &
+                     test.ns_remove > waitcreate8.out 2>&1 &
         pid=$! &&
         wait_watcherscount_nonzero ns_remove &&
         flux kvs namespace remove ns_remove &&
         ! wait $pid &&
-        grep "Operation not supported" waitcreate5.out
+        grep "Operation not supported" waitcreate8.out
 '
 
 #
