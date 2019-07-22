@@ -774,8 +774,11 @@ void cmd_get_one (flux_t *h, const char *key, struct lookup_ctx *ctx)
         if (optparse_hasopt (ctx->p, "append"))
             flags |= FLUX_KVS_WATCH_APPEND;
     }
-    if (optparse_hasopt (ctx->p, "waitcreate"))
+    if (optparse_hasopt (ctx->p, "waitcreate")) {
         flags |= FLUX_KVS_WAITCREATE;
+        if (optparse_hasopt (ctx->p, "full"))
+            flags |= FLUX_KVS_WATCH_FULL;
+    }
     if (optparse_hasopt (ctx->p, "at")) {
         const char *reference = optparse_get_str (ctx->p, "at", NULL);
         if (!(f = flux_kvs_lookupat (h, flags, key, reference)))

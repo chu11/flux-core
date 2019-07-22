@@ -74,10 +74,10 @@ each time the key is written to until interrupted, or if '-c count' is
 specified, until 'count' values have been displayed.  If '-u' is
 specified, only writes that change the key value will be displayed.
 If '-A' is specified, only display appends that occur on a key.
-By default, only a direct write to a key is monitored, which may miss
-several unique situations, such as the replacement of an entire parent
-directory.  The '-f' option can be specified to monitor for many of
-these special situations.
+By default, only a direct write to a key is monitored in '-W' or '-w',
+which may miss several unique situations, such as the replacement of
+an entire parent directory.  The '-f' option can be specified to
+monitor for many of these special situations.
 
 *put* [-N ns] [-O|-s] [-j|-r|-t] [-n] [-A] 'key=value' ['key=value...']::
 Store 'value' under 'key' and commit it.  Specify an alternate

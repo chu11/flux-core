@@ -240,6 +240,34 @@ test_expect_success NO_CHAIN_LINT 'flux kvs get, --watch & --waitcreate, doesnt 
         grep "Operation not supported" waitcreate8.out
 '
 
+test_expect_success NO_CHAIN_LINT 'flux kvs get --waitcreate works on child key with --full' '
+        ! flux kvs get test.waitcreate9 &&
+        flux kvs get --waitcreate --full test.waitcreate9.foo > waitcreate9.out &
+        pid=$! &&
+        wait_watcherscount_nonzero primary &&
+        flux kvs put test.waitcreate9_tmp.foo="xyz" &&
+        DIRREF=$(flux kvs get --treeobj test.waitcreate9_tmp) &&
+        flux kvs put --treeobj test.waitcreate9="${DIRREF}" &&
+        $waitfile --count=1 --timeout=10 \
+        	  --pattern="xyz" waitcreate9.out >/dev/null &&
+        wait $pid
+'
+
+test_expect_success NO_CHAIN_LINT 'flux kvs get --waitcreate works on child key with --full in non-existent namespace' '
+        ! flux kvs get --namespace=ns_waitcreate10 test.waitcreate10 &&
+        flux kvs get --namespace=ns_waitcreate10 --waitcreate --full \
+                     test.waitcreate10.foo > waitcreate10.out &
+        pid=$! &&
+        wait_watcherscount_nonzero ns_waitcreate10 &&
+        flux kvs namespace create ns_waitcreate10 &&
+        flux kvs put --namespace=ns_waitcreate10 test.waitcreate10_tmp.foo="xyz" &&
+        DIRREF=$(flux kvs get --namespace=ns_waitcreate10 --treeobj test.waitcreate10_tmp) &&
+        flux kvs put --namespace=ns_waitcreate10 --treeobj test.waitcreate10="${DIRREF}" &&
+	$waitfile --count=1 --timeout=10 \
+		  --pattern="xyz" waitcreate10.out >/dev/null &&
+        wait $pid
+'
+
 #
 # append tests
 #
@@ -665,4 +693,5 @@ test_expect_success 'flux kvs get --watch allows owner access to guest ns' '
 test_expect_success 'kvs-watch.lookup request with empty payload fails with EPROTO(71)' '
 	${RPC} kvs-watch.lookup 71 </dev/null
 '
+
 test_done
