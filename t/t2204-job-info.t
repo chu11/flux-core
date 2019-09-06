@@ -377,6 +377,50 @@ test_expect_success 'flux job wait-event -p hangs on no event (wait job)' '
         flux job cancel $jobidall &&
         flux job cancel $jobid
 '
+test_expect_success NO_CHAIN_LINT 'flux job wait-event hangs on non-existent guest eventlog (live job)' '
+        jobid=$(submit_job_live test.json)
+        ! run_timeout 0.2 flux job wait-event -p "guest.create1.eventlog" $jobid done &&
+        flux job cancel $jobid
+'
+
+test_expect_success NO_CHAIN_LINT 'flux job wait-event waits for guest eventlog (live job)' '
+        jobid=$(submit_job_live test.json)
+        flux job wait-event -p "guest.create2.eventlog" $jobid create2 > guest_waitcreate2.out &
+        waitpid=$! &&
+        wait_watchers_nonzero "watchers" &&
+        wait_watchers_nonzero "guest_watchers" &&
+        guestns=$(flux job namespace $jobid) &&
+        wait_watcherscount_nonzero $guestns &&
+        flux kvs eventlog append --namespace=$guestns create2.eventlog create2 &&
+        flux job cancel $jobid &&
+        wait $waitpid &&
+        grep create2 guest_waitcreate2.out
+'
+
+test_expect_success NO_CHAIN_LINT 'flux job wait-event hangs on non-existent guest eventlog (wait job)' '
+        jobidall=$(submit_job_live test-all.json)
+        jobid=$(submit_job_wait)
+        ! run_timeout 0.2 flux job wait-event -v -p "guest.create3.eventlog" ${jobid} create3 &&
+        flux job cancel ${jobidall} &&
+        flux job cancel ${jobid}
+'
+
+test_expect_success NO_CHAIN_LINT 'flux job wait-event waits for guest eventlog (wait job)' '
+        jobidall=$(submit_job_live test-all.json)
+        jobid=$(submit_job_wait)
+        flux job wait-event -v -p "guest.create4.eventlog" ${jobid} create4 > guest_waitcreate4.out &
+        waitpid=$! &&
+        wait_watchers_nonzero "watchers" &&
+        wait_watchers_nonzero "guest_watchers" &&
+        flux job cancel ${jobidall} &&
+        flux job wait-event ${jobid} start &&
+        guestns=$(flux job namespace ${jobid}) &&
+        wait_watcherscount_nonzero $guestns &&
+        flux kvs eventlog append --namespace=$guestns create4.eventlog create4 &&
+        flux job cancel ${jobid} &&
+        wait $waitpid &&
+        grep create4 guest_waitcreate4.out
+'
 
 #
 # job info tests
