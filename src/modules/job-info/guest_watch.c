@@ -607,9 +607,10 @@ static void guest_namespace_watch_continuation (flux_future_t *f, void *arg)
              * guest namespace.
              *
              * Note that it is possible the guest eventlog is simply
-             * empty / had no events in it.  There's no way to know
-             * for certain if it is this case or a race.  This is an
-             * unfortunate behavior difference.  Issue #2356.
+             * empty / had no events in it / was never created.
+             * There's no way to know for certain if it is this case
+             * or a race.  This is an unfortunate behavior difference.
+             * Issue #2356.
              */
             gw->guest_namespace_removed = true;
             if (!gw->guest_namespace_events) {

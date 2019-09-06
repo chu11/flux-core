@@ -123,6 +123,15 @@ static int watch_key (struct watch_ctx *w)
                             __FUNCTION__);
             return -1;
         }
+        /* While creation of the guest namespace can be guaranteed
+         * based on the states in the primary job eventlog, creation
+         * of eventlogs within the guest namespace can be racy.  So we
+         * will WAITCREATE on them.
+         *
+         * In the event the guest eventlog is never created, behavior
+         * mimics the behavior of an eventlog with no events.
+         */
+        flags |= FLUX_KVS_WAITCREATE;
         nsptr = ns;
         pathptr = w->path;
     }
