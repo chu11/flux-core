@@ -20,7 +20,7 @@
  * - returned object should be json_decref()'d after use
  */
 json_t *ioencode (const char *stream,
-                  int rank,
+                  const char *rank,
                   const char *data,
                   int len,
                   bool eof);
@@ -32,7 +32,7 @@ json_t *ioencode (const char *stream,
  */
 int iodecode (json_t *o,
               const char **stream,
-              int *rank,
+              const char **rank,
               char **data,
               int *len,
               bool *eof);
