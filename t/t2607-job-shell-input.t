@@ -28,6 +28,72 @@ test_expect_success 'flux-shell: generate input for stdin input tests' '
 '
 
 #
+# pipe in stdin tests
+#
+
+test_expect_success 'flux-shell: run 1-task no pipe in stdin' '
+        id=$(flux mini submit -n1 echo foo) &&
+        flux job attach $id > pipe0.out
+        grep foo pipe0.out
+'
+
+test_expect_success 'flux-shell: run 1-task pipe in stdin, no stdin desired' '
+        id=$(flux mini submit -n1 echo foo) &&
+        flux job attach $id < input_stdin_file > pipe1.out &&
+        grep foo pipe1.out
+'
+
+test_expect_success 'flux-shell: run 1-task input file as stdin job' '
+        id=$(flux mini submit -n1 \
+             ${TEST_SUBPROCESS_DIR}/test_echo -O -n) &&
+        flux job attach $id < input_stdin_file > pipe2.out &&
+        test_cmp input_stdin_file pipe2.out
+'
+
+test_expect_success 'flux-shell: run 2-task input file as stdin job' '
+        id=$(flux mini submit -n2 \
+             ${TEST_SUBPROCESS_DIR}/test_echo -O -n) &&
+        flux job attach -l $id < input_stdin_file > pipe3.out &&
+        grep "0: foo" pipe3.out &&
+        grep "0: doh" pipe3.out &&
+        grep "1: foo" pipe3.out &&
+        grep "1: doh" pipe3.out
+'
+
+test_expect_success LONGTEST 'flux-shell: 10K line lptest piped input works' '
+        id=$(flux mini submit -n1 \
+             ${TEST_SUBPROCESS_DIR}/test_echo -O -n) &&
+        flux job attach $id < lptestXXL_input > pipe4.out &&
+	test_cmp lptestXXL_input pipe4.out
+'
+
+test_expect_success 'flux-shell: task completed, try to pipe into stdin' '
+        id=$(flux mini submit -n1 echo foo) &&
+        flux job wait-event $id clean &&
+        ! flux job attach $id < input_stdin_file 2> pipe_err0.out
+'
+
+test_expect_success NO_CHAIN_LINT 'flux-shell: pipe to stdin twice, second fails' '
+        id=$(flux mini submit -n1 sleep 60)
+        flux job attach $id < input_stdin_file &
+        pid=$! &&
+        flux job wait-event -p guest.input -m eof=true $id data &&
+        ! flux job attach $id < input_stdin_file &&
+        flux job cancel $id
+'
+
+test_expect_success NO_CHAIN_LINT 'flux-shell: pipe to stdin twice, first empty' '
+        id=$(flux mini submit -n1 \
+             ${TEST_SUBPROCESS_DIR}/test_echo -O -n)
+        flux job attach $id > pipe5A.out &
+        pid=$! &&
+        flux job attach $id < input_stdin_file > pipe5B.out &&
+        wait $pid &&
+        test_cmp input_stdin_file pipe5A.out &&
+        test_cmp input_stdin_file pipe5B.out
+'
+
+#
 # input file tests
 #
 
@@ -55,6 +121,13 @@ test_expect_success LONGTEST 'flux-shell: 10K line lptest input works' '
 test_expect_success 'flux-shell: input file invalid' '
         ! flux mini run -n1 --input=/foo/bar/baz \
              ${TEST_SUBPROCESS_DIR}/test_echo -O -n > file_err0.out
+'
+
+test_expect_success 'flux-shell: task stdin via file, try to pipe into stdin fails' '
+        id=$(flux mini submit -n1 --input=input_stdin_file sleep 60) &&
+        flux job wait-event $id start &&
+        ! flux job attach $id < input_stdin_file &&
+        flux job cancel $id
 '
 
 test_expect_success 'job-shell: unload job-exec & sched-simple modules' '
