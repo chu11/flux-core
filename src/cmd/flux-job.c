@@ -752,8 +752,11 @@ struct attach_ctx {
     flux_watcher_t *sigint_w;
     flux_watcher_t *sigtstp_w;
     struct timespec t_sigint;
+    flux_watcher_t *stdin_w;
     optparse_t *p;
     bool output_header_parsed;
+    int leader_rank;
+    int total_stdin;
     double timestamp_zero;
 };
 
@@ -919,6 +922,87 @@ void attach_signal_cb (flux_reactor_t *r, flux_watcher_t *w,
     }
 }
 
+static void attach_send_shell_completion (flux_future_t *f, void *arg)
+{
+    /* failng to write stdin to service is a fatal error */
+    if (flux_future_get (f, NULL) < 0) {
+        /* stdin may not be accepted for multiple reasons
+         * - job has completed
+         * - user requested stdin via file
+         * - stdin stream already closed due to prior pipe in
+         */
+        if (errno == ENOSYS)
+            log_msg_exit ("stdin not accepted by job");
+        log_err_exit ("attach_send_shell");
+    }
+    flux_future_destroy (f);
+}
+
+static int attach_send_shell (struct attach_ctx *ctx,
+                              void *buf,
+                              int len,
+                              bool eof)
+{
+    json_t *context = NULL;
+    char topic[1024];
+    flux_future_t *f = NULL;
+    int saved_errno;
+    int rc = -1;
+
+    snprintf (topic, sizeof (topic), "shell-%ju.stdin", (uintmax_t)ctx->id);
+    if (!(context = ioencode ("stdin", "all", buf, len, eof)))
+        goto error;
+    if (!(f = flux_rpc_pack (ctx->h, topic, ctx->leader_rank, 0, "O", context)))
+        goto error;
+    if (flux_future_then (f, -1, attach_send_shell_completion, ctx) < 0)
+        goto error;
+    /* f memory now in hands of attach_send_shell_completion() */
+    f = NULL;
+    rc = 0;
+ error:
+    saved_errno = errno;
+    json_decref (context);
+    flux_future_destroy (f);
+    errno = saved_errno;
+    return rc;
+}
+
+/* Handle std input from user */
+void attach_stdin_cb (flux_reactor_t *r, flux_watcher_t *w,
+                      int revents, void *arg)
+{
+    struct attach_ctx *ctx = arg;
+
+    if (revents & FLUX_POLLIN) {
+        ssize_t n;
+        long ps = sysconf (_SC_PAGESIZE);
+        char buf[ps];
+
+        assert (ps > 0);
+
+        if ((n = read (STDIN_FILENO, buf, ps)) < 0)
+            log_err_exit ("read on stdin");
+
+        if (n > 0) {
+            if (attach_send_shell (ctx, buf, n, false) < 0)
+                log_err_exit ("attach_send_shell");
+            ctx->total_stdin += n;
+        }
+        else {
+            /* The most common scenario is user has no stdin, no need
+             * to send EOF to shell */
+            if (ctx->total_stdin) {
+                if (attach_send_shell (ctx, NULL, 0, true) < 0)
+                    log_err_exit ("attach_send_shell");
+            }
+            flux_reactor_active_incref (flux_get_reactor (ctx->h));
+            flux_watcher_stop (ctx->stdin_w);
+        }
+    }
+    else
+        log_msg_exit ("unexpected event on stdin: 0x%X", revents);
+}
+
 /* Handle an event in the guest.exec eventlog.
  * This is a stream of responses, one response per event, terminated with
  * an ENODATA error response (or another error if something went wrong).
@@ -946,7 +1030,22 @@ void attach_exec_event_continuation (flux_future_t *f, void *arg)
     if (eventlog_entry_parse (o, &timestamp, &name, &context) < 0)
         log_err_exit ("eventlog_entry_parse");
 
-    if (!strcmp (name, "output-ready")) {
+    if (!strcmp (name, "input-ready")) {
+        if (json_unpack (context, "{s:i}",
+                         "leader-rank", &ctx->leader_rank) < 0)
+            log_err_exit ("error decoding input-ready context");
+
+        if (!(ctx->stdin_w = flux_fd_watcher_create (flux_get_reactor (ctx->h),
+                                                     STDIN_FILENO,
+                                                     FLUX_POLLIN,
+                                                     attach_stdin_cb,
+                                                     ctx)))
+            log_err_exit ("flux_fd_watcher_create");
+
+        flux_watcher_start (ctx->stdin_w);
+        flux_reactor_active_decref (flux_get_reactor (ctx->h));
+    }
+    else if (!strcmp (name, "output-ready")) {
         if (!(ctx->output_f = flux_job_event_watch (ctx->h,
                                                     ctx->id,
                                                     "guest.output",
@@ -1119,6 +1218,7 @@ int cmd_attach (optparse_t *p, int argc, char **argv)
 
     flux_watcher_destroy (ctx.sigint_w);
     flux_watcher_destroy (ctx.sigtstp_w);
+    flux_watcher_destroy (ctx.stdin_w);
     flux_close (ctx.h);
     return ctx.exit_code;
 }
