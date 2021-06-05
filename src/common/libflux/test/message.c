@@ -27,6 +27,9 @@ void check_routes (void)
     flux_msg_t *msg;
     char *s;
 
+    errno = 0;
+    ok (flux_msg_frames (NULL) < 0 && errno == EINVAL,
+        "flux_msg_frames returns -1 errno EINVAL on msg = NULL");
     ok ((msg = flux_msg_create (FLUX_MSGTYPE_REQUEST)) != NULL
         && flux_msg_frames (msg) == 1,
         "flux_msg_create works and creates msg with 1 frame");

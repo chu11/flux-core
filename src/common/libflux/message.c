@@ -1685,6 +1685,10 @@ flux_msg_t *flux_msg_recvzsock (void *sock)
 
 int flux_msg_frames (const flux_msg_t *msg)
 {
+    if (!msg) {
+        errno = EINVAL;
+        return -1;
+    }
     return zmsg_size (msg->zmsg);
 }
 
