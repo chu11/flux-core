@@ -99,6 +99,7 @@ libflux_la_SOURCES = \
 	reactor.c \
 	msg_handler.c \
 	message.c \
+	message_private.h \
 	msglist.c \
 	request.c \
 	response.c \
@@ -174,6 +175,7 @@ test_ldadd = \
 	$(top_builddir)/src/common/libev/libev.la \
 	$(top_builddir)/src/common/libczmqcontainers/libczmqcontainers.la \
 	$(top_builddir)/src/common/libccan/libccan.la \
+	$(top_builddir)/src/common/libmsgproto/libmsgproto.la \
 	$(ZMQ_LIBS) \
 	$(LIBUUID_LIBS) \
 	$(JANSSON_LIBS) \

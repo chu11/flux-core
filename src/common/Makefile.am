@@ -23,7 +23,8 @@ SUBDIRS = \
 	libhostlist \
 	librlist \
 	libczmqcontainers \
-	libccan
+	libccan \
+	libmsgproto
 
 AM_CFLAGS = $(WARNING_CFLAGS) $(CODE_COVERAGE_CFLAGS)
 AM_LDFLAGS = $(CODE_COVERAGE_LIBS)
@@ -70,6 +71,7 @@ libflux_core_la_LIBADD = \
 	$(builddir)/libkvs/libkvs.la \
 	$(builddir)/libjob/libjob.la \
 	$(builddir)/libsubprocess/libsubprocess.la \
+	$(builddir)/libmsgproto/libmsgproto.la \
 	libflux-internal.la
 libflux_core_la_LDFLAGS = \
 	-Wl,--version-script=$(srcdir)/libflux-core.map \

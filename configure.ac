@@ -503,6 +503,7 @@ AC_CONFIG_FILES( \
   src/common/librlist/Makefile \
   src/common/libczmqcontainers/Makefile \
   src/common/libccan/Makefile \
+  src/common/libmsgproto/Makefile \
   src/bindings/Makefile \
   src/bindings/lua/Makefile \
   src/bindings/python/Makefile \

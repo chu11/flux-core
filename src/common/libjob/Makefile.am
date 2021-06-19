@@ -46,6 +46,7 @@ test_ldadd = \
         $(top_builddir)/src/common/libjob/libjob.la \
         $(top_builddir)/src/common/libflux/libflux.la \
         $(top_builddir)/src/common/libflux-internal.la \
+	$(top_builddir)/src/common/libmsgproto/libmsgproto.la \
         $(top_builddir)/src/common/libtap/libtap.la \
         $(ZMQ_LIBS) \
 	$(LIBUUID_LIBS) \
