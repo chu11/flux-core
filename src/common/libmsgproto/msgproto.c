@@ -25,6 +25,7 @@
 
 #include "msgproto.h"
 
+/* XXX asssumes caller memset/callocs */
 void msgproto_init (struct msgproto *proto)
 {
     if (proto) {

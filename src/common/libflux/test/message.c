@@ -707,6 +707,7 @@ void check_cmp (void)
     flux_msg_destroy (msg);
 }
 
+#if 0
 void check_encode (void)
 {
     flux_msg_t *msg, *msg2;
@@ -745,6 +746,7 @@ void check_encode (void)
     flux_msg_destroy (msg);
     flux_msg_destroy (msg2);
 }
+#endif
 
 void check_sendzsock (void)
 {
@@ -1119,7 +1121,9 @@ int main (int argc, char *argv[])
 
     check_cmp ();
 
+#if 0
     check_encode ();
+#endif
     check_sendzsock ();
 
     check_params ();

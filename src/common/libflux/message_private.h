@@ -18,7 +18,9 @@
 extern "C" {
 #endif
 
-const struct msgproto *flux_msg_get_proto (const flux_msg_t *msg);
+struct msgproto *flux_msg_get_proto (flux_msg_t *msg);
+
+flux_msg_t *flux_msg_create_common (void);
 
 #ifdef __cplusplus
 }

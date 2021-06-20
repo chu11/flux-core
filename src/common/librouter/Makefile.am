@@ -9,6 +9,7 @@ AM_CPPFLAGS = \
 	-I$(top_srcdir) \
 	-I$(top_srcdir)/src/include \
 	-I$(top_builddir)/src/common/libflux \
+	-I$(top_srcdir)/src/common/libccan \
 	$(ZMQ_CFLAGS) \
 	$(LIBUUID_CFLAGS)
 
@@ -63,6 +64,7 @@ test_ldadd = \
 	$(builddir)/libtestutil.la \
         $(top_builddir)/src/common/librouter/librouter.la \
         $(top_builddir)/src/common/libtestutil/libtestutil.la \
+        $(top_builddir)/src/common/libmsgproto/libmsgproto.la \
         $(top_builddir)/src/common/libflux-internal.la \
         $(top_builddir)/src/common/libflux-core.la \
         $(top_builddir)/src/common/libtap/libtap.la
