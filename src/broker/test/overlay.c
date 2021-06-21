@@ -22,6 +22,7 @@
 #include "src/common/libtestutil/util.h"
 #include "src/common/libutil/stdlog.h"
 #include "src/common/libutil/unlink_recursive.h"
+#include "src/common/librouter/router_msg.h"
 
 #include "src/broker/overlay.h"
 #include "src/broker/attr.h"

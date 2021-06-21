@@ -32,7 +32,9 @@ librouter_la_SOURCES = \
 	router.h \
 	router.c \
 	usock_service.h \
-	usock_service.c
+	usock_service.c \
+	router_msg.h \
+	router_msg.c
 
 TESTS = \
 	test_sendfd.t \

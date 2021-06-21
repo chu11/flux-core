@@ -748,6 +748,7 @@ void check_encode (void)
 }
 #endif
 
+#if 0
 void check_sendzsock (void)
 {
     zsock_t *zsock[2] = { NULL, NULL };
@@ -807,6 +808,7 @@ void check_sendzsock (void)
      */
     zsys_shutdown();
 }
+#endif
 
 void *myfree_arg = NULL;
 void myfree (void *arg)
@@ -1123,8 +1125,8 @@ int main (int argc, char *argv[])
 
 #if 0
     check_encode ();
-#endif
     check_sendzsock ();
+#endif
 
     check_params ();
 

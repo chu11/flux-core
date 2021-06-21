@@ -20,6 +20,7 @@
 #endif
 #include <flux/core.h>
 
+#include "src/common/librouter/router_msg.h"
 #include "src/common/libutil/log.h"
 
 #define MODHANDLE_MAGIC    0xfeefbe02

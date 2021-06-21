@@ -19,6 +19,7 @@
 
 #include "util.h"
 
+#include "src/common/librouter/router_msg.h"
 #include "src/common/libtap/tap.h"
 
 #ifndef UUID_STR_LEN

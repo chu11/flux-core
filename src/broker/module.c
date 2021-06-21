@@ -23,6 +23,7 @@
 #endif
 
 #include "src/common/libczmqcontainers/czmq_containers.h"
+#include "src/common/librouter/router_msg.h"
 #include "src/common/libutil/log.h"
 #include "src/common/libutil/iterators.h"
 #include "src/common/libutil/digest.h"
