@@ -330,19 +330,19 @@ int flux_msg_push_route (flux_msg_t *msg, const char *id);
  */
 int flux_msg_pop_route (flux_msg_t *msg, char **id);
 
-/* Copy the first route (e.g. first pushed route) contents (or NULL)
- * to 'id'.  Caller must free 'id'.
+/* Return the first route (e.g. first pushed route) contents (or NULL)
+ * to 'id'.
  * For requests, this is the sender; for responses, this is the recipient.
  * Returns 0 on success, -1 with errno set (e.g. EPROTO) on failure.
  */
-int flux_msg_get_route_first (const flux_msg_t *msg, char **id);
+int flux_msg_get_route_first (const flux_msg_t *msg, const char **id);
 
-/* Copy the last route (e.g. most recent pushed route) contents (or NULL)
- * to 'id'.  Caller must free 'id'.
+/* Return the last route (e.g. most recent pushed route) contents (or NULL)
+ * to 'id'.
  * For requests, this is the last hop; for responses: this is the next hop.
  * Returns 0 on success, -1 with errno set (e.g. EPROTO) on failure.
  */
-int flux_msg_get_route_last (const flux_msg_t *msg, char **id);
+int flux_msg_get_route_last (const flux_msg_t *msg, const char **id);
 
 /* Return the number of route frames in the message.
  * It is an EPROTO error if there is no route stack.

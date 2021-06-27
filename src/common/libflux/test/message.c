@@ -33,7 +33,7 @@ void check_cornercase (void)
     int type, errnum, status;
     uint32_t tag;
     uint8_t flags;
-    char *route;
+    const char *route;
     const char *topic;
     const void *payload;
     int payload_size;
@@ -311,6 +311,7 @@ void check_cornercase (void)
 void check_routes (void)
 {
     flux_msg_t *msg;
+    const char *route;
     char *s;
 
     ok ((msg = flux_msg_create (FLUX_MSGTYPE_REQUEST)) != NULL
@@ -326,43 +327,39 @@ void check_routes (void)
     ok (flux_msg_pop_route (msg, &s) == 0 && s == NULL,
         "flux_msg_pop_route works and sets id to NULL on msg w/o routes");
 
-    ok (flux_msg_get_route_first (msg, &s) == 0 && s == NULL,
+    ok (flux_msg_get_route_first (msg, &route) == 0 && route == NULL,
         "flux_msg_get_route_first returns 0, id=NULL on msg w/o routes");
-    ok (flux_msg_get_route_last (msg, &s) == 0 && s == NULL,
+    ok (flux_msg_get_route_last (msg, &route) == 0 && route == NULL,
         "flux_msg_get_route_last returns 0, id=NULL on msg w/o routes");
     ok (flux_msg_push_route (msg, "sender") == 0 && flux_msg_frames (msg) == 3,
         "flux_msg_push_route works and adds a frame");
     ok ((flux_msg_get_route_count (msg) == 1),
         "flux_msg_get_route_count returns 1 on msg w/ id1");
 
-    ok (flux_msg_get_route_first (msg, &s) == 0 && s != NULL,
+    ok (flux_msg_get_route_first (msg, &route) == 0 && route != NULL,
         "flux_msg_get_route_first works");
-    like (s, "sender",
+    like (route, "sender",
         "flux_msg_get_route_first returns id on msg w/ id1");
-    free (s);
 
-    ok (flux_msg_get_route_last (msg, &s) == 0 && s != NULL,
+    ok (flux_msg_get_route_last (msg, &route) == 0 && route != NULL,
         "flux_msg_get_route_last works");
-    like (s, "sender",
+    like (route, "sender",
         "flux_msg_get_route_last returns id on msg w/ id1");
-    free (s);
 
     ok (flux_msg_push_route (msg, "router") == 0 && flux_msg_frames (msg) == 4,
         "flux_msg_push_route works and adds a frame");
     ok ((flux_msg_get_route_count (msg) == 2),
         "flux_msg_get_route_count returns 2 on msg w/ id1+id2");
 
-    ok (flux_msg_get_route_first (msg, &s) == 0 && s != NULL,
+    ok (flux_msg_get_route_first (msg, &route) == 0 && route != NULL,
         "flux_msg_get_route_first works");
-    like (s, "sender",
+    like (route, "sender",
         "flux_msg_get_route_first returns id1 on msg w/ id1+id2");
-    free (s);
 
-    ok (flux_msg_get_route_last (msg, &s) == 0 && s != NULL,
+    ok (flux_msg_get_route_last (msg, &route) == 0 && route != NULL,
         "flux_msg_get_route_last works");
-    like (s, "router",
+    like (route, "router",
         "flux_msg_get_route_last returns id2 on message with id1+id2");
-    free (s);
 
     s = NULL;
     ok (flux_msg_pop_route (msg, &s) == 0 && s != NULL,

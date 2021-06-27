@@ -148,24 +148,20 @@ bool rutil_idset_decode_test (const char *idset, unsigned long id)
 bool rutil_match_request_sender (const flux_msg_t *msg1,
                                  const flux_msg_t *msg2)
 {
-    char *sender1 = NULL;
-    char *sender2 = NULL;
-    bool match = false;
+    const char *sender1;
+    const char *sender2;
 
     if (!msg1 || !msg2)
-        goto done;
+        return false;
     if (flux_msg_get_route_first (msg1, &sender1) < 0)
-        goto done;
+        return false;
     if (flux_msg_get_route_first (msg2, &sender2) < 0)
-        goto done;
+        return false;
     if (!sender1 || !sender2)
-        goto done;
+        return false;
     if (!strcmp (sender1, sender2))
-        match = true;
-done:
-    free (sender1);
-    free (sender2);
-    return match;
+        return true;
+    return false;
 }
 
 char *rutil_read_file (const char *path, char *errbuf, int errbufsize)

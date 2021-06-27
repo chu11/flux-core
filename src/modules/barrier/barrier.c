@@ -158,7 +158,7 @@ error:
 }
 
 static int barrier_add_client (struct barrier *b,
-                               char *sender,
+                               const char *sender,
                                const flux_msg_t *msg)
 {
     if (zhash_insert (b->clients, sender, (void *)flux_msg_incref (msg)) < 0) {
@@ -318,7 +318,7 @@ static void enter_request_cb (flux_t *h, flux_msg_handler_t *mh,
 {
     struct barrier_ctx *ctx = arg;
     struct barrier *b;
-    char *sender = NULL;
+    const char *sender;
     const char *name;
     int nprocs;
     uint32_t owner;
@@ -346,11 +346,9 @@ static void enter_request_cb (flux_t *h, flux_msg_handler_t *mh,
     }
     if (barrier_update (b, 1) < 0)
         goto error;
-    free (sender);
     return;
 error:
     flux_respond_error (ctx->h, msg, errno, NULL);
-    free (sender);
 }
 
 /* Upon client disconnect, abort any pending barriers it was
@@ -360,7 +358,7 @@ static void disconnect_request_cb (flux_t *h, flux_msg_handler_t *mh,
                                    const flux_msg_t *msg, void *arg)
 {
     struct barrier_ctx *ctx = arg;
-    char *sender = NULL;
+    const char *sender;
     const char *key;
     struct barrier *b;
     struct flux_msg_cred cred;
@@ -382,11 +380,9 @@ static void disconnect_request_cb (flux_t *h, flux_msg_handler_t *mh,
                 flux_log_error (h, "exit_event_send");
         }
     }
-    free (sender);
     return;
 error:
     flux_log_error (h, "barrier.disconnect");
-    free (sender);
 }
 
 static int exit_event_send (flux_t *h,

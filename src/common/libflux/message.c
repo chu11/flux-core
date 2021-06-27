@@ -1001,7 +1001,7 @@ int flux_msg_pop_route (flux_msg_t *msg, char **id)
 }
 
 /* replaces flux_msg_nexthop */
-int flux_msg_get_route_last (const flux_msg_t *msg, char **id)
+int flux_msg_get_route_last (const flux_msg_t *msg, const char **id)
 {
     struct route_id *r;
 
@@ -1013,10 +1013,8 @@ int flux_msg_get_route_last (const flux_msg_t *msg, char **id)
         errno = EPROTO;
         return -1;
     }
-    if ((r = list_top (&msg->routes, struct route_id, route_id_node))) {
-        if (!((*id) = strdup (r->id)))
-            return -1;
-    }
+    if ((r = list_top (&msg->routes, struct route_id, route_id_node)))
+        (*id) = r->id;
     else
         (*id) = NULL;
     return 0;
@@ -1033,7 +1031,7 @@ static int find_route_first (const flux_msg_t *msg, struct route_id **r)
 }
 
 /* replaces flux_msg_sender */
-int flux_msg_get_route_first (const flux_msg_t *msg, char **id)
+int flux_msg_get_route_first (const flux_msg_t *msg, const char **id)
 {
     struct route_id *r = NULL;
 
@@ -1043,10 +1041,8 @@ int flux_msg_get_route_first (const flux_msg_t *msg, char **id)
     }
     if (find_route_first (msg, &r) < 0)
         return -1;
-    if (r) {
-        if (!((*id) = strdup (r->id)))
-            return -1;
-    }
+    if (r)
+        (*id) = r->id;
     else
         (*id) = NULL;
     return 0;
@@ -1082,7 +1078,7 @@ static int flux_msg_get_route_size (const flux_msg_t *msg)
     return size;
 }
 
-static char *flux_msg_get_route_nth (const flux_msg_t *msg, int n)
+static const char *flux_msg_get_route_nth (const flux_msg_t *msg, int n)
 {
     struct route_id *r = NULL;
     int count = 0;
@@ -1117,7 +1113,7 @@ char *flux_msg_get_route_string (const flux_msg_t *msg)
     if (!(cp = buf = malloc (len + hops + 1)))
         return NULL;
     for (n = hops - 1; n >= 0; n--) {
-        char *id;
+        const char *id;
         if (cp > buf)
             *cp++ = '!';
         if (!(id = flux_msg_get_route_nth (msg, n))) {

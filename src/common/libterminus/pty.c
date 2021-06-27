@@ -97,7 +97,7 @@ static void pty_client_destroy (struct pty_client *c)
 
 static struct pty_client *pty_client_create (const flux_msg_t *msg)
 {
-    char *uuid = NULL;
+    const char *uuid;
     struct pty_client *c = NULL;
 
     if (!(c = calloc (1, sizeof (*c))))
@@ -105,7 +105,8 @@ static struct pty_client *pty_client_create (const flux_msg_t *msg)
     if (flux_msg_get_route_first (msg, &uuid) < 0)
         goto error;
     c->req = flux_msg_incref (msg);
-    c->uuid = uuid;
+    if (!(c->uuid = strdup (uuid)))
+        goto error;
     return c;
 error:
     pty_client_destroy (c);
@@ -128,7 +129,7 @@ static struct pty_client *pty_client_find_sender (struct flux_pty *pty,
                                                   const flux_msg_t *msg)
 {
     struct pty_client *c = NULL;
-    char *uuid = NULL;
+    const char *uuid;
 
     if (flux_msg_get_route_first (msg, &uuid) < 0) {
         llog_error (pty, "flux_msg_get_route_first: %s", strerror (errno));
@@ -139,7 +140,6 @@ static struct pty_client *pty_client_find_sender (struct flux_pty *pty,
         return NULL;
     }
     c = pty_client_find (pty, uuid);
-    free (uuid);
 
     return c;
 }

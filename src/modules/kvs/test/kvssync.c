@@ -165,7 +165,7 @@ void basic_api_tests (void)
 
 bool msgcmp (const flux_msg_t *msg, void *arg)
 {
-    char *id = NULL;
+    const char *id;
     bool match = false;
     if (flux_msg_get_route_first (msg, &id) == 0
         && (!strcmp (id, "1")
@@ -174,8 +174,6 @@ bool msgcmp (const flux_msg_t *msg, void *arg)
             || !strcmp (id, "4")
             || !strcmp (id, "5")))
         match = true;
-    if (id)
-        free (id);
     return match;
 }
 

@@ -1079,11 +1079,10 @@ static void broker_panic_cb (flux_t *h, flux_msg_handler_t *mh,
 static void broker_disconnect_cb (flux_t *h, flux_msg_handler_t *mh,
                                const flux_msg_t *msg, void *arg)
 {
-    char *sender = NULL;
+    const char *sender;
 
     if (flux_msg_get_route_first (msg, &sender) == 0) {
         exec_terminate_subprocesses_by_uuid (h, sender);
-        free (sender);
     }
     /* no response */
 }
@@ -1092,7 +1091,7 @@ static void broker_sub_cb (flux_t *h, flux_msg_handler_t *mh,
                         const flux_msg_t *msg, void *arg)
 {
     broker_ctx_t *ctx = arg;
-    char *uuid = NULL;
+    const char *uuid;
     const char *topic;
 
     if (flux_request_unpack (msg, NULL, "{ s:s }", "topic", &topic) < 0)
@@ -1107,19 +1106,17 @@ static void broker_sub_cb (flux_t *h, flux_msg_handler_t *mh,
         goto error;
     if (flux_respond (h, msg, NULL) < 0)
         flux_log_error (h, "%s: flux_respond", __FUNCTION__);
-    free (uuid);
     return;
 error:
     if (flux_respond_error (h, msg, errno, NULL) < 0)
         flux_log_error (h, "%s: flux_respond_error", __FUNCTION__);
-    free (uuid);
 }
 
 static void broker_unsub_cb (flux_t *h, flux_msg_handler_t *mh,
                           const flux_msg_t *msg, void *arg)
 {
     broker_ctx_t *ctx = arg;
-    char *uuid = NULL;
+    const char *uuid;
     const char *topic;
 
     if (flux_request_unpack (msg, NULL, "{ s:s }", "topic", &topic) < 0)
@@ -1134,12 +1131,10 @@ static void broker_unsub_cb (flux_t *h, flux_msg_handler_t *mh,
         goto error;
     if (flux_respond (h, msg, NULL) < 0)
         flux_log_error (h, "%s: flux_respond", __FUNCTION__);
-    free (uuid);
     return;
 error:
     if (flux_respond_error (h, msg, errno, NULL) < 0)
         flux_log_error (h, "%s: flux_respond_error", __FUNCTION__);
-    free (uuid);
 }
 
 static int route_to_handle (const flux_msg_t *msg, void *arg)
@@ -1175,7 +1170,7 @@ static void service_add_cb (flux_t *h, flux_msg_handler_t *w,
 {
     broker_ctx_t *ctx = arg;
     const char *name = NULL;
-    char *sender = NULL;
+    const char *sender;
     module_t *p;
     struct flux_msg_cred cred;
 
@@ -1194,12 +1189,10 @@ static void service_add_cb (flux_t *h, flux_msg_handler_t *w,
         goto error;
     if (flux_respond (h, msg, NULL) < 0)
         flux_log_error (h, "service_add: flux_respond");
-    free (sender);
     return;
 error:
     if (flux_respond_error (h, msg, errno, NULL) < 0)
         flux_log_error (h, "service_add: flux_respond_error");
-    free (sender);
 }
 
 static void service_remove_cb (flux_t *h, flux_msg_handler_t *w,
@@ -1208,7 +1201,7 @@ static void service_remove_cb (flux_t *h, flux_msg_handler_t *w,
     broker_ctx_t *ctx = arg;
     const char *name;
     const char *uuid;
-    char *sender = NULL;
+    const char *sender;
     struct flux_msg_cred cred;
 
     if (flux_request_unpack (msg, NULL, "{ s:s }", "service", &name) < 0
@@ -1229,12 +1222,10 @@ static void service_remove_cb (flux_t *h, flux_msg_handler_t *w,
     service_remove (ctx->services, name);
     if (flux_respond (h, msg, NULL) < 0)
         flux_log_error (h, "service_remove: flux_respond");
-    free (sender);
     return;
 error:
     if (flux_respond_error (h, msg, errno, NULL) < 0)
         flux_log_error (h, "service_remove: flux_respond_error");
-    free (sender);
 }
 
 
@@ -1693,7 +1684,7 @@ static void broker_request_sendmsg (broker_ctx_t *ctx, const flux_msg_t *msg)
 static int broker_response_sendmsg (broker_ctx_t *ctx, const flux_msg_t *msg)
 {
     int rc;
-    char *uuid = NULL;
+    const char *uuid;
 
     if (flux_msg_get_route_last (msg, &uuid) < 0)
         return -1;
@@ -1705,7 +1696,6 @@ static int broker_response_sendmsg (broker_ctx_t *ctx, const flux_msg_t *msg)
         rc = overlay_sendmsg (ctx->overlay, msg, OVERLAY_DOWNSTREAM);
     else
         rc = module_response_sendmsg (ctx->modhash, msg);
-    ERRNO_SAFE_WRAP (free, uuid);
     return rc;
 }
 

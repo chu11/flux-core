@@ -401,6 +401,7 @@ static void ready_cb (flux_t *h, flux_msg_handler_t *mh,
     int limit = 0;
     int count;
     struct job *job;
+    const char *sender;
 
     if (flux_request_unpack (msg, NULL, "{s:s s?:i}",
                                         "mode", &mode,
@@ -419,9 +420,13 @@ static void ready_cb (flux_t *h, flux_msg_handler_t *mh,
         errno = EPROTO;
         goto error;
     }
-    if (flux_msg_get_route_first (msg, &ctx->alloc->sched_sender) < 0) {
+    if (flux_msg_get_route_first (msg, &sender) < 0) {
         flux_log_error (h, "%s: flux_msg_get_route_first", __FUNCTION__);
         goto error;
+    }
+    if (sender) {
+        if (!(ctx->alloc->sched_sender = strdup (sender)))
+            goto error;
     }
     ctx->alloc->ready = true;
     flux_log (h, LOG_DEBUG, "scheduler: ready %s", mode);
@@ -766,11 +771,10 @@ void alloc_disconnect_rpc (flux_t *h,
     struct alloc *alloc = ctx->alloc;
 
     if (alloc->sched_sender) {
-        char *sender = NULL;
+        const char *sender;
         if (flux_msg_get_route_first (msg, &sender) == 0
             && !strcmp (sender, alloc->sched_sender))
             interface_teardown (ctx->alloc, "disconnect", 0);
-        free (sender);
     }
 }
 
