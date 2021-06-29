@@ -121,6 +121,10 @@ struct route_id {
 #define PROTO_U32_COUNT     4
 #define PROTO_SIZE          4 + (PROTO_U32_COUNT * 4)
 
+static int flux_msg_route_append (flux_msg_t *msg,
+                                  const char *id,
+                                  unsigned int id_len);
+
 static void route_id_destroy (void *data)
 {
     if (data) {
@@ -386,6 +390,29 @@ int flux_msg_encode (const flux_msg_t *msg, void *buf, size_t size)
     return 0;
 }
 
+struct msgframe {
+    size_t size;
+    uint8_t data[0];
+};
+
+static struct msgframe *msgframe_create (const void *data, size_t size)
+{
+    struct msgframe *mf = (struct msgframe *)malloc (sizeof (*mf) + size);
+    if (!mf)
+        return NULL;
+    mf->size = size;
+    memcpy (mf->data, data, size);
+    return mf;
+}
+
+static void msgframe_destroy (void **data)
+{
+    if (data) {
+        struct msgframe *mf = (*data);
+        free (mf);
+    }
+}
+
 static void proto_get_u32 (uint8_t *data, int index, uint32_t *val)
 {
     uint32_t x;
@@ -415,26 +442,23 @@ static void msg_get_proto_fields (uint8_t *data,
     proto_get_u32 (data, PROTO_IND_AUX2, &msg->aux2);
 }
 
-static int zmsg_to_msg (flux_msg_t *msg, zmsg_t *zmsg)
+static int msgframes_to_msg (flux_msg_t *msg, zlistx_t *frames)
 {
-    uint8_t *proto_data;
-    size_t proto_size;
+    struct msgframe *mf;
     uint8_t magic, version;
-    zframe_t *zf;
 
-    if (!(zf = zmsg_last (zmsg))) {
-        errno = EPROTO;
-        return -1;
-    }
-    proto_data = zframe_data (zf);
-    proto_size = zframe_size (zf);
-    if (proto_size < PROTO_SIZE) {
+    if (!(mf = zlistx_last (frames))) {
         errno = EPROTO;
         return -1;
     }
 
-    msg_get_proto_fields (proto_data,
-                          proto_size,
+    if (mf->size < PROTO_SIZE) {
+        errno = EPROTO;
+        return -1;
+    }
+
+    msg_get_proto_fields (mf->data,
+                          mf->size,
                           &magic,
                           &version,
                           msg);
@@ -453,50 +477,50 @@ static int zmsg_to_msg (flux_msg_t *msg, zmsg_t *zmsg)
         return -1;
     }
 
-    zf = zmsg_first (zmsg);
+    mf = zlistx_first (frames);
     if ((msg->flags & FLUX_MSGFLAG_ROUTE)) {
-        if (!zf) {
+        if (!mf) {
             errno = EPROTO;
             return -1;
         }
-        while (zf && zframe_size (zf) > 0) {
+        while (mf && mf->size > 0) {
             if (flux_msg_route_append (msg,
-                                       (char *)zframe_data (zf),
-                                       zframe_size (zf)) < 0)
+                                       (char *)mf->data,
+                                       mf->size) < 0)
                 return -1;
-            zf = zmsg_next (zmsg);
+            mf = zlistx_next (frames);
         }
-        if (zf)
-            zf = zmsg_next (zmsg);
+        if (mf)
+            mf = zlistx_next (frames);
     }
     if ((msg->flags & FLUX_MSGFLAG_TOPIC)) {
-        if (!zf) {
+        if (!mf) {
             errno = EPROTO;
             return -1;
         }
-        if (!(msg->topic = zframe_strdup (zf))) {
+        if (!(msg->topic = strndup ((char *)mf->data, mf->size))) {
             errno = ENOMEM;
             return -1;
         }
-        if (zf)
-            zf = zmsg_next (zmsg);
+        if (mf)
+            mf = zlistx_next (frames);
     }
     if ((msg->flags & FLUX_MSGFLAG_PAYLOAD)) {
-        if (!zf) {
+        if (!mf) {
             errno = EPROTO;
             return -1;
         }
-        msg->payload_size = zframe_size (zf);
+        msg->payload_size = mf->size;
         if (!(msg->payload = malloc (msg->payload_size))) {
             errno = ENOMEM;
             return -1;
         }
-        memcpy (msg->payload, zframe_data (zf), msg->payload_size);
-        if (zf)
-            zf = zmsg_next (zmsg);
+        memcpy (msg->payload, mf->data, msg->payload_size);
+        if (mf)
+            mf = zlistx_next (frames);
     }
     /* proto frame required */
-    if (!zf) {
+    if (!mf) {
         errno = EPROTO;
         return -1;
     }
@@ -507,14 +531,15 @@ flux_msg_t *flux_msg_decode (const void *buf, size_t size)
 {
     flux_msg_t *msg;
     uint8_t const *p = buf;
-    zmsg_t *zmsg = NULL;
-    zframe_t *zf;
+    zlistx_t *frames = NULL;
 
     if (!(msg = flux_msg_create (FLUX_MSGTYPE_ANY)))
         return NULL;
-    if (!(zmsg = zmsg_new ()))
+    if (!(frames = zlistx_new ()))
         goto nomem;
+    zlistx_set_destructor (frames, msgframe_destroy);
     while (p - (uint8_t *)buf < size) {
+        struct msgframe *mf;
         size_t n = *p++;
         if (n == 0xff) {
             if (size - (p - (uint8_t *)buf) < 4) {
@@ -528,20 +553,22 @@ flux_msg_t *flux_msg_decode (const void *buf, size_t size)
             errno = EINVAL;
             goto error;
         }
-        if (!(zf = zframe_new (p, n)))
+        if (!(mf = msgframe_create (p, n)))
             goto nomem;
-        if (zmsg_append (zmsg, &zf) < 0)
+        if (zlistx_add_end (frames, mf) < 0) {
+            msgframe_destroy ((void **)&mf);
             goto nomem;
+        }
         p += n;
     }
-    if (zmsg_to_msg (msg, zmsg) < 0)
+    if (msgframes_to_msg (msg, frames) < 0)
         goto error;
-    zmsg_destroy (&zmsg);
+    zlistx_destroy (&frames);
     return msg;
 nomem:
     errno = ENOMEM;
 error:
-    zmsg_destroy (&zmsg);
+    zlistx_destroy (&frames);
     flux_msg_destroy (msg);
     return NULL;
 }
@@ -1757,6 +1784,94 @@ error:
 int flux_msg_sendzsock (void *sock, const flux_msg_t *msg)
 {
     return flux_msg_sendzsock_ex (sock, msg, false);
+}
+
+static int zmsg_to_msg (flux_msg_t *msg, zmsg_t *zmsg)
+{
+    uint8_t *proto_data;
+    size_t proto_size;
+    uint8_t magic, version;
+    zframe_t *zf;
+
+    if (!(zf = zmsg_last (zmsg))) {
+        errno = EPROTO;
+        return -1;
+    }
+    proto_data = zframe_data (zf);
+    proto_size = zframe_size (zf);
+    if (proto_size < PROTO_SIZE) {
+        errno = EPROTO;
+        return -1;
+    }
+
+    msg_get_proto_fields (proto_data,
+                          proto_size,
+                          &magic,
+                          &version,
+                          msg);
+
+    if (magic != PROTO_MAGIC
+        || version != PROTO_VERSION) {
+        errno = EPROTO;
+        return -1;
+    }
+
+    if (msg->type != FLUX_MSGTYPE_REQUEST
+        && msg->type != FLUX_MSGTYPE_RESPONSE
+        && msg->type != FLUX_MSGTYPE_EVENT
+        && msg->type != FLUX_MSGTYPE_KEEPALIVE) {
+        errno = EPROTO;
+        return -1;
+    }
+
+    zf = zmsg_first (zmsg);
+    if ((msg->flags & FLUX_MSGFLAG_ROUTE)) {
+        if (!zf) {
+            errno = EPROTO;
+            return -1;
+        }
+        while (zf && zframe_size (zf) > 0) {
+            if (flux_msg_route_append (msg,
+                                       (char *)zframe_data (zf),
+                                       zframe_size (zf)) < 0)
+                return -1;
+            zf = zmsg_next (zmsg);
+        }
+        if (zf)
+            zf = zmsg_next (zmsg);
+    }
+    if ((msg->flags & FLUX_MSGFLAG_TOPIC)) {
+        if (!zf) {
+            errno = EPROTO;
+            return -1;
+        }
+        if (!(msg->topic = zframe_strdup (zf))) {
+            errno = ENOMEM;
+            return -1;
+        }
+        if (zf)
+            zf = zmsg_next (zmsg);
+    }
+    if ((msg->flags & FLUX_MSGFLAG_PAYLOAD)) {
+        if (!zf) {
+            errno = EPROTO;
+            return -1;
+        }
+        msg->payload_size = zframe_size (zf);
+        if (!(msg->payload = malloc (msg->payload_size))) {
+            errno = ENOMEM;
+            return -1;
+        }
+        memcpy (msg->payload, zframe_data (zf), msg->payload_size);
+        if (zf)
+            zf = zmsg_next (zmsg);
+    }
+    /* proto frame required */
+    if (!zf) {
+        errno = EPROTO;
+        return -1;
+    }
+    return 0;
 }
 
 flux_msg_t *flux_msg_recvzsock (void *sock)
