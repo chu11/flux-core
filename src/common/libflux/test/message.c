@@ -697,6 +697,12 @@ void check_proto (void)
     int errnum;
     int type;
 
+    ok ((msg = flux_msg_create (FLUX_MSGTYPE_ANY)) != NULL,
+        "flux_msg_create works");
+    ok (flux_msg_get_type (msg, &type) == 0 && type == FLUX_MSGTYPE_ANY,
+        "flux_msg_get_type works with type FLUX_MSGTYPE_ANY");
+    flux_msg_destroy (msg);
+
     ok ((msg = flux_msg_create (FLUX_MSGTYPE_RESPONSE)) != NULL,
         "flux_msg_create works");
     ok (flux_msg_get_type (msg, &type) == 0 && type == FLUX_MSGTYPE_RESPONSE,
