@@ -218,6 +218,60 @@ void *flux_msg_aux_get (const flux_msg_t *msg, const char *name)
     return aux_get (msg->aux, name);
 }
 
+static int route_push (flux_msg_t *msg,
+                       const char *id,
+                       unsigned int id_len)
+{
+    struct route_id *r;
+    assert (msg);
+    assert ((msg->flags & FLUX_MSGFLAG_ROUTE));
+    assert (id);
+    if (!(r = route_id_create (id, id_len)))
+        return -1;
+    list_add (&msg->routes, &r->route_id_node);
+    msg->routes_len++;
+    return 0;
+}
+
+static int route_append (flux_msg_t *msg,
+                         const char *id,
+                         unsigned int id_len)
+{
+    struct route_id *r;
+    assert (msg);
+    assert ((msg->flags & FLUX_MSGFLAG_ROUTE));
+    assert (id);
+    if (!(r = route_id_create (id, id_len)))
+        return -1;
+    list_add_tail (&msg->routes, &r->route_id_node);
+    msg->routes_len++;
+    return 0;
+}
+
+static int route_pop (flux_msg_t *msg, char **id)
+{
+    struct route_id *r;
+    int rv = -1;
+    assert (msg);
+    assert ((msg->flags & FLUX_MSGFLAG_ROUTE));
+    if (list_empty (&msg->routes)) {
+        if (id)
+            (*id) = NULL;
+        return -1;
+    }
+    r = list_pop (&msg->routes, struct route_id, route_id_node);
+    assert (r);
+    if (id) {
+        if (!((*id) = strdup (r->id)))
+            goto error;
+    }
+    rv = 0;
+error:
+    route_id_destroy (r);
+    msg->routes_len--;
+    return rv;
+}
+
 void encode_count (ssize_t *size, size_t len)
 {
     if (len < 255)
@@ -362,21 +416,6 @@ static void proto_get_u32 (uint8_t *data, int index, uint32_t *val)
     *val = ntohl (x);
 }
 
-static int msg_append_route (flux_msg_t *msg,
-                             const char *id,
-                             unsigned int id_len)
-{
-    struct route_id *r;
-    assert (msg);
-    assert ((msg->flags & FLUX_MSGFLAG_ROUTE));
-    assert (id);
-    if (!(r = route_id_create (id, id_len)))
-        return -1;
-    list_add_tail (&msg->routes, &r->route_id_node);
-    msg->routes_len++;
-    return 0;
-}
-
 static int zmsg_to_msg (flux_msg_t *msg, zmsg_t *zmsg)
 {
     uint8_t *proto_data;
@@ -412,9 +451,9 @@ static int zmsg_to_msg (flux_msg_t *msg, zmsg_t *zmsg)
             return -1;
         }
         while (zf && zframe_size (zf) > 0) {
-            if (msg_append_route (msg,
-                                  (char *)zframe_data (zf),
-                                  zframe_size (zf)) < 0)
+            if (route_append (msg,
+                              (char *)zframe_data (zf),
+                              zframe_size (zf)) < 0)
                 return -1;
             zf = zmsg_next (zmsg);
         }
@@ -904,7 +943,6 @@ void flux_msg_route_clear (flux_msg_t *msg)
 
 int flux_msg_route_push (flux_msg_t *msg, const char *id)
 {
-    struct route_id *r;
     if (!msg || !id) {
         errno = EINVAL;
         return -1;
@@ -913,18 +951,12 @@ int flux_msg_route_push (flux_msg_t *msg, const char *id)
         errno = EPROTO;
         return -1;
     }
-    if (!(r = route_id_create (id, strlen (id))))
-        return -1;
-    list_add (&msg->routes, &r->route_id_node);
-    msg->routes_len++;
-    return 0;
+    return route_push (msg, id, strlen (id));
 }
 
 char *flux_msg_route_pop (flux_msg_t *msg)
 {
-    struct route_id *r;
     char *rv = NULL;
-
     /* do not check 'id' for NULL, a "pop" is acceptable w/o returning
      * data to the user.  Caller may wish to only "pop" and not look
      * at the data.
@@ -937,19 +969,13 @@ char *flux_msg_route_pop (flux_msg_t *msg)
         errno = EPROTO;
         return NULL;
     }
-    if (list_empty (&msg->routes))
+    if (route_pop (msg, &rv) < 0)
         return NULL;
-    r = list_pop (&msg->routes, struct route_id, route_id_node);
-    assert (r);
-    rv = strdup (r->id);
-    route_id_destroy (r);
-    msg->routes_len--;
     return rv;
 }
 
 int flux_msg_route_delete (flux_msg_t *msg)
 {
-    struct route_id *r;
     if (!msg) {
         errno = EINVAL;
         return -1;
@@ -958,11 +984,7 @@ int flux_msg_route_delete (flux_msg_t *msg)
         errno = EPROTO;
         return -1;
     }
-    if ((r = list_pop (&msg->routes, struct route_id, route_id_node))) {
-        route_id_destroy (r);
-        msg->routes_len--;
-    }
-    return 0;
+    return route_pop (msg, NULL);
 }
 
 /* replaces flux_msg_nexthop */
