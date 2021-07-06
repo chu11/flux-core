@@ -272,6 +272,59 @@ error:
     return rv;
 }
 
+/* N.B. Note that iter first/last here is first/last entry of the
+ * list, not the first/last routing frame per
+ * flux_msg_route_first/last(). i.e.  The logic is not the same.
+ */
+
+const char *route_iter_first (const flux_msg_t *msg, struct route_id **iter)
+{
+    assert (msg);
+    assert ((msg->flags & FLUX_MSGFLAG_ROUTE));
+    assert (iter);
+    (*iter) = list_top (&msg->routes, struct route_id, route_id_node);
+    if ((*iter))
+        return (*iter)->id;
+    return NULL;
+}
+
+const char *route_iter_last (const flux_msg_t *msg, struct route_id **iter)
+{
+    assert (msg);
+    assert ((msg->flags & FLUX_MSGFLAG_ROUTE));
+    assert (iter);
+    (*iter) = list_tail (&msg->routes, struct route_id, route_id_node);
+    if ((*iter))
+        return (*iter)->id;
+    return NULL;
+}
+
+const char *route_iter_next (const flux_msg_t *msg, struct route_id **iter)
+{
+    assert (msg);
+    assert ((msg->flags & FLUX_MSGFLAG_ROUTE));
+    assert (iter);
+    if ((*iter)) {
+        (*iter) = list_next (&msg->routes, (*iter), route_id_node);
+        if ((*iter))
+            return (*iter)->id;
+    }
+    return NULL;
+}
+
+const char *route_iter_prev (const flux_msg_t *msg, struct route_id **iter)
+{
+    assert (msg);
+    assert ((msg->flags & FLUX_MSGFLAG_ROUTE));
+    assert (iter);
+    if ((*iter)) {
+        (*iter) = list_prev (&msg->routes, (*iter), route_id_node);
+        if ((*iter))
+            return (*iter)->id;
+    }
+    return NULL;
+}
+
 void encode_count (ssize_t *size, size_t len)
 {
     if (len < 255)
@@ -296,11 +349,15 @@ ssize_t flux_msg_encode_size (const flux_msg_t *msg)
     if (msg->flags & FLUX_MSGFLAG_TOPIC)
         encode_count (&size, strlen (msg->topic));
     if (msg->flags & FLUX_MSGFLAG_ROUTE) {
-        struct route_id *r = NULL;
+        struct route_id *iter = NULL;
+        const char *id;
         /* route delimeter */
         encode_count (&size, 0);
-        list_for_each (&msg->routes, r, route_id_node)
-            encode_count (&size, strlen (r->id));
+        id = route_iter_first (msg, &iter);
+        while (id) {
+            encode_count (&size, strlen (id));
+            id = route_iter_next (msg, &iter);
+        }
     }
     return size;
 }
@@ -328,7 +385,7 @@ static void msg_proto_setup (const flux_msg_t *msg, uint8_t *data, int len)
 
 static ssize_t encode_frame (uint8_t *buf,
                              size_t buf_len,
-                             void *frame,
+                             const void *frame,
                              size_t frame_size)
 {
     ssize_t n = 0;
@@ -365,14 +422,18 @@ int flux_msg_encode (const flux_msg_t *msg, void *buf, size_t size)
         return -1;
     }
     if (msg->flags & FLUX_MSGFLAG_ROUTE) {
-        struct route_id *r = NULL;
-        list_for_each (&msg->routes, r, route_id_node) {
+        struct route_id *iter = NULL;
+        const char *id;
+        id = route_iter_first (msg, &iter);
+        while (id) {
             if ((n = encode_frame (buf + total,
                                    size - total,
-                                   r->id,
-                                   strlen (r->id))) < 0)
+                                   id,
+                                   strlen (id))) < 0)
+
                 return -1;
             total += n;
+            id = route_iter_next (msg, &iter);
         }
         /* route delimeter */
         if ((n = encode_frame (buf + total,
@@ -1048,7 +1109,8 @@ int flux_msg_route_count (const flux_msg_t *msg)
  */
 static int flux_msg_route_size (const flux_msg_t *msg)
 {
-    struct route_id *r = NULL;
+    struct route_id *iter = NULL;
+    const char *id;
     int size = 0;
 
     assert (msg);
@@ -1056,14 +1118,18 @@ static int flux_msg_route_size (const flux_msg_t *msg)
         errno = EPROTO;
         return -1;
     }
-    list_for_each (&msg->routes, r, route_id_node)
-        size += strlen (r->id);
+    id = route_iter_first (msg, &iter);
+    while (id) {
+        size += strlen (id);
+        id = route_iter_next (msg, &iter);
+    }
     return size;
 }
 
 char *flux_msg_route_string (const flux_msg_t *msg)
 {
-    struct route_id *r = NULL;
+    struct route_id *iter = NULL;
+    const char *id;
     int hops, len;
     char *buf, *cp;
 
@@ -1080,15 +1146,17 @@ char *flux_msg_route_string (const flux_msg_t *msg)
         return NULL;
     if (!(cp = buf = malloc (len + hops + 1)))
         return NULL;
-    list_for_each_rev (&msg->routes, r, route_id_node) {
+    id = route_iter_last (msg, &iter);
+    while (id) {
         if (cp > buf)
             *cp++ = '!';
-        int cpylen = strlen (r->id);
+        int cpylen = strlen (id);
         if (cpylen > 8) /* abbreviate long UUID */
             cpylen = 8;
         assert (cp - buf + cpylen < len + hops);
-        memcpy (cp, r->id, cpylen);
+        memcpy (cp, id, cpylen);
         cp += cpylen;
+        id = route_iter_prev (msg, &iter);
     }
     *cp = '\0';
     return buf;
@@ -1419,10 +1487,13 @@ flux_msg_t *flux_msg_copy (const flux_msg_t *msg, bool payload)
     cpy->aux2 = msg->aux2;
 
     if (flux_msg_route_count (msg) > 0) {
-        struct route_id *r = NULL;
-        list_for_each_rev (&msg->routes, r, route_id_node) {
-            if (flux_msg_route_push (cpy, r->id) < 0)
+        struct route_id *iter = NULL;
+        const char *id;
+        id = route_iter_last (msg, &iter);
+        while (id) {
+            if (flux_msg_route_push (cpy, id) < 0)
                 goto error;
+            id = route_iter_prev (msg, &iter);
         }
     }
     if (msg->topic) {
@@ -1497,16 +1568,19 @@ static zmsg_t *msg_to_zmsg (const flux_msg_t *msg)
         }
     }
     if (msg->flags & FLUX_MSGFLAG_ROUTE) {
-        struct route_id *r = NULL;
+        struct route_id *iter = NULL;
+        const char *id;
         if (zmsg_pushmem (zmsg, NULL, 0) < 0) {
             errno = ENOMEM;
             goto error;
         }
-        list_for_each_rev (&msg->routes, r, route_id_node) {
-            if (zmsg_pushstr (zmsg, r->id) < 0) {
+        id = route_iter_last (msg, &iter);
+        while (id) {
+            if (zmsg_pushstr (zmsg, id) < 0) {
                 errno = ENOMEM;
                 goto error;
             }
+            id = route_iter_prev (msg, &iter);
         }
     }
     return zmsg;
