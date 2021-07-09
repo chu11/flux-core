@@ -394,6 +394,27 @@ static void proto_get_u32 (uint8_t *data, int index, uint32_t *val)
     *val = ntohl (x);
 }
 
+static void msg_get_proto_fields (uint8_t *data,
+                                  unsigned int len,
+                                  uint8_t *magic,
+                                  uint8_t *version,
+                                  flux_msg_t *msg)
+{
+    assert (data);
+    assert (len >= PROTO_SIZE);
+    assert (magic);
+    assert (version);
+    assert (msg);
+    (*magic) = data[PROTO_OFF_MAGIC];
+    (*version) = data[PROTO_OFF_VERSION];
+    msg->type = data[PROTO_OFF_TYPE];
+    msg->flags = data[PROTO_OFF_FLAGS];
+    proto_get_u32 (data, PROTO_IND_USERID, &msg->userid);
+    proto_get_u32 (data, PROTO_IND_ROLEMASK, &msg->rolemask);
+    proto_get_u32 (data, PROTO_IND_AUX1, &msg->aux1);
+    proto_get_u32 (data, PROTO_IND_AUX2, &msg->aux2);
+}
+
 static int msg_append_route (flux_msg_t *msg,
                              const char *id,
                              unsigned int id_len)
@@ -413,6 +434,7 @@ static int zmsg_to_msg (flux_msg_t *msg, zmsg_t *zmsg)
 {
     uint8_t *proto_data;
     size_t proto_size;
+    uint8_t magic, version;
     zframe_t *zf;
 
     if (!(zf = zmsg_last (zmsg))) {
@@ -421,13 +443,23 @@ static int zmsg_to_msg (flux_msg_t *msg, zmsg_t *zmsg)
     }
     proto_data = zframe_data (zf);
     proto_size = zframe_size (zf);
-    if (proto_size < PROTO_SIZE
-        || proto_data[PROTO_OFF_MAGIC] != PROTO_MAGIC
-        || proto_data[PROTO_OFF_VERSION] != PROTO_VERSION) {
+    if (proto_size < PROTO_SIZE) {
         errno = EPROTO;
         return -1;
     }
-    msg->type = proto_data[PROTO_OFF_TYPE];
+
+    msg_get_proto_fields (proto_data,
+                          proto_size,
+                          &magic,
+                          &version,
+                          msg);
+
+    if (magic != PROTO_MAGIC
+        || version != PROTO_VERSION) {
+        errno = EPROTO;
+        return -1;
+    }
+
     if (msg->type != FLUX_MSGTYPE_REQUEST
         && msg->type != FLUX_MSGTYPE_RESPONSE
         && msg->type != FLUX_MSGTYPE_EVENT
@@ -435,7 +467,6 @@ static int zmsg_to_msg (flux_msg_t *msg, zmsg_t *zmsg)
         errno = EPROTO;
         return -1;
     }
-    msg->flags = proto_data[PROTO_OFF_FLAGS];
 
     zf = zmsg_first (zmsg);
     if ((msg->flags & FLUX_MSGFLAG_ROUTE)) {
@@ -484,10 +515,6 @@ static int zmsg_to_msg (flux_msg_t *msg, zmsg_t *zmsg)
         errno = EPROTO;
         return -1;
     }
-    proto_get_u32 (proto_data, PROTO_IND_USERID, &msg->userid);
-    proto_get_u32 (proto_data, PROTO_IND_ROLEMASK, &msg->rolemask);
-    proto_get_u32 (proto_data, PROTO_IND_AUX1, &msg->aux1);
-    proto_get_u32 (proto_data, PROTO_IND_AUX2, &msg->aux2);
     return 0;
 }
 
