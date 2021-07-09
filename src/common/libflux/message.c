@@ -415,21 +415,6 @@ static void msg_get_proto_fields (uint8_t *data,
     proto_get_u32 (data, PROTO_IND_AUX2, &msg->aux2);
 }
 
-static int msg_append_route (flux_msg_t *msg,
-                             const char *id,
-                             unsigned int id_len)
-{
-    struct route_id *r;
-    assert (msg);
-    assert ((msg->flags & FLUX_MSGFLAG_ROUTE));
-    assert (id);
-    if (!(r = route_id_create (id, id_len)))
-        return -1;
-    list_add_tail (&msg->routes, &r->route_id_node);
-    msg->routes_len++;
-    return 0;
-}
-
 static int zmsg_to_msg (flux_msg_t *msg, zmsg_t *zmsg)
 {
     uint8_t *proto_data;
@@ -475,9 +460,9 @@ static int zmsg_to_msg (flux_msg_t *msg, zmsg_t *zmsg)
             return -1;
         }
         while (zf && zframe_size (zf) > 0) {
-            if (msg_append_route (msg,
-                                  (char *)zframe_data (zf),
-                                  zframe_size (zf)) < 0)
+            if (flux_msg_route_append (msg,
+                                       (char *)zframe_data (zf),
+                                       zframe_size (zf)) < 0)
                 return -1;
             zf = zmsg_next (zmsg);
         }
@@ -989,6 +974,27 @@ int flux_msg_route_push (flux_msg_t *msg, const char *id)
     if (!(r = route_id_create (id, strlen (id))))
         return -1;
     list_add (&msg->routes, &r->route_id_node);
+    msg->routes_len++;
+    return 0;
+}
+
+/* hidden public function */
+static int flux_msg_route_append (flux_msg_t *msg,
+                                  const char *id,
+                                  unsigned int id_len)
+{
+    struct route_id *r;
+    if (!msg || !id || !id_len) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (!(msg->flags & FLUX_MSGFLAG_ROUTE)) {
+        errno = EPROTO;
+        return -1;
+    }
+    if (!(r = route_id_create (id, id_len)))
+        return -1;
+    list_add_tail (&msg->routes, &r->route_id_node);
     msg->routes_len++;
     return 0;
 }
