@@ -175,6 +175,7 @@ test_ldadd = \
 	$(top_builddir)/src/common/libev/libev.la \
 	$(top_builddir)/src/common/libczmqcontainers/libczmqcontainers.la \
 	$(top_builddir)/src/common/libccan/libccan.la \
+	$(top_builddir)/src/common/librouter/librouter.la \
 	$(ZMQ_LIBS) \
 	$(LIBUUID_LIBS) \
 	$(JANSSON_LIBS) \
