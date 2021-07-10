@@ -20,6 +20,7 @@
 #include <uuid.h>
 
 #include "src/common/libczmqcontainers/czmq_containers.h"
+#include "src/common/librouter/router_msg.h"
 #include "src/common/libutil/log.h"
 #include "src/common/libutil/kary.h"
 #include "src/common/libutil/cleanup.h"
@@ -390,7 +391,7 @@ static int overlay_sendmsg_parent (struct overlay *ov, const flux_msg_t *msg)
         errno = EHOSTUNREACH;
         goto done;
     }
-    rc = flux_msg_sendzsock (ov->parent.zsock, msg);
+    rc = router_msg_sendzsock (ov->parent.zsock, msg);
     if (rc == 0)
         ov->parent.lastsent = flux_reactor_now (ov->reactor);
 done:
@@ -542,7 +543,7 @@ static int overlay_sendmsg_child (struct overlay *ov, const flux_msg_t *msg)
         errno = EHOSTUNREACH;
         goto done;
     }
-    rc = flux_msg_sendzsock_ex (ov->bind_zsock, msg, true);
+    rc = router_msg_sendzsock_ex (ov->bind_zsock, msg, true);
 done:
     return rc;
 }
@@ -610,7 +611,7 @@ static void child_cb (flux_reactor_t *r, flux_watcher_t *w,
     struct child *child;
     int status;
 
-    if (!(msg = flux_msg_recvzsock (ov->bind_zsock)))
+    if (!(msg = router_msg_recvzsock (ov->bind_zsock)))
         return;
     if (flux_msg_get_type (msg, &type) < 0
         || !(sender = flux_msg_route_last (msg)))
@@ -671,7 +672,7 @@ static void parent_cb (flux_reactor_t *r, flux_watcher_t *w,
     int type;
     const char *topic = NULL;
 
-    if (!(msg = flux_msg_recvzsock (ov->parent.zsock)))
+    if (!(msg = router_msg_recvzsock (ov->parent.zsock)))
         return;
     if (flux_msg_get_type (msg, &type) < 0) {
         goto drop;

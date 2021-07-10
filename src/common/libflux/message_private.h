@@ -56,6 +56,8 @@ struct msg_iovec {
     void *aux;
 };
 
+flux_msg_t *flux_msg_create_common (void);
+
 int flux_iovec_to_msg (flux_msg_t *msg,
                        struct msg_iovec *iov,
                        int iovcnt);
