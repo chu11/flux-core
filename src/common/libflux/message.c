@@ -39,6 +39,7 @@
 
 #include "src/common/libutil/aux.h"
 #include "src/common/libutil/errno_safe.h"
+
 /* czmq and ccan both define streq */
 #ifdef streq
 #undef streq
@@ -46,6 +47,7 @@
 #include "src/common/libccan/ccan/list/list.h"
 
 #include "message.h"
+#include "message_private.h"
 
 /* PROTO consists of 4 byte prelude followed by a fixed length
  * array of u32's in network byte order.
@@ -122,14 +124,6 @@ struct flux_msg {
 struct route_id {
     struct list_node route_id_node;
     char id[0];                 /* variable length id stored at end of struct */
-};
-
-/* 'aux' for any auxiliary data user may wish to associate with iovec,
- * user is responsible to free/destroy */
-struct msg_iovec {
-    const void *data;
-    size_t size;
-    void *aux;
 };
 
 static void route_id_destroy (void *data)
@@ -426,9 +420,9 @@ static int msg_append_route (flux_msg_t *msg,
     return 0;
 }
 
-static int iovec_to_msg (flux_msg_t *msg,
-                         struct msg_iovec *iov,
-                         int iovcnt)
+int flux_iovec_to_msg (flux_msg_t *msg,
+                       struct msg_iovec *iov,
+                       int iovcnt)
 {
     unsigned int index = 0;
     const uint8_t *proto_data;
@@ -547,7 +541,7 @@ flux_msg_t *flux_msg_decode (const void *buf, size_t size)
         iovcnt++;
         p += n;
     }
-    if (iovec_to_msg (msg, iov, iovcnt) < 0)
+    if (flux_iovec_to_msg (msg, iov, iovcnt) < 0)
         goto error;
     free (iov);
     return msg;
@@ -1666,9 +1660,9 @@ void flux_msg_fprint (FILE *f, const flux_msg_t *msg)
     flux_msg_fprint_ts (f, msg, -1);
 }
 
-static int msg_to_iovec (const flux_msg_t *msg,
-                         struct msg_iovec **iovp,
-                         int *iovcntp)
+int flux_msg_to_iovec (const flux_msg_t *msg,
+                       struct msg_iovec **iovp,
+                       int *iovcntp)
 {
     struct msg_iovec *iov = NULL;
     int index;
@@ -1743,7 +1737,7 @@ int flux_msg_sendzsock_ex (void *sock, const flux_msg_t *msg, bool nonblock)
         return -1;
     }
 
-    if (msg_to_iovec (msg, &iov, &iovcnt) < 0)
+    if (flux_msg_to_iovec (msg, &iov, &iovcnt) < 0)
         goto error;
 
     if (nonblock)
@@ -1811,7 +1805,7 @@ flux_msg_t *flux_msg_recvzsock (void *sock)
         errno = ENOMEM;
         goto error;
     }
-    if (iovec_to_msg (msg, iov, iovcnt) < 0)
+    if (flux_iovec_to_msg (msg, iov, iovcnt) < 0)
         goto error;
     rv = msg;
 error:
