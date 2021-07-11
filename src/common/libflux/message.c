@@ -39,6 +39,7 @@
 
 #include "src/common/libutil/aux.h"
 #include "src/common/libutil/errno_safe.h"
+
 /* czmq and ccan both define streq */
 #ifdef streq
 #undef streq
@@ -46,6 +47,7 @@
 #include "src/common/libccan/ccan/list/list.h"
 
 #include "message.h"
+#include "message_private.h"
 
 struct flux_msg {
     // optional route list, if FLUX_MSGFLAG_ROUTE
@@ -86,48 +88,6 @@ struct route_id {
     struct list_node route_id_node;
     char id[0];                 /* variable length id stored at end of struct */
 };
-
-/* 'aux' for any auxiliary data user may wish to associate with iovec,
- * user is responsible to free/destroy */
-struct msg_iovec {
-    const void *data;
-    size_t size;
-    void *aux;
-};
-
-/* PROTO consists of 4 byte prelude followed by a fixed length
- * array of u32's in network byte order.
- */
-#define PROTO_MAGIC         0x8e
-#define PROTO_VERSION       1
-
-#define PROTO_OFF_MAGIC     0 /* 1 byte */
-#define PROTO_OFF_VERSION   1 /* 1 byte */
-#define PROTO_OFF_TYPE      2 /* 1 byte */
-#define PROTO_OFF_FLAGS     3 /* 1 byte */
-#define PROTO_OFF_U32_ARRAY 4
-
-/* aux1
- *
- * request - nodeid
- * response - errnum
- * event - sequence
- * keepalive - errnum
- *
- * aux2
- *
- * request - matchtag
- * response - matchtag
- * event - not used
- * keepalive - status
- */
-#define PROTO_IND_USERID    0
-#define PROTO_IND_ROLEMASK  1
-#define PROTO_IND_AUX1      2
-#define PROTO_IND_AUX2      3
-
-#define PROTO_U32_COUNT     4
-#define PROTO_SIZE          4 + (PROTO_U32_COUNT * 4)
 
 static void route_id_destroy (void *data)
 {
@@ -424,9 +384,9 @@ static int msg_append_route (flux_msg_t *msg,
     return 0;
 }
 
-static int iovec_to_msg (flux_msg_t *msg,
-                         struct msg_iovec *iov,
-                         int iovcnt)
+int flux_iovec_to_msg (flux_msg_t *msg,
+                       struct msg_iovec *iov,
+                       int iovcnt)
 {
     unsigned int index = 0;
     const uint8_t *proto_data;
@@ -547,7 +507,7 @@ flux_msg_t *flux_msg_decode (const void *buf, size_t size)
         iovcnt++;
         p += n;
     }
-    if (iovec_to_msg (msg, iov, iovcnt) < 0)
+    if (flux_iovec_to_msg (msg, iov, iovcnt) < 0)
         goto error;
     free (iov);
     return msg;
@@ -1659,11 +1619,11 @@ void flux_msg_fprint (FILE *f, const flux_msg_t *msg)
     flux_msg_fprint_ts (f, msg, -1);
 }
 
-static int msg_to_iovec (const flux_msg_t *msg,
-                         uint8_t *proto,
-                         int proto_len,
-                         struct msg_iovec **iovp,
-                         int *iovcntp)
+int flux_msg_to_iovec (const flux_msg_t *msg,
+                       uint8_t *proto,
+                       int proto_len,
+                       struct msg_iovec **iovp,
+                       int *iovcntp)
 {
     struct msg_iovec *iov = NULL;
     int index;
@@ -1731,7 +1691,7 @@ int flux_msg_sendzsock_ex (void *sock, const flux_msg_t *msg, bool nonblock)
         return -1;
     }
 
-    if (msg_to_iovec (msg, proto, PROTO_SIZE, &iov, &iovcnt) < 0)
+    if (flux_msg_to_iovec (msg, proto, PROTO_SIZE, &iov, &iovcnt) < 0)
         goto error;
 
     if (nonblock)
@@ -1799,7 +1759,7 @@ flux_msg_t *flux_msg_recvzsock (void *sock)
         errno = ENOMEM;
         goto error;
     }
-    if (iovec_to_msg (msg, iov, iovcnt) < 0)
+    if (flux_iovec_to_msg (msg, iov, iovcnt) < 0)
         goto error;
     rv = msg;
 error:

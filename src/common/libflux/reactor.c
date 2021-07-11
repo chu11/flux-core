@@ -15,7 +15,7 @@
 #include <string.h>
 #include <errno.h>
 #include <stdbool.h>
-#include <czmq.h>
+#include <fcntl.h>
 
 #include "handle.h"
 #include "reactor.h"
