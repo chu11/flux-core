@@ -19,6 +19,7 @@
 #include "src/common/libutil/fdutils.h"
 #include "src/common/libtap/tap.h"
 
+#if 0
 static const size_t zmqwriter_msgcount = 1024;
 
 static void zmqwriter (flux_reactor_t *r, flux_watcher_t *w,
@@ -77,7 +78,9 @@ static void zmqreader (flux_reactor_t *r, flux_watcher_t *w,
 error:
     flux_reactor_stop_error (r);
 }
+#endif
 
+#if 0
 static void test_zmq (flux_reactor_t *reactor)
 {
     zsock_t *zs[2];
@@ -111,6 +114,7 @@ static void test_zmq (flux_reactor_t *reactor)
 
     zsys_shutdown ();
 }
+#endif
 
 static const size_t fdwriter_bufsize = 10*1024*1024;
 
@@ -1461,7 +1465,7 @@ int main (int argc, char *argv[])
     test_fd (reactor);
     test_buffer (reactor);
     test_buffer_corner_case (reactor);
-    test_zmq (reactor);
+    // test_zmq (reactor);
     test_idle (reactor);
     test_prepcheck (reactor);
     test_signal (reactor);

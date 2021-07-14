@@ -30,6 +30,48 @@
 #include "module.h"
 #include "modservice.h"
 
+#include "src/common/libutil/ev_zmq.h"
+#include "src/common/libflux/reactor_private.h"
+
+static void zmq_start (flux_watcher_t *w)
+{
+    ev_zmq_start (w->r->loop, (ev_zmq *)w->data);
+}
+
+static void zmq_stop (flux_watcher_t *w)
+{
+    ev_zmq_stop (w->r->loop, (ev_zmq *)w->data);
+}
+
+static void zmq_cb (struct ev_loop *loop, ev_zmq *pw, int revents)
+{
+    struct flux_watcher *w = pw->data;
+    if (w->fn)
+        w->fn (ev_userdata (loop), w, libev_to_events (revents), w->arg);
+}
+
+static struct flux_watcher_ops zmq_watcher  = {
+    .start = zmq_start,
+    .stop = zmq_stop,
+    .destroy = NULL,
+};
+
+static flux_watcher_t *flux_zmq_watcher_create (flux_reactor_t *r,
+                                                void *zsock, int events,
+                                                flux_watcher_f cb, void *arg)
+{
+    ev_zmq *zw;
+    flux_watcher_t *w;
+
+    if (!(w = flux_watcher_create (r, sizeof (*zw), &zmq_watcher, cb, arg)))
+        return NULL;
+    zw = flux_watcher_get_data (w);
+    ev_zmq_init (zw, zmq_cb, zsock, events_to_libev (events) & ~EV_ERROR);
+    zw->data = w;
+
+    return w;
+}
+
 #ifndef UUID_STR_LEN
 #define UUID_STR_LEN 37     // defined in later libuuid headers
 #endif
