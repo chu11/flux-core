@@ -12,7 +12,6 @@ AM_CPPFLAGS = \
 	-I$(top_builddir) \
 	-I$(top_builddir)/src/common/libflux \
 	$(JANSSON_CFLAGS) \
-	$(ZMQ_CFLAGS) \
 	$(LIBUUID_CFLAGS) \
 	$(LIBSODIUM_CFLAGS)
 
@@ -177,7 +176,6 @@ test_ldadd = \
 	$(top_builddir)/src/common/libczmqcontainers/libczmqcontainers.la \
 	$(top_builddir)/src/common/libccan/libccan.la \
 	$(top_builddir)/src/common/librouter/librouter.la \
-	$(ZMQ_LIBS) \
 	$(LIBUUID_LIBS) \
 	$(JANSSON_LIBS) \
 	$(LIBPTHREAD) \
