@@ -31,7 +31,7 @@ AM_LDFLAGS = $(CODE_COVERAGE_LIBS)
 AM_CPPFLAGS =
 
 fluxinclude_HEADERS = core.h schedutil.h
-noinst_LTLIBRARIES = libflux-internal.la
+noinst_LTLIBRARIES = libflux-internal.la libflux-router.la
 libflux_internal_la_SOURCES =
 libflux_internal_la_LIBADD = \
 	$(builddir)/liblsd/liblsd.la \
@@ -43,11 +43,9 @@ libflux_internal_la_LIBADD = \
 	$(builddir)/libtomlc99/libtomlc99.la \
 	$(builddir)/libeventlog/libeventlog.la \
 	$(builddir)/libioencode/libioencode.la \
-	$(builddir)/librouter/librouter.la \
 	$(builddir)/libhostlist/libhostlist.la \
 	$(builddir)/libczmqcontainers/libczmqcontainers.la \
 	$(JANSSON_LIBS) \
-	$(ZMQ_LIBS) \
 	$(LIBUUID_LIBS) \
 	$(LIBPTHREAD) \
 	$(LIBDL) \
@@ -55,6 +53,14 @@ libflux_internal_la_LIBADD = \
 	$(FLUX_SECURITY_LIBS) \
 	$(LIBSODIUM_LIBS)
 libflux_internal_la_LDFLAGS = $(san_ld_zdef_flag)
+
+libflux_router_la_SOURCES =
+libflux_router_la_LIBADD = \
+	$(builddir)/librouter/librouter.la \
+	$(ZMQ_LIBS) \
+	$(LIBUUID_LIBS) \
+	$(LIBPTHREAD)
+libflux_router_la_LDFLAGS = $(san_ld_zdef_flag)
 
 lib_LTLIBRARIES = libflux-core.la \
 	libflux-optparse.la \

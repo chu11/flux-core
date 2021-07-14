@@ -35,8 +35,6 @@ libutil_la_SOURCES = \
 	veb.h \
 	read_all.c \
 	read_all.h \
-	ev_zmq.c \
-	ev_zmq.h \
 	cleanup.c \
 	cleanup.h \
 	unlink_recursive.c \

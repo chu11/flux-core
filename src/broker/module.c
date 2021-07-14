@@ -31,7 +31,7 @@
 #include "module.h"
 #include "modservice.h"
 
-#include "src/common/libutil/ev_zmq.h"
+#include "ev_zmq.h"
 #include "src/common/libflux/reactor_private.h"
 
 static void zmq_start (flux_watcher_t *w)

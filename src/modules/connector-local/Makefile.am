@@ -16,5 +16,6 @@ fluxmod_LTLIBRARIES = connector-local.la
 connector_local_la_SOURCES = local.c
 connector_local_la_LDFLAGS = $(fluxmod_ldflags) -module
 connector_local_la_LIBADD = $(top_builddir)/src/common/libflux-internal.la \
+			    $(top_builddir)/src/common/libflux-router.la \
 			    $(top_builddir)/src/common/libflux-core.la \
 			    $(ZMQ_LIBS)
