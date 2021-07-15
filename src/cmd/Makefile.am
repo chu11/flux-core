@@ -20,7 +20,6 @@ fluxcmd_ldadd = \
 	$(top_builddir)/src/common/libkvs/libkvs.la \
 	$(top_builddir)/src/common/librlist/librlist.la \
 	$(top_builddir)/src/common/libflux-internal.la \
-	$(top_builddir)/src/common/libflux-router.la \
 	$(top_builddir)/src/common/libflux-core.la \
 	$(top_builddir)/src/common/libflux-optparse.la \
 	$(top_builddir)/src/common/libczmqcontainers/libczmqcontainers.la \
