@@ -255,18 +255,18 @@ void test_libev_io (void)
 /*     zmq_ctx_destroy (zctx); */
 /* } */
 
-void list_timer_cb (struct ev_loop *loop, ev_timer *w, int revents)
-{
-    static int i = 100;
-    zlist_t *l = w->data;
-    if (--i == 0) {
-        ev_break (loop, EVBREAK_ALL);
-    } else {
-        zmsg_t *zmsg;
-        if (!(zmsg = zmsg_new ()) || zlist_append (l, zmsg) < 0)
-            oom ();
-    }
-}
+/* void list_timer_cb (struct ev_loop *loop, ev_timer *w, int revents) */
+/* { */
+/*     static int i = 100; */
+/*     zlist_t *l = w->data; */
+/*     if (--i == 0) { */
+/*         ev_break (loop, EVBREAK_ALL); */
+/*     } else { */
+/*         zmsg_t *zmsg; */
+/*         if (!(zmsg = zmsg_new ()) || zlist_append (l, zmsg) < 0) */
+/*             oom (); */
+/*     } */
+/* } */
 
 int main (int argc, char *argv[])
 {
