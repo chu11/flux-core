@@ -23,7 +23,7 @@
 #endif
 
 #include "src/common/libczmqcontainers/czmq_containers.h"
-#include "src/common/librouter/router_msg.h"
+#include "src/common/libzsock/zsock_msg.h"
 #include "src/common/libutil/log.h"
 #include "src/common/libutil/iterators.h"
 #include "src/common/libutil/digest.h"
@@ -296,7 +296,7 @@ flux_msg_t *module_recvmsg (module_t *p)
     int type;
     struct flux_msg_cred cred;
 
-    if (!(msg = router_msg_recvzsock (p->sock)))
+    if (!(msg = zsock_msg_recvzsock (p->sock)))
         goto error;
     if (flux_msg_get_type (msg, &type) < 0)
         goto error;
@@ -357,7 +357,7 @@ int module_sendmsg (module_t *p, const flux_msg_t *msg)
                 goto done;
             if (flux_msg_route_push (cpy, p->modhash->uuid_str) < 0)
                 goto done;
-            if (router_msg_sendzsock (p->sock, cpy) < 0)
+            if (zsock_msg_sendzsock (p->sock, cpy) < 0)
                 goto done;
             break;
         }
@@ -366,12 +366,12 @@ int module_sendmsg (module_t *p, const flux_msg_t *msg)
                 goto done;
             if (flux_msg_route_delete_last (cpy) < 0)
                 goto done;
-            if (router_msg_sendzsock (p->sock, cpy) < 0)
+            if (zsock_msg_sendzsock (p->sock, cpy) < 0)
                 goto done;
             break;
         }
         default:
-            if (router_msg_sendzsock (p->sock, msg) < 0)
+            if (zsock_msg_sendzsock (p->sock, msg) < 0)
                 goto done;
             break;
     }

@@ -38,9 +38,12 @@ test_ldadd = \
 	$(top_builddir)/src/common/libterminus/libterminus.la \
 	$(top_builddir)/src/common/libutil/libutil.la \
 	$(top_builddir)/src/common/libtestutil/libtestutil.la \
+	$(top_builddir)/src/common/libzsock/libzsock.la \
         $(top_builddir)/src/common/libflux-internal.la \
         $(top_builddir)/src/common/libflux-core.la \
-        $(top_builddir)/src/common/libtap/libtap.la
+        $(top_builddir)/src/common/libtap/libtap.la \
+	$(ZMQ_LIBS)
+
 test_ldflags = \
 	-no-install
 

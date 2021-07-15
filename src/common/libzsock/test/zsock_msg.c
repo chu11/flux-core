@@ -16,8 +16,7 @@
 
 #include "src/common/libtap/tap.h"
 #include "src/common/libtestutil/util.h"
-#include "src/common/librouter/router.h"
-#include "src/common/librouter/router_msg.h"
+#include "src/common/libzsock/zsock_msg.h"
 
 void check_sendzsock (void)
 {
@@ -47,17 +46,17 @@ void check_sendzsock (void)
         "created test message");
 
     /* corner case tests */
-    ok (router_msg_sendzsock (NULL, msg) < 0 && errno == EINVAL,
-        "router_msg_sendzsock returns < 0 and EINVAL on dest = NULL");
-    ok (router_msg_sendzsock_ex (NULL, msg, true) < 0 && errno == EINVAL,
-        "router_msg_sendzsock_ex returns < 0 and EINVAL on dest = NULL");
-    ok (router_msg_recvzsock (NULL) == NULL && errno == EINVAL,
-        "router_msg_recvzsock returns NULL and EINVAL on dest = NULL");
+    ok (zsock_msg_sendzsock (NULL, msg) < 0 && errno == EINVAL,
+        "zsock_msg_sendzsock returns < 0 and EINVAL on dest = NULL");
+    ok (zsock_msg_sendzsock_ex (NULL, msg, true) < 0 && errno == EINVAL,
+        "zsock_msg_sendzsock_ex returns < 0 and EINVAL on dest = NULL");
+    ok (zsock_msg_recvzsock (NULL) == NULL && errno == EINVAL,
+        "zsock_msg_recvzsock returns NULL and EINVAL on dest = NULL");
 
-    ok (router_msg_sendzsock (zsock[1], msg) == 0,
-        "router_msg_sendzsock works");
-    ok ((msg2 = router_msg_recvzsock (zsock[0])) != NULL,
-        "router_msg_recvzsock works");
+    ok (zsock_msg_sendzsock (zsock[1], msg) == 0,
+        "zsock_msg_sendzsock works");
+    ok ((msg2 = zsock_msg_recvzsock (zsock[0])) != NULL,
+        "zsock_msg_recvzsock works");
     ok (flux_msg_get_type (msg2, &type) == 0 && type == FLUX_MSGTYPE_REQUEST
             && flux_msg_get_topic (msg2, &topic) == 0
             && !strcmp (topic, "foo.bar")
@@ -67,10 +66,10 @@ void check_sendzsock (void)
 
     /* Send it again.
      */
-    ok (router_msg_sendzsock (zsock[1], msg) == 0,
-        "try2: router_msg_sendzsock works");
-    ok ((msg2 = router_msg_recvzsock (zsock[0])) != NULL,
-        "try2: router_msg_recvzsock works");
+    ok (zsock_msg_sendzsock (zsock[1], msg) == 0,
+        "try2: zsock_msg_sendzsock works");
+    ok ((msg2 = zsock_msg_recvzsock (zsock[0])) != NULL,
+        "try2: zsock_msg_recvzsock works");
     ok (flux_msg_get_type (msg2, &type) == 0 && type == FLUX_MSGTYPE_REQUEST
             && flux_msg_get_topic (msg2, &topic) == 0
             && !strcmp (topic, "foo.bar")

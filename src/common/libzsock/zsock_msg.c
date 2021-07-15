@@ -18,10 +18,10 @@
 #include <inttypes.h>
 #include <czmq.h>
 
-#include "router_msg.h"
+#include "zsock_msg.h"
 #include "src/common/libflux/message_private.h"
 
-int router_msg_sendzsock_ex (void *sock, const flux_msg_t *msg, bool nonblock)
+int zsock_msg_sendzsock_ex (void *sock, const flux_msg_t *msg, bool nonblock)
 {
     void *handle;
     int flags = ZMQ_SNDMORE;
@@ -59,12 +59,12 @@ error:
     return rc;
 }
 
-int router_msg_sendzsock (void *sock, const flux_msg_t *msg)
+int zsock_msg_sendzsock (void *sock, const flux_msg_t *msg)
 {
-    return router_msg_sendzsock_ex (sock, msg, false);
+    return zsock_msg_sendzsock_ex (sock, msg, false);
 }
 
-flux_msg_t *router_msg_recvzsock (void *sock)
+flux_msg_t *zsock_msg_recvzsock (void *sock)
 {
     void *handle;
     struct msg_iovec *iov = NULL;

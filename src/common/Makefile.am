@@ -23,7 +23,8 @@ SUBDIRS = \
 	libhostlist \
 	librlist \
 	libczmqcontainers \
-	libccan
+	libccan \
+	libzsock
 
 AM_CFLAGS = $(WARNING_CFLAGS) $(CODE_COVERAGE_CFLAGS)
 AM_LDFLAGS = $(CODE_COVERAGE_LIBS)
@@ -46,7 +47,6 @@ libflux_internal_la_LIBADD = \
 	$(builddir)/libhostlist/libhostlist.la \
 	$(builddir)/libczmqcontainers/libczmqcontainers.la \
 	$(builddir)/librouter/librouter.la \
-	$(ZMQ_LIBS) \
 	$(JANSSON_LIBS) \
 	$(LIBUUID_LIBS) \
 	$(LIBPTHREAD) \

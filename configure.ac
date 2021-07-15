@@ -496,6 +496,7 @@ AC_CONFIG_FILES( \
   src/common/libeventlog/Makefile \
   src/common/libioencode/Makefile \
   src/common/librouter/Makefile \
+  src/common/libzsock/Makefile \
   src/common/libyuarel/Makefile \
   src/common/libdebugged/Makefile \
   src/common/libterminus/Makefile \

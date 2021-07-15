@@ -19,7 +19,7 @@
 
 #include "util.h"
 
-#include "src/common/librouter/router_msg.h"
+#include "src/common/libzsock/zsock_msg.h"
 #include "src/common/libtap/tap.h"
 
 #ifndef UUID_STR_LEN
@@ -241,7 +241,7 @@ static int test_connector_send (void *impl, const flux_msg_t *msg, int flags)
                 goto error;
             break;
     }
-    if (router_msg_sendzsock (tcon->sock, cpy) < 0)
+    if (zsock_msg_sendzsock (tcon->sock, cpy) < 0)
         goto error;
     flux_msg_destroy (cpy);
     return 0;
@@ -268,7 +268,7 @@ static flux_msg_t *test_connector_recv (void *impl, int flags)
             return NULL;
         }
     }
-    return router_msg_recvzsock (tcon->sock);
+    return zsock_msg_recvzsock (tcon->sock);
 }
 
 static void test_connector_fini (void *impl)

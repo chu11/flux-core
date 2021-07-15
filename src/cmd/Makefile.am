@@ -10,7 +10,6 @@ AM_CPPFLAGS = \
 	-I$(top_srcdir)/src/include \
 	-I$(top_builddir)/src/common/libflux \
 	$(FLUX_SECURITY_CFLAGS) \
-	$(ZMQ_CFLAGS) \
 	$(LIBUUID_CFLAGS) \
 	$(LIBSODIUM_CFLAGS) \
 	$(HWLOC_CFLAGS) \
@@ -24,8 +23,8 @@ fluxcmd_ldadd = \
 	$(top_builddir)/src/common/libflux-optparse.la \
 	$(top_builddir)/src/common/libczmqcontainers/libczmqcontainers.la \
 	$(top_builddir)/src/common/libutil/libutil.la \
-	$(FLUX_SECURITY_LIBS) \
 	$(ZMQ_LIBS) \
+	$(FLUX_SECURITY_LIBS) \
 	$(LIBUUID_LIBS) \
 	$(LIBPTHREAD) \
 	$(LIBDL) \
@@ -106,8 +105,7 @@ flux_terminus_LDADD = \
 	$(top_builddir)/src/common/libterminus/libterminus.la \
 	$(top_builddir)/src/common/libidset/libidset.la \
 	$(top_builddir)/src/common/libutil/libutil.la \
-	$(fluxcmd_ldadd) \
-	$(ZMQ_LIBS)
+	$(fluxcmd_ldadd)
 
 flux_R_LDADD = \
 	$(fluxcmd_ldadd) \
@@ -116,7 +114,6 @@ flux_R_LDADD = \
 	$(top_builddir)/src/common/libhostlist/libhostlist.la \
 	$(top_builddir)/src/common/libidset/libidset.la \
 	$(top_builddir)/src/common/libutil/libutil.la \
-	$(ZMQ_LIBS) \
 	$(HWLOC_LIBS) \
 	$(JANSSON_LIBS)
 

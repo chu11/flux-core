@@ -23,5 +23,6 @@ shmem_la_LDFLAGS = -module $(san_ld_zdef_flag) \
 shmem_la_LIBADD = \
 	$(top_builddir)/src/common/libflux-internal.la \
 	$(top_builddir)/src/common/libflux-core.la \
+	$(top_builddir)/src/common/libzsock/libzsock.la \
 	$(ZMQ_LIBS) \
 	$(LIBUUID_LIBS)

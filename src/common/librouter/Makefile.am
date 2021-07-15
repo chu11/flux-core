@@ -9,7 +9,6 @@ AM_CPPFLAGS = \
 	-I$(top_srcdir) \
 	-I$(top_srcdir)/src/include \
 	-I$(top_builddir)/src/common/libflux \
-	$(ZMQ_CFLAGS) \
 	$(LIBUUID_CFLAGS)
 
 noinst_LTLIBRARIES = \
@@ -30,8 +29,6 @@ librouter_la_SOURCES = \
 	servhash.c \
 	router.h \
 	router.c \
-	router_msg.h \
-	router_msg.c \
 	usock_service.h \
 	usock_service.c
 
@@ -45,7 +42,6 @@ TESTS = \
 	test_usock_emfile.t \
 	test_subhash.t \
 	test_router.t \
-	test_router_msg.t \
 	test_servhash.t \
 	test_usock_service.t
 
@@ -65,6 +61,7 @@ T_LOG_DRIVER = env AM_TAP_AWK='$(AWK)' $(SHELL) \
 test_ldadd = \
 	$(builddir)/libtestutil.la \
         $(top_builddir)/src/common/libtestutil/libtestutil.la \
+        $(top_builddir)/src/common/libzsock/libzsock.la \
         $(top_builddir)/src/common/librouter/librouter.la \
         $(top_builddir)/src/common/libflux-internal.la \
         $(top_builddir)/src/common/libflux-core.la \
@@ -122,11 +119,6 @@ test_router_t_SOURCES = test/router.c
 test_router_t_CPPFLAGS = $(test_cppflags)
 test_router_t_LDADD = $(test_ldadd)
 test_router_t_LDFLAGS = $(test_ldflags)
-
-test_router_msg_t_SOURCES = test/router_msg.c
-test_router_msg_t_CPPFLAGS = $(test_cppflags)
-test_router_msg_t_LDADD = $(test_ldadd)
-test_router_msg_t_LDFLAGS = $(test_ldflags)
 
 test_servhash_t_SOURCES = test/servhash.c
 test_servhash_t_CPPFLAGS = $(test_cppflags)

@@ -8,8 +8,8 @@
  * SPDX-License-Identifier: LGPL-3.0
 \************************************************************/
 
-#ifndef _ROUTER_MSG_H
-#define _ROUTER_MSG_H
+#ifndef _ZSOCK_MSG_H
+#define _ZSOCK_MSG_H
 
 #include "src/common/libflux/message.h"
 
@@ -20,19 +20,19 @@ extern "C" {
 /* Send message to zeromq socket.
  * Returns 0 on success, -1 on failure with errno set.
  */
-int router_msg_sendzsock (void *dest, const flux_msg_t *msg);
-int router_msg_sendzsock_ex (void *dest, const flux_msg_t *msg, bool nonblock);
+int zsock_msg_sendzsock (void *dest, const flux_msg_t *msg);
+int zsock_msg_sendzsock_ex (void *dest, const flux_msg_t *msg, bool nonblock);
 
 /* Receive a message from zeromq socket.
  * Returns message on success, NULL on failure with errno set.
  */
-flux_msg_t *router_msg_recvzsock (void *dest);
+flux_msg_t *zsock_msg_recvzsock (void *dest);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* !_ROUTER_MSG_H */
+#endif /* !_ZSOCK_MSG_H */
 
 /*
  * vi:tabstop=4 shiftwidth=4 expandtab

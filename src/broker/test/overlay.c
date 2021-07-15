@@ -19,7 +19,7 @@
 
 #include "src/common/libtap/tap.h"
 #include "src/common/libczmqcontainers/czmq_containers.h"
-#include "src/common/librouter/router_msg.h"
+#include "src/common/libzsock/zsock_msg.h"
 #include "src/common/libtestutil/util.h"
 #include "src/common/libutil/stdlog.h"
 #include "src/common/libutil/unlink_recursive.h"
@@ -430,7 +430,7 @@ void trio (flux_t *h)
     zsock_set_identity (zsock_none, "2");
     ok (zsock_connect (zsock_none, "%s", parent_uri) == 0,
         "none-2: zsock_connect %s (no security) works", parent_uri);
-    ok (router_msg_sendzsock (zsock_none, msg) == 0,
+    ok (zsock_msg_sendzsock (zsock_none, msg) == 0,
         "none-2: zsock_msg_sendzsock works");
 
     /* 2) Curve, and correct server publc key, but client public key
@@ -447,8 +447,8 @@ void trio (flux_t *h)
     zcert_destroy (&cert);
     ok (zsock_connect (zsock_curve, "%s", parent_uri) == 0,
         "curve-2: zsock_connect %s works", parent_uri);
-    ok (router_msg_sendzsock (zsock_curve, msg) == 0,
-        "curve-2: router_msg_sendzsock works");
+    ok (zsock_msg_sendzsock (zsock_curve, msg) == 0,
+        "curve-2: zsock_msg_sendzsock works");
 
     /* Neither of the above attempts should have gotten a message through.
      */

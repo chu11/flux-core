@@ -20,7 +20,7 @@
 #endif
 #include <flux/core.h>
 
-#include "src/common/librouter/router_msg.h"
+#include "src/common/libzsock/zsock_msg.h"
 #include "src/common/libutil/log.h"
 
 #define MODHANDLE_MAGIC    0xfeefbe02
@@ -66,7 +66,7 @@ static int op_send (void *impl, const flux_msg_t *msg, int flags)
     shmem_ctx_t *ctx = impl;
     assert (ctx->magic == MODHANDLE_MAGIC);
 
-    return router_msg_sendzsock (ctx->sock, msg);
+    return zsock_msg_sendzsock (ctx->sock, msg);
 }
 
 static flux_msg_t *op_recv (void *impl, int flags)
@@ -89,7 +89,7 @@ static flux_msg_t *op_recv (void *impl, int flags)
             goto done;
         }
     }
-    msg = router_msg_recvzsock (ctx->sock);
+    msg = zsock_msg_recvzsock (ctx->sock);
 done:
     return msg;
 }
