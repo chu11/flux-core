@@ -34,6 +34,8 @@ RUN id $USER \
    && usermod -G wheel $USER \
  )
 
+RUN yum -y install systemd-devel
+
 #
 # Add flux user and group
 #
