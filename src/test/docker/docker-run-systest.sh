@@ -96,7 +96,7 @@ docker exec -ti -u $USER:$GID \
     -e PS1=$PS1 \
     -e HOME=/home/$USER \
     -w $WORKDIR \
-    flux-system-test-$$ $SHELL
+    flux-system-test-$$ /bin/bash
 
 docker exec -ti flux-system-test-$$ shutdown -r now
 
