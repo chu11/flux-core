@@ -18,7 +18,10 @@
 
 #include <systemd/sd-bus.h>
 
+#include <flux/core.h>
+
 static const char *arg_unit = NULL;
+static time_t t_start;
 
 static int help(void) {
         printf("my-wait [OPTIONS...] COMMAND [ARGUMENTS...]\n"
@@ -129,7 +132,7 @@ static int get_properties_inactive (sd_bus *bus, const char *path)
         printf ("Exit time = %lu\n", t);
 
         r = 0;
-cleanup:
+ cleanup:
         sd_bus_error_free (&error);
         return r;
 }
@@ -411,7 +414,7 @@ static int get_properties_changed (struct wait_data *wd, const char *path)
                 wd->done = true;
 
         r = 0;
-cleanup:
+ cleanup:
         sd_bus_message_unref (m);
         sd_bus_error_free (&error);
         return r;
@@ -425,11 +428,76 @@ static int on_properties_changed(sd_bus_message *m, void *userdata, sd_bus_error
         return get_properties_changed (wd, path);
 }
 
+static void flux_on_properties_changed (flux_reactor_t *r, flux_watcher_t *w, int revents, void *arg)
+{
+        struct wait_data *wd = arg;
+
+        printf ("time passed %s = %ld\n", __FUNCTION__, time (NULL) - t_start);
+        if (revents & FLUX_POLLIN) {
+                printf ("got FLUX_POLLIN\n");
+                while ( sd_bus_process(wd->bus, NULL) ) {  }
+        }
+        else
+                printf ("got revents %X\n", revents);
+
+        if (wd->done) {
+                flux_watcher_stop (w);
+                return;
+        }
+
+        while (1) {
+                int events;
+                int timeout;
+                uint64_t usec;
+
+                events = sd_bus_get_events (wd->bus);
+
+                if (sd_bus_get_timeout(wd->bus, &usec) < 0)
+                        timeout = -1;
+                else {
+                        /* convert usec to millisecond, do some hacks to round up
+                         */
+                        printf ("usec = %lu %lu\n", usec, UINT64_MAX);
+                        if (usec) {
+                                uint64_t tmp;
+                                if (usec >= (UINT64_MAX - 1000))
+                                        tmp = INT_MAX;
+                                else if ((usec % 1000) != 0)
+                                        tmp = (usec + 1000) / 1000;
+                                else
+                                        tmp = usec / 1000;
+                                if (tmp > INT_MAX)
+                                        timeout = INT_MAX;
+                                else
+                                        timeout = tmp;
+                        }
+                        printf ("callback: events = %X, timeout = %d\n", events, timeout);
+
+                        /* if no events or no timeout, assume event ready to go right now */
+                        if (!events || !timeout) {
+                                while ( sd_bus_process(wd->bus, NULL) ) {  }
+                                continue;
+                        }
+                        break;
+                }
+
+                if (wd->done)
+                        flux_watcher_stop (w);
+                break;
+        }
+}
+
 static int waitwatcher (sd_bus *bus, const char *service_path)
 {
         struct wait_data wd = {0};
         sd_bus_error error = SD_BUS_ERROR_NULL;
+        flux_reactor_t *reactor = NULL;
+        flux_watcher_t *w = NULL;
         int r;
+        int timeout = 0;
+        uint64_t usec = 0;
+        int fd;
+        short events;
 
         wd.bus = sd_bus_ref(bus);
 
@@ -458,16 +526,16 @@ static int waitwatcher (sd_bus *bus, const char *service_path)
                 goto cleanup;
         }
 
-        while (!wd.done) {
-                int n;
-                int timeout = 0;
-                uint64_t usec = 0;
-                struct pollfd fd = {0};
-                time_t t_start;
+        if (!(reactor = flux_reactor_create (0))) {
+                perror ("flux_reactor_create");
+                goto cleanup;
+        }
+        t_start = time (NULL);
+        printf ("start wait time = %ld\n", t_start);
 
-                fd.fd = sd_bus_get_fd (bus);
-                fd.events = sd_bus_get_events (bus);
-
+        while (1) {
+                fd = sd_bus_get_fd (bus);
+                events = sd_bus_get_events (bus);
                 if (sd_bus_get_timeout(bus, &usec) < 0)
                         timeout = -1;
                 else {
@@ -488,36 +556,44 @@ static int waitwatcher (sd_bus *bus, const char *service_path)
                                         timeout = tmp;
                         }
                 }
-                printf ("fd = %d, events = %X, timeout = %d\n", fd.fd, fd.events, timeout);
+                printf ("fd = %d, events = %X, timeout = %d\n", fd, events, timeout);
 
                 /* if no events or no timeout, assume event ready to go right now */
-                if (!fd.events || !timeout) {
+                if (!events || !timeout) {
                         while ( sd_bus_process(bus, NULL) ) {  }
                         continue;
                 }
-
-                t_start = time (NULL);
-                printf ("start wait time = %ld\n", t_start);
-                if ((n = poll (&fd, 1, timeout)) < 0) {
-                        perror ("poll");
-                        goto cleanup;
-                }
-                printf ("time passed = %ld\n", time (NULL) - t_start);
-                if (!n) {
-                        printf ("continuing\n");
-                        continue;
-                }
-                printf ("revents = %X, n = %d\n", fd.revents, n);
-                if (fd.revents & POLLIN) {
-                        while ( sd_bus_process(bus, NULL) ) {  }
-                }
+                break;
         }
+
+        /* could fd potentially change? */
+        w = flux_fd_watcher_create (reactor,
+                                    fd,
+                                    FLUX_POLLIN,
+                                    flux_on_properties_changed,
+                                    &wd);
+        if (!w) {
+                perror ("flux_fd_watcher_create");
+                goto cleanup;
+        }
+
+        flux_watcher_start (w);
+        if (flux_reactor_run (reactor, 0) < 0) {
+                perror ("flux_reactor_run");
+                goto cleanup;
+        }
+
+        /* cleanup any lingering events? */
+        while ( sd_bus_process(bus, NULL) ) {  }
+        printf ("time passed = %ld\n", time (NULL) - t_start);
         r = 0;
-cleanup:
+ cleanup:
         wd.bus = sd_bus_unref(wd.bus);
         free (wd.active_state);
         free (wd.result);
         sd_bus_error_free (&error);
+        flux_watcher_destroy (w);
+        flux_reactor_destroy (reactor);
         return r;
 }
 
@@ -618,9 +694,9 @@ static int waitunit(int argc, char* argv[]) {
         if (r < 0)
                 goto cleanup;
 
-done:
+ done:
         r = 0;
-cleanup:
+ cleanup:
         sd_bus_flush_close_unref (bus);
         sd_bus_error_free (&error);
         free (service_path);
