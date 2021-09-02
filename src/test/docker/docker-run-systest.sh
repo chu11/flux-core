@@ -95,6 +95,8 @@ docker exec -ti -u $USER:$GID \
     -e CI=$CI \
     -e PS1=$PS1 \
     -e HOME=/home/$USER \
+    -e XDG_RUNTIME_DIR="/run/user/996" \
+    -e DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/996/bus \
     -w $WORKDIR \
     flux-system-test-$$ /bin/bash
 
