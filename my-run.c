@@ -245,6 +245,16 @@ static int transient_service_set_properties(sd_bus_message *m) {
                 }
         }
 
+        r = sd_bus_message_append(m,
+                                  "(sv)(sv)(sv)",
+                                  "StandardInputFileDescriptor", "h", STDIN_FILENO,
+                                  "StandardOutputFileDescriptor", "h", STDOUT_FILENO,
+                                  "StandardErrorFileDescriptor", "h", STDERR_FILENO);
+        if (r < 0) {
+          perror ("Failed to append bus message");
+          return -1;
+        }
+
         /* assume no extra environment for now, gotta deal with this parsing and data structure */
         /* if (!strv_isempty(arg_environment)) { */
         /*         r = sd_bus_message_open_container(m, 'r', "sv"); */
