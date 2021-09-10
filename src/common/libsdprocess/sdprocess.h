@@ -11,14 +11,27 @@
 #ifndef _FLUX_CORE_SDPROCESS_H
 #define _FLUX_CORE_SDPROCESS_H
 
-#include <sys/types.h>
-
 #include <flux/core.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+typedef struct flux_sdprocess flux_sdprocess_t;
+
+/* present assumptions:
+ * unitname 1 word, no dashes, periods, etc.
+ * command is absolute pathed
+ * argv & env NULL terminated
+ * fd's < 0 if don't want to use
+ */
+flux_sdprocess_t *flux_sdprocess_exec (flux_t *h,
+                                       const char *unitname,
+                                       char **argv,
+                                       char **envv,
+                                       int stdin_fd,
+                                       int stdout_fd,
+                                       int stderr_fd);
 
 #ifdef __cplusplus
 }
