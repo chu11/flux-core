@@ -33,6 +33,15 @@ flux_sdprocess_t *flux_sdprocess_exec (flux_t *h,
                                        int stdout_fd,
                                        int stderr_fd);
 
+/* for testing */
+flux_sdprocess_t *flux_sdprocess_local_exec (flux_reactor_t *r,
+                                             const char *unitname,
+                                             char **argv,
+                                             char **envv,
+                                             int stdin_fd,
+                                             int stdout_fd,
+                                             int stderr_fd);
+
 #ifdef __cplusplus
 }
 #endif
