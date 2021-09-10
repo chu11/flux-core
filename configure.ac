@@ -324,6 +324,7 @@ AX_LUA_HEADERS
 AX_LUA_LIBS
 PKG_CHECK_MODULES([ZMQ], [libczmq >= 3.0.0 libzmq >= 4.0.4])
 X_AC_JANSSON
+PKG_CHECK_MODULES([LIBSYSTEMD], [libsystemd >= 0.23], [], [])
 PKG_CHECK_MODULES([HWLOC], [hwloc >= 1.11.1], [], [])
 PKG_CHECK_MODULES([LZ4], [liblz4], [], [])
 PKG_CHECK_MODULES([SQLITE], [sqlite3], [], [])
