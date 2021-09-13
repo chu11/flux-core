@@ -31,7 +31,10 @@ struct flux_sdprocess {
     int stderr_fd;
 
     sd_bus *bus;
-    char *service_name;         /* <unitname>.service */
+    /* <unitname>.service */
+    char *service_name;
+    /* /org/freedesktop/systemd1/unit/<unitname>_2eservice */
+    char *service_path;         
 };
 
 static void strv_destroy (char **strv)
@@ -55,6 +58,7 @@ void flux_sdprocess_destroy (flux_sdprocess_t *sdp)
 
         sd_bus_flush_close_unref (sdp->bus);
         free (sdp->service_name);
+        free (sdp->service_path);
         free (sdp);
     }
 }
@@ -122,6 +126,13 @@ static flux_sdprocess_t *sdprocess_create (flux_t *h,
         goto cleanup;
     if (asprintf (&sdp->service_name, "%s.service", sdp->unitname) < 0)
         goto cleanup;
+    /* XXX - current assumption, unitname is single word, no need to escape dashes or other special chars.
+     * note - . escapes to _2e
+     */
+    if (asprintf (&sdp->service_path,
+                  "/org/freedesktop/systemd1/unit/%s_2eservice",
+                  sdp->unitname) < 0)
+        goto cleanup;
 
     return sdp;
 
@@ -132,7 +143,7 @@ static flux_sdprocess_t *sdprocess_create (flux_t *h,
 
 static int transient_service_set_properties (flux_sdprocess_t *sdp, sd_bus_message *m)
 {
-    /* XXX: need real description? */
+    /* XXX: need real description */
 
     if (sd_bus_message_append (m,
                                "(sv)",
@@ -429,6 +440,112 @@ flux_sdprocess_t *flux_sdprocess_local_exec (flux_reactor_t *r,
 cleanup:
     flux_sdprocess_destroy (sdp);
     return NULL;
+}
+
+int flux_sdprocess_systemd_cleanup (flux_sdprocess_t *sdp)
+{
+    sd_bus_error error = SD_BUS_ERROR_NULL;
+    char *active_state = NULL;
+    int exec_main_code;
+    int rv = -1;
+
+    if (!sdp) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (sd_bus_get_property_string (sdp->bus,
+                                    "org.freedesktop.systemd1",
+                                    sdp->service_path,
+                                    "org.freedesktop.systemd1.Unit",
+                                    "ActiveState",
+                                    &error,
+                                    &active_state) < 0) {
+        flux_log (sdp->h, LOG_ERR, "sd_bus_get_property_string: %s",
+                  error.message ? error.message : strerror (errno));
+        goto cleanup;
+    }
+
+    if (sd_bus_get_property_trivial (sdp->bus,
+                                     "org.freedesktop.systemd1",
+                                     sdp->service_path,
+                                     "org.freedesktop.systemd1.Service",
+                                     "ExecMainCode",
+                                     &error,
+                                     'i',
+                                     &exec_main_code) < 0) {
+        flux_log (sdp->h, LOG_ERR, "sd_bus_get_property_trivial: %s",
+                  error.message ? error.message : strerror (errno));
+        goto cleanup;
+    }
+
+    if (!exec_main_code) {
+        /* If inactive and exec_main_code = 0, the unit doesn't exist */
+        if (!strcmp (active_state, "inactive"))
+            errno = ENOENT;
+        else
+            /* XXX - or EAGAIN? or EPERM? */
+            errno = EBUSY;
+        goto cleanup;
+    }
+
+    /* Due to "RemainAfterExit", an exited succesful process will stay "active" */
+    if (!strcmp (active_state, "active")) {
+        /* This is loosely the equivalent of:
+         *
+         * systemctl stop --user <unitname>.service
+         */
+        if (sd_bus_call_method (sdp->bus,
+                                "org.freedesktop.systemd1",
+                                "/org/freedesktop/systemd1",
+                                "org.freedesktop.systemd1.Manager",
+                                "StopUnit",
+                                &error,
+                                NULL,
+                                "ss",
+                                sdp->service_name, "fail") < 0) {
+            flux_log (sdp->h, LOG_ERR, "sd_bus_call_method: %s",
+                      error.message ? error.message : strerror (errno));
+            goto cleanup;
+        }
+    }
+    else if (!strcmp (active_state, "failed")
+            || !strcmp (active_state, "inactive")) {
+        /* This is loosely the equivalent of:
+         *
+         * systemctl reset-failed --user <unitname>.service
+         */
+        if (sd_bus_call_method (sdp->bus,
+                                "org.freedesktop.systemd1",
+                                "/org/freedesktop/systemd1",
+                                "org.freedesktop.systemd1.Manager",
+                                "ResetFailedUnit",
+                                &error,
+                                NULL,
+                                "s",
+                                sdp->service_name) < 0) {
+            flux_log (sdp->h, LOG_ERR, "sd_bus_call_method: %s",
+                      error.message ? error.message : strerror (errno));
+            goto cleanup;
+        }
+    }
+    else {
+        /* Within libsdprocess states of "reloaded", "activating",
+         * "deactivating" are presumably impossible?  Should only see
+         * "active", "failed", or "inactive".  Return EAGAIN with no
+         * better ideas of what to do if we reach a state we don't
+         * know.
+         */
+        flux_log (sdp->h, LOG_ERR, "Cleanup of ActiveState=%s", active_state);
+        errno = EAGAIN;
+        goto cleanup;
+    }
+
+    rv = 0;
+cleanup:
+    sd_bus_error_free (&error);
+    free (active_state);
+    return rv;
 }
 
 /*
