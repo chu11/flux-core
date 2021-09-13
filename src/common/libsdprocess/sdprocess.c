@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
 #include <systemd/sd-bus.h>
 
@@ -34,7 +35,11 @@ struct flux_sdprocess {
     /* <unitname>.service */
     char *service_name;
     /* /org/freedesktop/systemd1/unit/<unitname>_2eservice */
-    char *service_path;         
+    char *service_path;
+
+    uint32_t exec_main_status;
+    char *result;
+    int exit_status;
 };
 
 static void strv_destroy (char **strv)
@@ -59,6 +64,8 @@ void flux_sdprocess_destroy (flux_sdprocess_t *sdp)
         sd_bus_flush_close_unref (sdp->bus);
         free (sdp->service_name);
         free (sdp->service_path);
+
+        free (sdp->result);
         free (sdp);
     }
 }
@@ -440,6 +447,163 @@ flux_sdprocess_t *flux_sdprocess_local_exec (flux_reactor_t *r,
 cleanup:
     flux_sdprocess_destroy (sdp);
     return NULL;
+}
+
+static int get_final_properties (flux_sdprocess_t *sdp)
+{
+    sd_bus_error error = SD_BUS_ERROR_NULL;
+    uint32_t exec_main_status;
+    char *result = NULL;
+    int rv = -1;
+
+    if (sd_bus_get_property_trivial (sdp->bus,
+                                     "org.freedesktop.systemd1",
+                                     sdp->service_path,
+                                     "org.freedesktop.systemd1.Service",
+                                     "ExecMainStatus",
+                                     &error,
+                                     'i',
+                                     &exec_main_status) < 0) {
+        flux_log (sdp->h, LOG_ERR, "sd_bus_get_property_trivial: %s",
+                  error.message ? error.message : strerror (errno));
+        goto cleanup;
+    }
+
+    if (sd_bus_get_property_string (sdp->bus,
+                                    "org.freedesktop.systemd1",
+                                    sdp->service_path,
+                                    "org.freedesktop.systemd1.Service",
+                                    "Result",
+                                    &error,
+                                    &result) < 0) {
+        flux_log (sdp->h, LOG_ERR, "sd_bus_get_property_string: %s",
+                  error.message ? error.message : strerror (errno));
+        goto cleanup;
+    }
+    
+    sdp->exec_main_status = exec_main_status;
+    sdp->result = result;
+    rv = 0;
+ cleanup:
+    sd_bus_error_free (&error);
+    if (rv < 0)
+        free (result);
+    return rv;
+}
+
+static int calc_final_status (flux_sdprocess_t *sdp, const char *active_state)
+{
+    if (get_final_properties (sdp) < 0)
+        return -1;
+
+    /* XX should 128 be done at a higher level, not here? */
+    if (!strcmp (sdp->result, "signal"))
+        sdp->exit_status = sdp->exec_main_status + 128;
+    else
+        sdp->exit_status = sdp->exec_main_status;
+
+    return 0;
+}
+
+int flux_sdprocess_wait (flux_sdprocess_t *sdp)
+{
+    sd_bus_error error = SD_BUS_ERROR_NULL;
+    char *active_state = NULL;
+    char *load_state = NULL;
+    int rv = -1;
+
+    if (sd_bus_get_property_string (sdp->bus,
+                                    "org.freedesktop.systemd1",
+                                    sdp->service_path,
+                                    "org.freedesktop.systemd1.Unit",
+                                    "ActiveState",
+                                    &error,
+                                    &active_state) < 0) {
+        flux_log (sdp->h, LOG_ERR, "sd_bus_get_property_string: %s",
+                  error.message ? error.message : strerror (errno));
+        goto cleanup;
+    }
+
+    if (sd_bus_get_property_string (sdp->bus,
+                                    "org.freedesktop.systemd1",
+                                    sdp->service_path,
+                                    "org.freedesktop.systemd1.Unit",
+                                    "LoadState",
+                                    &error,
+                                    &load_state) < 0) {
+        flux_log (sdp->h, LOG_ERR, "sd_bus_get_property_string: %s",
+                  error.message ? error.message : strerror (errno));
+        goto cleanup;
+    }
+
+    if (!strcmp (active_state, "inactive")
+        && !strcmp (load_state, "not-found")) {
+        errno = ENOENT;
+        goto cleanup;
+    }
+
+    /* Within libsdprocess states of "reloaded", "activating",                                                                          
+     * "deactivating" are presumably impossible?  Should only see                                                                       
+     * "active", "failed", or "inactive".  Return EAGAIN with no                                                                        
+     * better ideas of what to do if we reach a state we don't                                                                          
+     * know.                                                                                                                            
+     */   
+    if (!strcmp (active_state, "inactive")
+        || !strcmp (active_state, "failed")) {
+        if (calc_final_status (sdp, active_state) < 0)
+            goto cleanup;
+        goto done;
+    }
+    else if (strcmp (active_state, "active")) {
+        flux_log (sdp->h, LOG_ERR, "Wait of ActiveState=%s", active_state);
+        errno = EAGAIN;
+        goto done;
+    }
+
+    /* XXX - is there a possible race condition here? if process
+     * becomes inactive between above call and waitwatcher below?  How
+     * to deal with?  first time poll don't use full timeout? Or do
+     * extra check after polling setup?
+     */
+
+    if (!strcmp (active_state, "active")) {
+        /* If unit is still active, possible it is done b/c of RemainAfterExit, so
+         * check if unit completed.
+         */
+        int exec_main_code;
+
+        if (sd_bus_get_property_trivial (sdp->bus,
+                                         "org.freedesktop.systemd1",
+                                         sdp->service_path,
+                                         "org.freedesktop.systemd1.Service",
+                                         "ExecMainCode",
+                                         &error,
+                                         'i',
+                                         &exec_main_code) < 0) {
+            flux_log (sdp->h, LOG_ERR, "sd_bus_get_property_trivial: %s",
+                      error.message ? error.message : strerror (errno));
+            goto cleanup;
+        }
+
+        if (exec_main_code == CLD_EXITED) {
+            if (calc_final_status (sdp, active_state) < 0)
+                goto cleanup;
+            goto done;
+        }
+
+        /* else active and still running, fall through to poll loop */
+    }
+
+    /* if (waitwatcher (sdp) < 0) */
+    /*     goto cleanup; */
+
+done:
+    rv = 0;
+cleanup:
+    sd_bus_error_free (&error);
+    free (active_state);
+    free (load_state);
+    return rv;
 }
 
 int flux_sdprocess_systemd_cleanup (flux_sdprocess_t *sdp)

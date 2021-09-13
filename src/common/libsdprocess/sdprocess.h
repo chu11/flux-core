@@ -42,6 +42,11 @@ flux_sdprocess_t *flux_sdprocess_local_exec (flux_reactor_t *r,
                                              int stdout_fd,
                                              int stderr_fd);
 
+/* XXX return flux_future_t later */
+int flux_sdprocess_wait (flux_sdprocess_t *sdp);
+
+/* XXX flux_sdprocess_wait_unitname */
+
 /* different than destroy, cleanup leftovers in systemd */
 int flux_sdprocess_systemd_cleanup (flux_sdprocess_t *sdp);
 
