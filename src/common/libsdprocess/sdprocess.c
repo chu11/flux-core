@@ -446,6 +446,7 @@ int flux_sdprocess_systemd_cleanup (flux_sdprocess_t *sdp)
 {
     sd_bus_error error = SD_BUS_ERROR_NULL;
     char *active_state = NULL;
+    char *load_state = NULL;
     int exec_main_code;
     int rv = -1;
 
@@ -466,6 +467,24 @@ int flux_sdprocess_systemd_cleanup (flux_sdprocess_t *sdp)
         goto cleanup;
     }
 
+    if (sd_bus_get_property_string (sdp->bus,
+                                    "org.freedesktop.systemd1",
+                                    sdp->service_path,
+                                    "org.freedesktop.systemd1.Unit",
+                                    "LoadState",
+                                    &error,
+                                    &load_state) < 0) {
+        flux_log (sdp->h, LOG_ERR, "sd_bus_get_property_string: %s",
+                  error.message ? error.message : strerror (errno));
+        goto cleanup;
+    }
+
+    if (!strcmp (active_state, "inactive")
+        && !strcmp (load_state, "not-found")) {
+        errno = ENOENT;
+        goto cleanup;
+    }
+
     if (sd_bus_get_property_trivial (sdp->bus,
                                      "org.freedesktop.systemd1",
                                      sdp->service_path,
@@ -480,12 +499,8 @@ int flux_sdprocess_systemd_cleanup (flux_sdprocess_t *sdp)
     }
 
     if (!exec_main_code) {
-        /* If inactive and exec_main_code = 0, the unit doesn't exist */
-        if (!strcmp (active_state, "inactive"))
-            errno = ENOENT;
-        else
-            /* XXX - or EAGAIN? or EPERM? */
-            errno = EBUSY;
+        /* XXX - or EAGAIN? or EPERM? */
+        errno = EBUSY;
         goto cleanup;
     }
 
@@ -545,6 +560,7 @@ int flux_sdprocess_systemd_cleanup (flux_sdprocess_t *sdp)
 cleanup:
     sd_bus_error_free (&error);
     free (active_state);
+    free (load_state);
     return rv;
 }
 
