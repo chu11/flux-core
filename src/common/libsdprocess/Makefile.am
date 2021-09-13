@@ -23,7 +23,6 @@ libsdprocess_la_LIBADD = \
 	$(LIBSYSTEMD_LIBS)
 
 TESTS = \
-	test_cmd.t \
 	test_sdprocess.t
 
 check_PROGRAMS = \
