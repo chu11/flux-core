@@ -46,17 +46,16 @@ static void strv_destroy (char **strv)
     }
 }
 
-static void sdprocess_destroy (void *data)
+void flux_sdprocess_destroy (flux_sdprocess_t *sdp)
 {
-    if (data) {
-        struct flux_sdprocess *fsd = data;
-        free (fsd->unitname);
-        strv_destroy (fsd->argv);
-        strv_destroy (fsd->envv);
+    if (sdp) {
+        free (sdp->unitname);
+        strv_destroy (sdp->argv);
+        strv_destroy (sdp->envv);
 
-        sd_bus_flush_close_unref (fsd->bus);
-        free (fsd->service_name);
-        free (fsd);
+        sd_bus_flush_close_unref (sdp->bus);
+        free (sdp->service_name);
+        free (sdp);
     }
 }
 
@@ -103,35 +102,35 @@ static flux_sdprocess_t *sdprocess_create (flux_t *h,
                                            int stdout_fd,
                                            int stderr_fd)
 {
-    struct flux_sdprocess *fsd = NULL;
+    struct flux_sdprocess *sdp = NULL;
 
-    if (!(fsd = calloc (1, sizeof (*fsd))))
+    if (!(sdp = calloc (1, sizeof (*sdp))))
         return NULL;
-    if (!(fsd->unitname = strdup (unitname)))
+    if (!(sdp->unitname = strdup (unitname)))
         goto cleanup;
-    if (strv_copy (argv, &fsd->argv) < 0)
+    if (strv_copy (argv, &sdp->argv) < 0)
         goto cleanup;
-    if (strv_copy (envv, &fsd->envv) < 0)
+    if (strv_copy (envv, &sdp->envv) < 0)
         goto cleanup;
-    fsd->h = h;
-    fsd->r = r;
-    fsd->stdin_fd = stdin_fd;
-    fsd->stdout_fd = stdout_fd;
-    fsd->stderr_fd = stderr_fd;
+    sdp->h = h;
+    sdp->r = r;
+    sdp->stdin_fd = stdin_fd;
+    sdp->stdout_fd = stdout_fd;
+    sdp->stderr_fd = stderr_fd;
 
-    if (sd_bus_default_user (&fsd->bus) < 0)
+    if (sd_bus_default_user (&sdp->bus) < 0)
         goto cleanup;
-    if (asprintf (&fsd->service_name, "%s.service", fsd->unitname) < 0)
+    if (asprintf (&sdp->service_name, "%s.service", sdp->unitname) < 0)
         goto cleanup;
 
-    return fsd;
+    return sdp;
 
  cleanup:
-    sdprocess_destroy (fsd);
+    flux_sdprocess_destroy (sdp);
     return NULL;
 }
 
-static int transient_service_set_properties (flux_sdprocess_t *fsd, sd_bus_message *m)
+static int transient_service_set_properties (flux_sdprocess_t *sdp, sd_bus_message *m)
 {
     /* XXX: need real description? */
 
@@ -140,96 +139,96 @@ static int transient_service_set_properties (flux_sdprocess_t *fsd, sd_bus_messa
                                "Description",
                                "s",
                                "flux sdprocess task") < 0) {
-        flux_log_error (fsd->h, "sd_bus_message_append");
+        flux_log_error (sdp->h, "sd_bus_message_append");
         return -1;
     }
 
     /* achu: no property assignments for the time being */
 
     if (sd_bus_message_append (m, "(sv)", "AddRef", "b", 1) < 0) {
-        flux_log_error (fsd->h, "sd_bus_message_append");
+        flux_log_error (sdp->h, "sd_bus_message_append");
         return -1;
     }
 
     if (sd_bus_message_append (m, "(sv)", "RemainAfterExit", "b", true) < 0) {
-        flux_log_error (fsd->h, "sd_bus_message_append");
+        flux_log_error (sdp->h, "sd_bus_message_append");
         return -1;
     }
 
     /* if (sd_bus_message_append(m, "(sv)", "User", "s", arg_exec_user) < 0) { */
-    /*     flux_log_error (fsd->h, "sd_bus_message_append"); */
+    /*     flux_log_error (sdp->h, "sd_bus_message_append"); */
     /*     return -1; */
     /* } */
 
     /* if (sd_bus_message_append (m, "(sv)", "Group", "s", arg_exec_group) < 0) { */
-    /*     flux_log_error (fsd->h, "sd_bus_message_append"); */
+    /*     flux_log_error (sdp->h, "sd_bus_message_append"); */
     /*     return -1; */
     /* } */
 
     /* if (sd_bus_message_append (m, "(sv)", "WorkingDirectory", "s", arg_working_directory) < 0) { */
-    /*     flux_log_error (fsd->h, "sd_bus_message_append"); */
+    /*     flux_log_error (sdp->h, "sd_bus_message_append"); */
     /*     return -1; */
     /* } */
 
     /* Stdio */
 
-    if (fsd->stdin_fd >= 0) {
+    if (sdp->stdin_fd >= 0) {
         if (sd_bus_message_append (m,
                                    "(sv)",
-                                   "StandardInputFileDescriptor", "h", fsd->stdin_fd) < 0) {
-            flux_log_error (fsd->h, "sd_bus_message_append");
+                                   "StandardInputFileDescriptor", "h", sdp->stdin_fd) < 0) {
+            flux_log_error (sdp->h, "sd_bus_message_append");
             return -1;
         }
     }
 
-    if (fsd->stdout_fd >= 0) {
+    if (sdp->stdout_fd >= 0) {
         if (sd_bus_message_append (m,
                                    "(sv)",
-                                   "StandardOutputFileDescriptor", "h", fsd->stdout_fd) < 0) {
-            flux_log_error (fsd->h, "sd_bus_message_append");
+                                   "StandardOutputFileDescriptor", "h", sdp->stdout_fd) < 0) {
+            flux_log_error (sdp->h, "sd_bus_message_append");
             return -1;
         }
     }
 
-    if (fsd->stderr_fd >= 0) {
+    if (sdp->stderr_fd >= 0) {
         if (sd_bus_message_append (m,
                                    "(sv)",
-                                   "StandardErrorFileDescriptor", "h", fsd->stderr_fd) < 0) {
-            flux_log_error (fsd->h, "sd_bus_message_append");
+                                   "StandardErrorFileDescriptor", "h", sdp->stderr_fd) < 0) {
+            flux_log_error (sdp->h, "sd_bus_message_append");
             return -1;
         }
     }
 
     /* Environment */
 
-    if (fsd->envv) {
+    if (sdp->envv) {
         if (sd_bus_message_open_container (m, 'r', "sv") < 0) {
-            flux_log_error (fsd->h, "sd_bus_message_open_container");
+            flux_log_error (sdp->h, "sd_bus_message_open_container");
             return -1;
         }
 
         if (sd_bus_message_append (m, "s", "Environment") < 0) {
-            flux_log_error (fsd->h, "sd_bus_message_append");
+            flux_log_error (sdp->h, "sd_bus_message_append");
             return -1;
         }
 
         if (sd_bus_message_open_container (m, 'v', "as") < 0) {
-            flux_log_error (fsd->h, "sd_bus_message_open_container");
+            flux_log_error (sdp->h, "sd_bus_message_open_container");
             return -1;
         }
 
-        if (sd_bus_message_append_strv (m, fsd->envv) < 0) {
-            flux_log_error (fsd->h, "sd_bus_message_append_strv");
-            return -1;
-        }
-
-        if (sd_bus_message_close_container (m) < 0) {
-            flux_log_error (fsd->h, "sd_bus_message_close_container");
+        if (sd_bus_message_append_strv (m, sdp->envv) < 0) {
+            flux_log_error (sdp->h, "sd_bus_message_append_strv");
             return -1;
         }
 
         if (sd_bus_message_close_container (m) < 0) {
-            flux_log_error (fsd->h, "sd_bus_message_close_container");
+            flux_log_error (sdp->h, "sd_bus_message_close_container");
+            return -1;
+        }
+
+        if (sd_bus_message_close_container (m) < 0) {
+            flux_log_error (sdp->h, "sd_bus_message_close_container");
             return -1;
         }
     }
@@ -237,113 +236,113 @@ static int transient_service_set_properties (flux_sdprocess_t *fsd, sd_bus_messa
     /* Cmdline */
 
     if (sd_bus_message_open_container (m, 'r', "sv") < 0) {
-        flux_log_error (fsd->h, "sd_bus_message_open_container");
+        flux_log_error (sdp->h, "sd_bus_message_open_container");
         return -1;
     }
 
     if (sd_bus_message_append (m, "s", "ExecStart") < 0) {
-        flux_log_error (fsd->h, "sd_bus_message_append");
+        flux_log_error (sdp->h, "sd_bus_message_append");
         return -1;
     }
 
     if (sd_bus_message_open_container (m, 'v', "a(sasb)") < 0) {
-        flux_log_error (fsd->h, "sd_bus_message_open_container");
+        flux_log_error (sdp->h, "sd_bus_message_open_container");
         return -1;
     }
 
     if (sd_bus_message_open_container (m, 'a', "(sasb)") < 0) {
-        flux_log_error (fsd->h, "sd_bus_message_open_container");
+        flux_log_error (sdp->h, "sd_bus_message_open_container");
         return -1;
     }
 
     if (sd_bus_message_open_container (m, 'r', "sasb") < 0) {
-        flux_log_error (fsd->h, "sd_bus_message_open_container");
+        flux_log_error (sdp->h, "sd_bus_message_open_container");
         return -1;
     }
 
-    if (sd_bus_message_append (m, "s", fsd->argv[0]) < 0) {
-        flux_log_error (fsd->h, "sd_bus_message_append");
+    if (sd_bus_message_append (m, "s", sdp->argv[0]) < 0) {
+        flux_log_error (sdp->h, "sd_bus_message_append");
         return -1;
     }
 
-    if (sd_bus_message_append_strv (m, fsd->argv) < 0) {
-        flux_log_error (fsd->h, "sd_bus_message_append_strv");
+    if (sd_bus_message_append_strv (m, sdp->argv) < 0) {
+        flux_log_error (sdp->h, "sd_bus_message_append_strv");
         return -1;
     }
 
     if (sd_bus_message_append (m, "b", false) < 0) {
-        flux_log_error (fsd->h, "sd_bus_message_append");
+        flux_log_error (sdp->h, "sd_bus_message_append");
         return -1;
     }
 
     if (sd_bus_message_close_container (m) < 0) {
-        flux_log_error (fsd->h, "sd_bus_message_close_container");
+        flux_log_error (sdp->h, "sd_bus_message_close_container");
         return -1;
     }
 
     if (sd_bus_message_close_container (m) < 0) {
-        flux_log_error (fsd->h, "sd_bus_message_close_container");
+        flux_log_error (sdp->h, "sd_bus_message_close_container");
         return -1;
     }
 
     if (sd_bus_message_close_container (m) < 0) {
-        flux_log_error (fsd->h, "sd_bus_message_close_container");
+        flux_log_error (sdp->h, "sd_bus_message_close_container");
         return -1;
     }
 
     if (sd_bus_message_close_container (m) < 0) {
-        flux_log_error (fsd->h, "sd_bus_message_close_container");
+        flux_log_error (sdp->h, "sd_bus_message_close_container");
         return -1;
     }
 
     return 0;
 }
 
-static int start_transient_service (flux_sdprocess_t *fsd)
+static int start_transient_service (flux_sdprocess_t *sdp)
 {
 
     sd_bus_message *m = NULL, *reply = NULL;
     sd_bus_error error = SD_BUS_ERROR_NULL;
     int ret = -1;
 
-    if (sd_bus_message_new_method_call (fsd->bus,
+    if (sd_bus_message_new_method_call (sdp->bus,
                                         &m,
                                         "org.freedesktop.systemd1",
                                         "/org/freedesktop/systemd1",
                                         "org.freedesktop.systemd1.Manager",
                                         "StartTransientUnit") < 0) {
-        flux_log_error (fsd->h, "sd_bus_message_new_method_call");
+        flux_log_error (sdp->h, "sd_bus_message_new_method_call");
         goto cleanup;
     }
 
     /* Name and mode */
-    if (sd_bus_message_append (m, "ss", fsd->service_name, "fail") < 0) {
-        flux_log_error (fsd->h, "sd_bus_message_append");
+    if (sd_bus_message_append (m, "ss", sdp->service_name, "fail") < 0) {
+        flux_log_error (sdp->h, "sd_bus_message_append");
         goto cleanup;
     }
 
     /* Properties */
     if (sd_bus_message_open_container (m, 'a', "(sv)") < 0) {
-        flux_log_error (fsd->h, "sd_bus_message_open_container");
+        flux_log_error (sdp->h, "sd_bus_message_open_container");
         goto cleanup;
     }
 
-    if (transient_service_set_properties (fsd, m) < 0)
+    if (transient_service_set_properties (sdp, m) < 0)
         goto cleanup;
 
     if (sd_bus_message_close_container (m) < 0) {
-        flux_log_error (fsd->h, "sd_bus_message_close_container");
+        flux_log_error (sdp->h, "sd_bus_message_close_container");
         goto cleanup;
     }
 
     /* Auxiliary units */
     if (sd_bus_message_append (m, "a(sa(sv))", 0) < 0) {
-        flux_log_error (fsd->h, "sd_bus_message_append");
+        flux_log_error (sdp->h, "sd_bus_message_append");
         goto cleanup;
     }
 
-    if (sd_bus_call (fsd->bus, m, 0, &error, &reply) < 0) {
-        flux_log (fsd->h, LOG_ERR, "sd_bus_call: %s",
+    if (sd_bus_call (sdp->bus, m, 0, &error, &reply) < 0) {
+        flux_log (sdp->h, LOG_ERR, "sd_bus_call: %s",
                   error.message ? error.message : strerror (errno));
         goto cleanup;
     }
@@ -364,7 +363,7 @@ flux_sdprocess_t *flux_sdprocess_exec (flux_t *h,
                                        int stdout_fd,
                                        int stderr_fd)
 {
-    struct flux_sdprocess *fsd = NULL;
+    struct flux_sdprocess *sdp = NULL;
     flux_reactor_t *r;
 
     if (!unitname
@@ -376,7 +375,7 @@ flux_sdprocess_t *flux_sdprocess_exec (flux_t *h,
     if (!(r = flux_get_reactor (h)))
         return NULL;
 
-    if (!(fsd = sdprocess_create (h,
+    if (!(sdp = sdprocess_create (h,
                                   r,
                                   unitname,
                                   argv,
@@ -386,13 +385,13 @@ flux_sdprocess_t *flux_sdprocess_exec (flux_t *h,
                                   stderr_fd)))
         return NULL;
 
-    if (start_transient_service (fsd) < 0)
+    if (start_transient_service (sdp) < 0)
         goto cleanup;
 
-    return fsd;
+    return sdp;
 
 cleanup:
-    sdprocess_destroy (fsd);
+    flux_sdprocess_destroy (sdp);
     return NULL;
 }
 
@@ -404,7 +403,7 @@ flux_sdprocess_t *flux_sdprocess_local_exec (flux_reactor_t *r,
                                              int stdout_fd,
                                              int stderr_fd)
 {
-    struct flux_sdprocess *fsd = NULL;
+    struct flux_sdprocess *sdp = NULL;
 
     if (!unitname
         || !argv) {
@@ -412,7 +411,7 @@ flux_sdprocess_t *flux_sdprocess_local_exec (flux_reactor_t *r,
         return NULL;
     }
 
-    if (!(fsd = sdprocess_create (NULL,
+    if (!(sdp = sdprocess_create (NULL,
                                   r,
                                   unitname,
                                   argv,
@@ -422,13 +421,13 @@ flux_sdprocess_t *flux_sdprocess_local_exec (flux_reactor_t *r,
                                   stderr_fd)))
         return NULL;
 
-    if (start_transient_service (fsd) < 0)
+    if (start_transient_service (sdp) < 0)
         goto cleanup;
 
-    return fsd;
+    return sdp;
 
 cleanup:
-    sdprocess_destroy (fsd);
+    flux_sdprocess_destroy (sdp);
     return NULL;
 }
 

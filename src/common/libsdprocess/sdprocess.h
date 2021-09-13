@@ -42,6 +42,8 @@ flux_sdprocess_t *flux_sdprocess_local_exec (flux_reactor_t *r,
                                              int stdout_fd,
                                              int stderr_fd);
 
+void flux_sdprocess_destroy (flux_sdprocess_t *fsd);
+
 #ifdef __cplusplus
 }
 #endif
