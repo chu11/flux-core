@@ -86,7 +86,7 @@ static int cleanupunit(int argc, char* argv[]) {
         int r;
         char *active_state = NULL;
         char *load_state = NULL;
-        uint64_t timestamp;
+	int exit_code;
 
         r = parse_argv(argc, argv);
         if (r < 0)
@@ -124,16 +124,16 @@ static int cleanupunit(int argc, char* argv[]) {
                                          "org.freedesktop.systemd1",
                                          service_path,
                                          "org.freedesktop.systemd1.Service",
-                                         "ExecMainExitTimestamp",
+                                         "ExecMainCode",
                                          &error,
-                                         't',
-                                         &timestamp);
+                                         'i',
+                                         &exit_code);
         if (r < 0) {
                 fprintf (stderr, "sd_bus_get_property_trivial: %s\n", error.message);
                 goto cleanup;
         }
 
-        if (timestamp == 0) {
+        if (exit_code == 0) {
                 fprintf (stderr, "job hasn't exitted\n");
                 goto cleanup;
         }
