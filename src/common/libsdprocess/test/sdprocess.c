@@ -98,6 +98,8 @@ static void test_basic (flux_reactor_t *r)
     char *unitname = get_unitname ();
     char **cmdv = cmdline2strv ("/bin/true");
     flux_sdprocess_t *sdp = NULL;
+    int ret;
+
     sdp = flux_sdprocess_local_exec (r,
                                      unitname,
                                      cmdv,
@@ -107,6 +109,15 @@ static void test_basic (flux_reactor_t *r)
                                      STDERR_FILENO);
     ok (sdp != NULL,
         "flux_sdprocess_local_exec launched process under systemd");
+
+    sleep (5);
+
+    ret = flux_sdprocess_systemd_cleanup (sdp);
+    ok (ret == 0,
+        "flux_sdprocess_systemd_cleanup success");
+
+    /* XXX check cleaned up - use systemctl list-units --user? or in a
+     * script? */
 
     strv_destroy (cmdv);
     free (unitname);
@@ -128,7 +139,7 @@ int main (int argc, char *argv[])
     ok ((r = flux_reactor_create (FLUX_REACTOR_SIGCHLD)) != NULL,
         "flux_reactor_create");
 
-    diag ("basic");
+    diag ("basic success");
     test_basic (r);
 
     printf ("here\n");
