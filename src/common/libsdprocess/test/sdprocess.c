@@ -93,7 +93,7 @@ static void strv_destroy (char **strv)
     }
 }
 
-static void test_basic (flux_reactor_t *r)
+static void test_basic_success (flux_reactor_t *r)
 {
     char *unitname = get_unitname ();
     char **cmdv = cmdline2strv ("/bin/true");
@@ -110,7 +110,13 @@ static void test_basic (flux_reactor_t *r)
     ok (sdp != NULL,
         "flux_sdprocess_local_exec launched process under systemd");
 
-    sleep (5);
+    ret = flux_sdprocess_wait (sdp);
+    ok (ret == 0,
+        "flux_sdprocess_wait success");
+
+    ret = flux_reactor_run (r, 0);
+    ok (ret == 0,
+        "flux_sdprocess_wait success");
 
     ret = flux_sdprocess_systemd_cleanup (sdp);
     ok (ret == 0,
@@ -140,9 +146,8 @@ int main (int argc, char *argv[])
         "flux_reactor_create");
 
     diag ("basic success");
-    test_basic (r);
+    test_basic_success (r);
 
-    printf ("here\n");
     flux_reactor_destroy (r);
     done_testing ();
     return 0;
