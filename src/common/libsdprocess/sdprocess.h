@@ -47,6 +47,8 @@ int flux_sdprocess_wait (flux_sdprocess_t *sdp);
 
 /* XXX flux_sdprocess_wait_unitname */
 
+int flux_sdprocess_exit_status (flux_sdprocess_t *sdp);
+
 /* different than destroy, cleanup leftovers in systemd */
 int flux_sdprocess_systemd_cleanup (flux_sdprocess_t *sdp);
 

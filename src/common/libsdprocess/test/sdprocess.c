@@ -118,7 +118,13 @@ static void test_basic_success (flux_reactor_t *r)
     ok (ret == 0,
         "flux_sdprocess_wait success");
 
+    ret = flux_sdprocess_exit_status (sdp);
+    ok (ret == 0,
+        "flux_sdprocess_exit_status returns correct exit code");
+
     ret = flux_sdprocess_systemd_cleanup (sdp);
+    while (ret < 0 && errno == EBUSY)
+        ret = flux_sdprocess_systemd_cleanup (sdp);
     ok (ret == 0,
         "flux_sdprocess_systemd_cleanup success");
 

@@ -1043,12 +1043,27 @@ cleanup:
     return rv;
 }
 
+int flux_sdprocess_exit_status (flux_sdprocess_t *sdp)
+{
+    if (!sdp) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (!sdp->completed) {
+        /* XXX? */
+        errno = EBUSY;
+        return -1;
+    }
+
+    return sdp->exit_status;
+}
+
 int flux_sdprocess_systemd_cleanup (flux_sdprocess_t *sdp)
 {
     sd_bus_error error = SD_BUS_ERROR_NULL;
     char *active_state = NULL;
     char *load_state = NULL;
-    int exec_main_code;
     int rv = -1;
 
     if (!sdp) {
@@ -1086,27 +1101,35 @@ int flux_sdprocess_systemd_cleanup (flux_sdprocess_t *sdp)
         goto cleanup;
     }
 
-    if (sd_bus_get_property_trivial (sdp->bus,
-                                     "org.freedesktop.systemd1",
-                                     sdp->service_path,
-                                     "org.freedesktop.systemd1.Service",
-                                     "ExecMainCode",
-                                     &error,
-                                     'i',
-                                     &exec_main_code) < 0) {
-        flux_log (sdp->h, LOG_ERR, "sd_bus_get_property_trivial: %s",
-                  error.message ? error.message : strerror (errno));
-        goto cleanup;
-    }
-
-    if (!exec_main_code) {
-        /* XXX - or EAGAIN? or EPERM? */
-        errno = EBUSY;
-        goto cleanup;
-    }
-
-    /* Due to "RemainAfterExit", an exited succesful process will stay "active" */
     if (!strcmp (active_state, "active")) {
+        int exec_main_code;
+
+        /* Due to "RemainAfterExit", an exited succesful process will stay "active".
+         * So we gotta make its actually exited.
+         *
+         * N.B. it is possible to go from "inactive" to "active" due
+         * to "RemainAfterExit", so possible for EBUSY to be returned.
+         */
+
+        if (sd_bus_get_property_trivial (sdp->bus,
+                                         "org.freedesktop.systemd1",
+                                         sdp->service_path,
+                                         "org.freedesktop.systemd1.Service",
+                                         "ExecMainCode",
+                                         &error,
+                                         'i',
+                                         &exec_main_code) < 0) {
+            flux_log (sdp->h, LOG_ERR, "sd_bus_get_property_trivial: %s",
+                      error.message ? error.message : strerror (errno));
+            goto cleanup;
+        }
+
+        if (!exec_main_code) {
+            /* XXX - or EAGAIN? or EPERM? */
+            errno = EBUSY;
+            goto cleanup;
+        }
+
         /* This is loosely the equivalent of:
          *
          * systemctl stop --user <unitname>.service
