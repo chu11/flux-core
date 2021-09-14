@@ -44,6 +44,8 @@ struct flux_sdprocess {
 
     /* exit stuff */
     bool completed;
+    flux_sdprocess_f completed_cb;
+    void *completed_cb_arg;
     uint32_t exec_main_status;
     int exec_main_code;
     char *active_state;
@@ -817,6 +819,8 @@ static void watcher_properties_changed_cb (flux_reactor_t *r,
 
     if (sdp->completed) {
         flux_watcher_stop (w);
+        if (sdp->completed_cb)
+            sdp->completed_cb (sdp, sdp->completed_cb_arg);
         return;
     }
 }
@@ -1045,6 +1049,52 @@ cleanup:
     sd_bus_error_free (&error);
     free (active_state);
     return rv;
+}
+
+int flux_sdprocess_completed_callback (flux_sdprocess_t *sdp,
+                                       flux_sdprocess_f completed_cb,
+                                       void *arg)
+{
+    if (!sdp
+        || !completed_cb) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (check_exist (sdp) < 0)
+        return -1;
+
+    if (check_completed (sdp) < 0)
+        return -1;
+
+    if (sdp->completed) {
+        completed_cb (sdp, arg);
+        return 0;
+    }
+
+    sdp->completed_cb = completed_cb;
+    sdp->completed_cb_arg = arg;
+    if (wait_watcher (sdp) < 0)
+        return -1;
+
+    /* Small racy window in which job completed all state changes
+     * after we called check_completed() above, but before we finished
+     * setting up in wait_watcher().  So no state changes will ever
+     * occur going forward.  Call check_completed() again just in
+     * case.
+     */
+
+    if (!sdp->active_state) {
+        if (check_completed (sdp) < 0)
+            return -1;
+        if (sdp->completed) {
+            flux_watcher_stop (sdp->w);
+            completed_cb (sdp, arg);
+            return 0;
+        }
+    }
+
+    return 0;
 }
 
 int flux_sdprocess_wait (flux_sdprocess_t *sdp)

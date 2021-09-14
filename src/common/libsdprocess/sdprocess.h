@@ -19,6 +19,8 @@ extern "C" {
 
 typedef struct flux_sdprocess flux_sdprocess_t;
 
+typedef void (*flux_sdprocess_f) (flux_sdprocess_t *sdp, void *arg);
+
 /* present assumptions:
  * unitname 1 word, no dashes, periods, etc.
  * command is absolute pathed
@@ -42,12 +44,18 @@ flux_sdprocess_t *flux_sdprocess_local_exec (flux_reactor_t *r,
                                              int stdout_fd,
                                              int stderr_fd);
 
-/* XXX return flux_future_t later */
 int flux_sdprocess_wait (flux_sdprocess_t *sdp);
 
-/* XXX flux_sdprocess_wait_unitname */
+int flux_sdprocess_completed_callback (flux_sdprocess_t *sdp,
+                                       flux_sdprocess_f completed_cb,
+                                       void *arg);
 
 bool flux_sdprocess_completed (flux_sdprocess_t *sdp);
+
+/* XXX
+ * need unitname variants, i.e.
+ * flux_sdprocess_wait_unitname (const char *unitname);
+ */
 
 int flux_sdprocess_exit_status (flux_sdprocess_t *sdp);
 
