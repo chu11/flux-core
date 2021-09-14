@@ -851,8 +851,10 @@ static int wait_watcher (flux_sdprocess_t *sdp)
     flux_watcher_t *w = NULL;
     int fd;
     short events;
-    int timeout = 0;
+    int timeout = -1;
     int rv = -1;
+
+    /* XXX - need to do before job runs? need to delay start of job? */
 
     /* Subscribe to events on this systemd1 manager */
     if (sd_bus_call_method (sdp->bus,
@@ -891,9 +893,7 @@ static int wait_watcher (flux_sdprocess_t *sdp)
         uint64_t usec;
         fd = sd_bus_get_fd (sdp->bus);
         events = sd_bus_get_events (sdp->bus);
-        if (sd_bus_get_timeout (sdp->bus, &usec) < 0)
-            timeout = -1;
-        else
+        if (sd_bus_get_timeout (sdp->bus, &usec) >= 0)
             timeout = usec_to_ms (usec);
 
         /* if no events or no timeout, assume event ready to go right now */
@@ -903,6 +903,9 @@ static int wait_watcher (flux_sdprocess_t *sdp)
         }
         break;
     }
+
+    if (sdp->completed)
+        goto done;
 
     /* XXX - is there a possible race condition here? if process
      * becomes inactive between above call and waitwatcher below?  How
@@ -914,7 +917,7 @@ static int wait_watcher (flux_sdprocess_t *sdp)
     /* Assumption: bus will never change fd */
     if (!(w = flux_fd_watcher_create (sdp->r,
                                       fd,
-                                      FLUX_POLLIN,
+                                      events,
                                       watcher_properties_changed_cb,
                                       sdp))) {
         flux_log_error (sdp->h, "flux_fd_watcher_create");
@@ -923,8 +926,9 @@ static int wait_watcher (flux_sdprocess_t *sdp)
 
     flux_watcher_start (w);
     sdp->w = w;
+done:
     rv = 0;
- cleanup:
+cleanup:
     if (rv < 0)
         flux_watcher_destroy (w);
     sd_bus_error_free (&error);
