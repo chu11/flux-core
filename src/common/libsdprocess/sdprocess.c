@@ -935,17 +935,12 @@ cleanup:
     return rv;
 }
 
-int flux_sdprocess_wait (flux_sdprocess_t *sdp)
+static int check_exist (flux_sdprocess_t *sdp)
 {
     sd_bus_error error = SD_BUS_ERROR_NULL;
     char *active_state = NULL;
     char *load_state = NULL;
     int rv = -1;
-
-    if (!sdp) {
-        errno = EINVAL;
-        return -1;
-    }
 
     if (sd_bus_get_property_string (sdp->bus,
                                     "org.freedesktop.systemd1",
@@ -977,6 +972,32 @@ int flux_sdprocess_wait (flux_sdprocess_t *sdp)
         goto cleanup;
     }
 
+    rv = 0;
+cleanup:
+    sd_bus_error_free (&error);
+    free (active_state);
+    free (load_state);
+    return rv;
+}
+
+static int check_completed (flux_sdprocess_t *sdp)
+{
+    sd_bus_error error = SD_BUS_ERROR_NULL;
+    char *active_state = NULL;
+    int rv = -1;
+
+    if (sd_bus_get_property_string (sdp->bus,
+                                    "org.freedesktop.systemd1",
+                                    sdp->service_path,
+                                    "org.freedesktop.systemd1.Unit",
+                                    "ActiveState",
+                                    &error,
+                                    &active_state) < 0) {
+        flux_log (sdp->h, LOG_ERR, "sd_bus_get_property_string: %s",
+                  error.message ? error.message : strerror (errno));
+        goto cleanup;
+    }
+
     /* Within libsdprocess states of "reloaded", "activating",                                                                          
      * "deactivating" are presumably impossible?  Should only see                                                                       
      * "active", "failed", or "inactive".  Return EAGAIN with no                                                                        
@@ -995,14 +1016,8 @@ int flux_sdprocess_wait (flux_sdprocess_t *sdp)
     else if (strcmp (active_state, "active")) {
         flux_log (sdp->h, LOG_ERR, "Wait of ActiveState=%s", active_state);
         errno = EAGAIN;
-        goto done;
+        goto cleanup;
     }
-
-    /* XXX - is there a possible race condition here? if process
-     * becomes inactive between above call and waitwatcher below?  How
-     * to deal with?  first time poll don't use full timeout? Or do
-     * extra check after polling setup?
-     */
 
     if (!strcmp (active_state, "active")) {
         /* If unit is still active, possible it is done b/c of RemainAfterExit, so
@@ -1031,20 +1046,52 @@ int flux_sdprocess_wait (flux_sdprocess_t *sdp)
             sdp->completed = true;
             goto done;
         }
-
-        /* else active and still running, fall through to poll loop */
     }
-
-    if (wait_watcher (sdp) < 0)
-        goto cleanup;
 
 done:
     rv = 0;
 cleanup:
     sd_bus_error_free (&error);
     free (active_state);
-    free (load_state);
     return rv;
+}
+
+int flux_sdprocess_wait (flux_sdprocess_t *sdp)
+{
+    if (!sdp) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (check_exist (sdp) < 0)
+        return -1;
+
+    if (check_completed (sdp) < 0)
+        return -1;
+
+    if (sdp->completed)
+        return 0;
+
+    if (wait_watcher (sdp) < 0)
+        return -1;
+
+    /* Small racy window in which job completed all state changes
+     * after we called check_completed() above, but before we finished
+     * setting up in wait_watcher().  So no state changes will ever
+     * occur going forward.  Call check_completed() call right here
+     * just in case.
+     */
+
+    if (!sdp->active_state) {
+        if (check_completed (sdp) < 0)
+            return -1;
+        if (sdp->completed) {
+            flux_watcher_stop (sdp->w);
+            return 0;
+        }
+    }
+
+    return 0;
 }
 
 int flux_sdprocess_exit_status (flux_sdprocess_t *sdp)
