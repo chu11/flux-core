@@ -37,7 +37,13 @@ struct flux_sdprocess {
     /* /org/freedesktop/systemd1/unit/<unitname>_2eservice */
     char *service_path;
 
+    /* wait watcher */
+    flux_watcher_t *w;
+
+    /* exit stuff */
+    bool completed;
     uint32_t exec_main_status;
+    char *active_state;
     char *result;
     int exit_status;
 };
@@ -65,6 +71,12 @@ void flux_sdprocess_destroy (flux_sdprocess_t *sdp)
         free (sdp->service_name);
         free (sdp->service_path);
 
+        if (sdp->w) {
+            flux_watcher_stop (sdp->w);
+            flux_watcher_destroy (sdp->w);
+        }
+
+        free (sdp->active_state);
         free (sdp->result);
         free (sdp);
     }
@@ -493,9 +505,6 @@ static int get_final_properties (flux_sdprocess_t *sdp)
 
 static int calc_final_status (flux_sdprocess_t *sdp, const char *active_state)
 {
-    if (get_final_properties (sdp) < 0)
-        return -1;
-
     /* XX should 128 be done at a higher level, not here? */
     if (!strcmp (sdp->result, "signal"))
         sdp->exit_status = sdp->exec_main_status + 128;
@@ -503,6 +512,366 @@ static int calc_final_status (flux_sdprocess_t *sdp, const char *active_state)
         sdp->exit_status = sdp->exec_main_status;
 
     return 0;
+}
+
+static int get_properties_changed (flux_sdprocess_t *sdp)
+{
+    sd_bus_message *m = NULL;
+    sd_bus_error error = SD_BUS_ERROR_NULL;
+    int ret, rv = -1;
+
+    if (sd_bus_call_method (wd->bus,
+                            "org.freedesktop.systemd1",
+                            path,
+                            "org.freedesktop.DBus.Properties",
+                            "GetAll",
+                            &error,
+                            &m,
+                            "s", "") < 0) {
+        flux_log (sdp->h, LOG_ERR, "sd_bus_call_method: %s",
+                  error.message ? error.message : strerror (errno));
+        goto cleanup;
+    }
+
+    if (sd_bus_message_enter_container (m, SD_BUS_TYPE_ARRAY, "{sv}") < 0) {
+        flux_log (sdp->h, LOG_ERR, "sd_bus_message_enter_container: %s",
+                  error.message ? error.message : strerror (errno));
+        goto cleanup;
+    }
+
+    while ((ret = sd_bus_message_enter_container (m,
+                                                  SD_BUS_TYPE_DICT_ENTRY,
+                                                  "sv")) > 0) {
+        const char *member;
+
+        if (sd_bus_message_read_basic (m, SD_BUS_TYPE_STRING, &member) < 0) {
+            flux_log (sdp->h, LOG_ERR, "sd_bus_message_read_basic: %s",
+                      error.message ? error.message : strerror (errno));
+            goto cleanup;
+        }
+
+        if (!strcmp (member, "ActiveState")) {
+            const char *contents;
+            const char *active_state;
+            char type;
+
+            if (sd_bus_message_peek_type (m, NULL, &contents) < 0) {
+                flux_log (sdp->h, LOG_ERR, "sd_bus_message_peek_type: %s",
+                          error.message ? error.message : strerror (errno));
+                goto cleanup;
+            }
+
+            if (sd_bus_message_enter_container (m,
+                                                SD_BUS_TYPE_VARIANT,
+                                                contents) < 0) {
+                flux_log (sdp->h, LOG_ERR, "sd_bus_message_enter_container: %s",
+                          error.message ? error.message : strerror (errno));
+                goto cleanup;
+            }
+
+            if (sd_bus_message_peek_type (m, &type, NULL) < 0) {
+                flux_log (sdp->h, LOG_ERR, "sd_bus_message_peek_type: %s",
+                          error.message ? error.message : strerror (errno));
+                goto cleanup;
+            }
+
+            if (type != SD_BUS_TYPE_STRING) {
+                flux_log (sdp->h, LOG_ERR, "Invalid type %d, expected %d",
+                          type, SD_BUS_TYPE_STRING);
+                goto cleanup;
+            }
+
+            if (sd_bus_message_read_basic (m, type, &active_state) < 0) {
+                flux_log (sdp->h, LOG_ERR, "sd_bus_message_read_basic: %s",
+                          error.message ? error.message : strerror (errno));
+                goto cleanup;
+            }
+
+            if (sd_bus_message_exit_container (m) < 0) {
+                flux_log (sdp->h, LOG_ERR, "sd_bus_message_exit_container: %s",
+                          error.message ? error.message : strerror (errno));
+                goto cleanup;
+            }
+
+            if (!sdp->active_state
+                || strcmp (sdp->active_state, active_state) != 0) {
+                char *tmp;
+                if (!(tmp = strdup (active_state)))
+                    goto cleanup;
+                free (sdp->active_state);
+                sdp->active_state = tmp;
+            }
+        }
+        else if (!strcmp (member, "Result")) {
+            const char *contents;
+            const char *s;
+            char type;
+
+            if (sd_bus_message_peek_type (m, NULL, &contents) < 0) {
+                flux_log (sdp->h, LOG_ERR, "sd_bus_message_peek_type: %s",
+                          error.message ? error.message : strerror (errno));
+                goto cleanup;
+            }
+
+            if (sd_bus_message_enter_container (m,
+                                                SD_BUS_TYPE_VARIANT,
+                                                contents) < 0) {
+                flux_log (sdp->h, LOG_ERR, "sd_bus_message_enter_container: %s",
+                          error.message ? error.message : strerror (errno));
+                goto cleanup;
+            }
+
+            if (sd_bus_message_peek_type (m, &type, NULL) < 0) {
+                flux_log (sdp->h, LOG_ERR, "sd_bus_message_peek_type: %s",
+                          error.message ? error.message : strerror (errno));
+                goto cleanup;
+            }
+
+            if (type != SD_BUS_TYPE_STRING) {
+                flux_log (sdp->h, LOG_ERR, "Invalid type %d, expected %d",
+                          type, SD_BUS_TYPE_STRING);
+                goto cleanup;
+            }
+
+            if (sd_bus_message_read_basic (m, type, &s) < 0) {
+                flux_log (sdp->h, LOG_ERR, "sd_bus_message_read_basic: %s",
+                          error.message ? error.message : strerror (errno));
+                goto cleanup;
+            }
+
+            if (sd_bus_message_exit_container (m) < 0) {
+                flux_log (sdp->h, LOG_ERR, "sd_bus_message_exit_container: %s",
+                          error.message ? error.message : strerror (errno));
+                goto cleanup;
+            }
+
+            if (!sdp->result
+                || strcmp (sdp->result, result) != 0) {
+                char *tmp;
+                if (!(tmp = strdup (result)))
+                    goto cleanup;
+                free (sdp->result);
+                sdp->result = tmp;
+            }
+        }
+        else if (!strcmp (member, "ExecMainStatus")) {
+            const char *contents;
+            uint32_t tmp;
+            char type;
+
+            if (sd_bus_message_peek_type (m, NULL, &contents) < 0) {
+                flux_log (sdp->h, LOG_ERR, "sd_bus_message_peek_type: %s",
+                          error.message ? error.message : strerror (errno));
+                goto cleanup;
+            }
+
+            if (sd_bus_message_enter_container (m,
+                                                SD_BUS_TYPE_VARIANT,
+                                                contents) < 0) {
+                flux_log (sdp->h, LOG_ERR, "sd_bus_message_enter_container: %s",
+                          error.message ? error.message : strerror (errno));
+                goto cleanup;
+            }
+
+            if (sd_bus_message_peek_type (m, &type, NULL) < 0) {
+                flux_log (sdp->h, LOG_ERR, "sd_bus_message_peek_type: %s",
+                          error.message ? error.message : strerror (errno));
+                goto cleanup;
+            }
+
+            if (type != SD_BUS_TYPE_INT32) {
+                flux_log (sdp->h, LOG_ERR, "Invalid type %d, expected %d",
+                          type, SD_BUS_TYPE_STRING);
+                goto cleanup;
+            }
+
+            if (sd_bus_message_read_basic (m, type, &tmp) < 0) {
+                flux_log (sdp->h, LOG_ERR, "sd_bus_message_read_basic: %s",
+                          error.message ? error.message : strerror (errno));
+                goto cleanup;
+            }
+
+            if (sd_bus_message_exit_container (m) < 0) {
+                flux_log (sdp->h, LOG_ERR, "sd_bus_message_exit_container: %s",
+                          error.message ? error.message : strerror (errno));
+                goto cleanup;
+            }
+
+            if (sdp->exec_main_status != tmp)
+                sdp->exec_main_status = tmp;
+        }
+        else {
+            if (sd_bus_message_skip (m, "v") < 0) {
+                flux_log (sdp->h, LOG_ERR, "sd_bus_message_skip: %s",
+                          error.message ? error.message : strerror (errno));
+                goto cleanup;
+            }
+        }
+
+        if (sd_bus_message_exit_container (m) < 0) {
+            flux_log (sdp->h, LOG_ERR, "sd_bus_message_exit_container: %s",
+                      error.message ? error.message : strerror (errno));
+            goto cleanup;
+        }
+    }
+    if (ret < 0) {
+        flux_log (sdp->h, LOG_ERR, "sd_bus_message_enter_container: %s",
+                  error.message ? error.message : strerror (errno));
+        goto cleanup;
+    }
+
+    if (sd_bus_message_exit_container (m) < 0) {
+        flux_log (sdp->h, LOG_ERR, "sd_bus_message_exit_container: %s",
+                  error.message ? error.message : strerror (errno));
+        goto cleanup;
+    }
+
+    /* XXX finish up */
+    if (!strcmp (wd->active_state, "inactive")
+        || !strcmp (wd->active_state, "failed")
+        || wd->exit_timestamp != 0) {
+        calc_done (wd->p, wd->active_state, wd->exit_status, wd->result);
+        wd->completed = true;
+    }
+
+    rv = 0;
+cleanup:
+    sd_bus_message_unref (m);
+    sd_bus_error_free (&error);
+    return rv;
+}
+
+static int sdbus_properties_changed_cb (sd_bus_message *m,
+                                        void *userdata,
+                                        sd_bus_error *error)
+{
+    flux_sdprocess_t *sdp = userdata;
+    return get_properties_changed (sdp);
+}
+
+static void watcher_properties_changed_cb (flux_reactor_t *r,
+                                           flux_watcher_t *w,
+                                           int revents,
+                                           void *arg)
+{
+    flux_sdprocess_t *sdp = arg;
+
+    if (revents & FLUX_POLLIN)
+        while ( sd_bus_process (sdp->bus, NULL) ) {  }
+    else {
+        flux_log (sdp->h, LOG_ERR, "Unexpected revents: %X", revents);
+        return;
+    }
+
+    if (wd->completed) {
+        flux_watcher_stop (w);
+        /* XXX calc final? */
+        return;
+    }
+}
+
+/* convert usec to millisecond, but with hacks to ensure we round up
+ * and handle a few corner cases */
+static int usec_to_ms (uint64_t usec)
+{
+    int timeout = 0;
+    if (usec) {
+        if (usec >= (UINT64_MAX - 1000))
+            timeout = INT_MAX;
+        else {
+            uint64_t tmp;
+            if ((usec % 1000) != 0)
+                tmp = (usec + 1000) / 1000;
+            else
+                tmp = usec / 1000;
+
+            if (tmp > INT_MAX)
+                timeout = INT_MAX;
+            else
+                timeout = tmp;
+        }
+    }
+    return timeout;
+}
+
+static int wait_watcher (flux_sdprocess_t *sdp)
+{
+    sd_bus_error error = SD_BUS_ERROR_NULL;
+    flux_watcher_t *w = NULL;
+    int fd;
+    short events;
+    int timeout = 0;
+    int rv = -1;
+
+    /* Subscribe to events on this systemd1 manager */
+    if (sd_bus_call_method (sdp->bus,
+                            "org.freedesktop.systemd1",
+                            "/org/freedesktop/systemd1",
+                            "org.freedesktop.systemd1.Manager",
+                            "Subscribe",
+                            &error,
+                            NULL,
+                            NULL) < 0) {
+        flux_log (sdp->h, LOG_ERR, "sd_bus_call_method: %s",
+                  error.message ? error.message : strerror (errno));
+        goto cleanup;
+    }
+
+    if (sd_bus_match_signal_async (sdp->bus,
+                                   NULL,
+                                   "org.freedesktop.systemd1",
+                                   sdp->service_path,
+                                   "org.freedesktop.DBus.Properties",
+                                   "PropertiesChanged",
+                                   sdbus_properties_changed_cb,
+                                   NULL,
+                                   sdp) < 0) {
+        flux_log_error (sdp->h, "sd_bus_match_signal_async");
+        goto cleanup;
+    }
+
+    while (1) {
+        uint64_t usec;
+        fd = sd_bus_get_fd (sdp->bus);
+        events = sd_bus_get_events (sdp->bus);
+        if (sd_bus_get_timeout (sdp->bus, &usec) < 0)
+            timeout = -1;
+        else
+            timeout = usec_to_ms (usec);
+
+        /* if no events or no timeout, assume event ready to go right now */
+        if (!events || !timeout) {
+            while ( sd_bus_process (sdp->bus, NULL) ) {  }
+            continue;
+        }
+        break;
+    }
+
+    /* XXX - is there a possible race condition here? if process
+     * becomes inactive between above call and waitwatcher below?  How
+     * to deal with?  first time poll don't use full timeout? Or do
+     * extra check after polling setup?
+     */
+    /* XXX - need to check for job having exited right now? */
+
+    /* Assumption: bus will never change fd */
+    if (!(w = flux_fd_watcher_create (sdp->reactor,
+                                      fd,
+                                      FLUX_POLLIN,
+                                      watcher_properties_changed_cb,
+                                      &sdp))) {
+        flux_log_error (sdp->h, "flux_fd_watcher_create");
+        goto cleanup;
+    }
+
+    flux_watcher_start (w);
+    sdp->w = w;
+    rv = 0;
+ cleanup:
+    if (r < 0)
+        flux_watcher_destroy (w);
+    sd_bus_error_free (&error);
+    return rv;
 }
 
 int flux_sdprocess_wait (flux_sdprocess_t *sdp)
@@ -550,6 +919,8 @@ int flux_sdprocess_wait (flux_sdprocess_t *sdp)
      */   
     if (!strcmp (active_state, "inactive")
         || !strcmp (active_state, "failed")) {
+        if (get_final_properties (sdp) < 0)
+            goto cleanup;
         if (calc_final_status (sdp, active_state) < 0)
             goto cleanup;
         goto done;
@@ -586,6 +957,8 @@ int flux_sdprocess_wait (flux_sdprocess_t *sdp)
         }
 
         if (exec_main_code == CLD_EXITED) {
+            if (get_final_properties (sdp) < 0)
+                goto cleanup;
             if (calc_final_status (sdp, active_state) < 0)
                 goto cleanup;
             goto done;
@@ -594,8 +967,8 @@ int flux_sdprocess_wait (flux_sdprocess_t *sdp)
         /* else active and still running, fall through to poll loop */
     }
 
-    /* if (waitwatcher (sdp) < 0) */
-    /*     goto cleanup; */
+    if (wait_watcher (sdp) < 0)
+        goto cleanup;
 
 done:
     rv = 0;
