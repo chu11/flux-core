@@ -1082,7 +1082,7 @@ int flux_sdprocess_wait (flux_sdprocess_t *sdp)
         }
     }
 
-    return 0;
+    return flux_reactor_run (sdp->r, 0);
 }
 
 bool flux_sdprocess_completed (flux_sdprocess_t *sdp)

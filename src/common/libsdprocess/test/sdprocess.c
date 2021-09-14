@@ -125,12 +125,6 @@ static void test_basic_success (flux_reactor_t *r)
     ok (ret == 0,
         "flux_sdprocess_wait success");
 
-    if (!flux_sdprocess_completed (sdp)) {
-        ret = flux_reactor_run (r, 0);
-        ok (ret == 0,
-            "flux_sdprocess_wait success");
-    }
-
     ret = flux_sdprocess_exit_status (sdp);
     ok (ret == 0,
         "flux_sdprocess_exit_status returns correct exit code");
