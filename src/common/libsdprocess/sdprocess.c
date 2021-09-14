@@ -854,8 +854,6 @@ static int wait_watcher (flux_sdprocess_t *sdp)
     int timeout = -1;
     int rv = -1;
 
-    /* XXX - need to do before job runs? need to delay start of job? */
-
     /* Subscribe to events on this systemd1 manager */
     if (sd_bus_call_method (sdp->bus,
                             "org.freedesktop.systemd1",
@@ -906,13 +904,6 @@ static int wait_watcher (flux_sdprocess_t *sdp)
 
     if (sdp->completed)
         goto done;
-
-    /* XXX - is there a possible race condition here? if process
-     * becomes inactive between above call and waitwatcher below?  How
-     * to deal with?  first time poll don't use full timeout? Or do
-     * extra check after polling setup?
-     */
-    /* XXX - need to check for job having exited right now? */
 
     /* Assumption: bus will never change fd */
     if (!(w = flux_fd_watcher_create (sdp->r,
@@ -1078,8 +1069,8 @@ int flux_sdprocess_wait (flux_sdprocess_t *sdp)
     /* Small racy window in which job completed all state changes
      * after we called check_completed() above, but before we finished
      * setting up in wait_watcher().  So no state changes will ever
-     * occur going forward.  Call check_completed() call right here
-     * just in case.
+     * occur going forward.  Call check_completed() again just in
+     * case.
      */
 
     if (!sdp->active_state) {
@@ -1092,6 +1083,13 @@ int flux_sdprocess_wait (flux_sdprocess_t *sdp)
     }
 
     return 0;
+}
+
+bool flux_sdprocess_completed (flux_sdprocess_t *sdp)
+{
+    if (!sdp)
+        return false;
+    return sdp->completed;
 }
 
 int flux_sdprocess_exit_status (flux_sdprocess_t *sdp)
