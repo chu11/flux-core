@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <limits.h>
 
 #include <systemd/sd-bus.h>
 
@@ -43,6 +44,7 @@ struct flux_sdprocess {
     /* exit stuff */
     bool completed;
     uint32_t exec_main_status;
+    int exec_main_code;
     char *active_state;
     char *result;
     int exit_status;
@@ -503,9 +505,9 @@ static int get_final_properties (flux_sdprocess_t *sdp)
     return rv;
 }
 
-static int calc_final_status (flux_sdprocess_t *sdp, const char *active_state)
+static int calc_exit_status (flux_sdprocess_t *sdp, const char *active_state)
 {
-    /* XX should 128 be done at a higher level, not here? */
+    /* XXX should 128 be done at a higher level, not here? */
     if (!strcmp (sdp->result, "signal"))
         sdp->exit_status = sdp->exec_main_status + 128;
     else
@@ -520,9 +522,9 @@ static int get_properties_changed (flux_sdprocess_t *sdp)
     sd_bus_error error = SD_BUS_ERROR_NULL;
     int ret, rv = -1;
 
-    if (sd_bus_call_method (wd->bus,
+    if (sd_bus_call_method (sdp->bus,
                             "org.freedesktop.systemd1",
-                            path,
+                            sdp->service_path,
                             "org.freedesktop.DBus.Properties",
                             "GetAll",
                             &error,
@@ -604,7 +606,7 @@ static int get_properties_changed (flux_sdprocess_t *sdp)
         }
         else if (!strcmp (member, "Result")) {
             const char *contents;
-            const char *s;
+            const char *result;
             char type;
 
             if (sd_bus_message_peek_type (m, NULL, &contents) < 0) {
@@ -633,7 +635,7 @@ static int get_properties_changed (flux_sdprocess_t *sdp)
                 goto cleanup;
             }
 
-            if (sd_bus_message_read_basic (m, type, &s) < 0) {
+            if (sd_bus_message_read_basic (m, type, &result) < 0) {
                 flux_log (sdp->h, LOG_ERR, "sd_bus_message_read_basic: %s",
                           error.message ? error.message : strerror (errno));
                 goto cleanup;
@@ -656,7 +658,7 @@ static int get_properties_changed (flux_sdprocess_t *sdp)
         }
         else if (!strcmp (member, "ExecMainStatus")) {
             const char *contents;
-            uint32_t tmp;
+            uint32_t exec_main_status;
             char type;
 
             if (sd_bus_message_peek_type (m, NULL, &contents) < 0) {
@@ -681,11 +683,11 @@ static int get_properties_changed (flux_sdprocess_t *sdp)
 
             if (type != SD_BUS_TYPE_INT32) {
                 flux_log (sdp->h, LOG_ERR, "Invalid type %d, expected %d",
-                          type, SD_BUS_TYPE_STRING);
+                          type, SD_BUS_TYPE_INT32);
                 goto cleanup;
             }
 
-            if (sd_bus_message_read_basic (m, type, &tmp) < 0) {
+            if (sd_bus_message_read_basic (m, type, &exec_main_status) < 0) {
                 flux_log (sdp->h, LOG_ERR, "sd_bus_message_read_basic: %s",
                           error.message ? error.message : strerror (errno));
                 goto cleanup;
@@ -697,8 +699,54 @@ static int get_properties_changed (flux_sdprocess_t *sdp)
                 goto cleanup;
             }
 
-            if (sdp->exec_main_status != tmp)
-                sdp->exec_main_status = tmp;
+            if (sdp->exec_main_status != exec_main_status)
+                sdp->exec_main_status = exec_main_status;
+        }
+        else if (!strcmp (member, "ExecMainCode")) {
+            const char *contents;
+            uint32_t exec_main_code;
+            char type;
+
+            if (sd_bus_message_peek_type (m, NULL, &contents) < 0) {
+                flux_log (sdp->h, LOG_ERR, "sd_bus_message_peek_type: %s",
+                          error.message ? error.message : strerror (errno));
+                goto cleanup;
+            }
+
+            if (sd_bus_message_enter_container (m,
+                                                SD_BUS_TYPE_VARIANT,
+                                                contents) < 0) {
+                flux_log (sdp->h, LOG_ERR, "sd_bus_message_enter_container: %s",
+                          error.message ? error.message : strerror (errno));
+                goto cleanup;
+            }
+
+            if (sd_bus_message_peek_type (m, &type, NULL) < 0) {
+                flux_log (sdp->h, LOG_ERR, "sd_bus_message_peek_type: %s",
+                          error.message ? error.message : strerror (errno));
+                goto cleanup;
+            }
+
+            if (type != SD_BUS_TYPE_INT32) {
+                flux_log (sdp->h, LOG_ERR, "Invalid type %d, expected %d",
+                          type, SD_BUS_TYPE_INT32);
+                goto cleanup;
+            }
+
+            if (sd_bus_message_read_basic (m, type, &exec_main_code) < 0) {
+                flux_log (sdp->h, LOG_ERR, "sd_bus_message_read_basic: %s",
+                          error.message ? error.message : strerror (errno));
+                goto cleanup;
+            }
+
+            if (sd_bus_message_exit_container (m) < 0) {
+                flux_log (sdp->h, LOG_ERR, "sd_bus_message_exit_container: %s",
+                          error.message ? error.message : strerror (errno));
+                goto cleanup;
+            }
+
+            if (sdp->exec_main_code != exec_main_code)
+                sdp->exec_main_code = exec_main_code;
         }
         else {
             if (sd_bus_message_skip (m, "v") < 0) {
@@ -726,12 +774,12 @@ static int get_properties_changed (flux_sdprocess_t *sdp)
         goto cleanup;
     }
 
-    /* XXX finish up */
-    if (!strcmp (wd->active_state, "inactive")
-        || !strcmp (wd->active_state, "failed")
-        || wd->exit_timestamp != 0) {
-        calc_done (wd->p, wd->active_state, wd->exit_status, wd->result);
-        wd->completed = true;
+    if (!strcmp (sdp->active_state, "inactive")
+        || !strcmp (sdp->active_state, "failed")
+        || sdp->exec_main_code == CLD_EXITED) {
+        if (calc_exit_status (sdp, sdp->active_state) < 0)
+            goto cleanup;
+        sdp->completed = true;
     }
 
     rv = 0;
@@ -763,9 +811,8 @@ static void watcher_properties_changed_cb (flux_reactor_t *r,
         return;
     }
 
-    if (wd->completed) {
+    if (sdp->completed) {
         flux_watcher_stop (w);
-        /* XXX calc final? */
         return;
     }
 }
@@ -817,6 +864,8 @@ static int wait_watcher (flux_sdprocess_t *sdp)
         goto cleanup;
     }
 
+    /* Setup callback when `sd_bus_process ()` is called on properties
+     * changed */
     if (sd_bus_match_signal_async (sdp->bus,
                                    NULL,
                                    "org.freedesktop.systemd1",
@@ -855,7 +904,7 @@ static int wait_watcher (flux_sdprocess_t *sdp)
     /* XXX - need to check for job having exited right now? */
 
     /* Assumption: bus will never change fd */
-    if (!(w = flux_fd_watcher_create (sdp->reactor,
+    if (!(w = flux_fd_watcher_create (sdp->r,
                                       fd,
                                       FLUX_POLLIN,
                                       watcher_properties_changed_cb,
@@ -868,7 +917,7 @@ static int wait_watcher (flux_sdprocess_t *sdp)
     sdp->w = w;
     rv = 0;
  cleanup:
-    if (r < 0)
+    if (rv < 0)
         flux_watcher_destroy (w);
     sd_bus_error_free (&error);
     return rv;
@@ -921,8 +970,9 @@ int flux_sdprocess_wait (flux_sdprocess_t *sdp)
         || !strcmp (active_state, "failed")) {
         if (get_final_properties (sdp) < 0)
             goto cleanup;
-        if (calc_final_status (sdp, active_state) < 0)
+        if (calc_exit_status (sdp, active_state) < 0)
             goto cleanup;
+        sdp->completed = true;
         goto done;
     }
     else if (strcmp (active_state, "active")) {
@@ -959,8 +1009,9 @@ int flux_sdprocess_wait (flux_sdprocess_t *sdp)
         if (exec_main_code == CLD_EXITED) {
             if (get_final_properties (sdp) < 0)
                 goto cleanup;
-            if (calc_final_status (sdp, active_state) < 0)
+            if (calc_exit_status (sdp, active_state) < 0)
                 goto cleanup;
+            sdp->completed = true;
             goto done;
         }
 
