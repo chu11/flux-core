@@ -863,9 +863,13 @@ static int wait_watcher (flux_sdprocess_t *sdp)
                             &error,
                             NULL,
                             NULL) < 0) {
-        flux_log (sdp->h, LOG_ERR, "sd_bus_call_method: %s",
-                  error.message ? error.message : strerror (errno));
-        goto cleanup;
+        if (!error.name
+            || strcmp (error.name,
+                       "org.freedesktop.systemd1.AlreadySubscribed") != 0) {
+            flux_log (sdp->h, LOG_ERR, "sd_bus_call_method: %s",
+                      error.message ? error.message : strerror (errno));
+            goto cleanup;
+        }
     }
 
     /* Setup callback when `sd_bus_process ()` is called on properties
