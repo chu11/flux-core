@@ -104,12 +104,19 @@ static void strv_destroy (char **strv)
     }
 }
 
+static void count_cb (flux_sdprocess_t *sdp, void *arg)
+{
+    int *count = arg;
+    (*count)++;
+}
+
 static void test_basic_success (flux_reactor_t *r)
 {
     char *unitname = get_unitname ();
     char **cmdv = cmdline2strv ("/bin/true");
     flux_sdprocess_t *sdp = NULL;
     int ret;
+    int count = 0;
 
     sdp = flux_sdprocess_local_exec (r,
                                      unitname,
@@ -121,9 +128,22 @@ static void test_basic_success (flux_reactor_t *r)
     ok (sdp != NULL,
         "flux_sdprocess_local_exec launched process under systemd");
 
-    ret = flux_sdprocess_wait (sdp);
+    /* ret = flux_sdprocess_wait (sdp); */
+    /* ok (ret == 0, */
+    /*     "flux_sdprocess_wait success"); */
+
+    ret = flux_sdprocess_completed_callback (sdp, count_cb, &count);
     ok (ret == 0,
-        "flux_sdprocess_wait success");
+        "flux_sdprocess_completed_callback success");
+
+    if (!count) {
+        ret = flux_reactor_run (r, 0);
+        ok (ret == 0,
+            "flux_reactor_run success");
+    }
+
+    ok (count == 1,
+        "callback called once");
 
     ret = flux_sdprocess_exit_status (sdp);
     ok (ret == 0,
