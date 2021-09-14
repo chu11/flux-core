@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <unistd.h>
 #include <limits.h>
 
 #include <systemd/sd-bus.h>
@@ -508,6 +509,7 @@ static int get_final_properties (flux_sdprocess_t *sdp)
 static int calc_exit_status (flux_sdprocess_t *sdp, const char *active_state)
 {
     /* XXX should 128 be done at a higher level, not here? */
+    /* result guaranteed to be set by this point? */
     if (!strcmp (sdp->result, "signal"))
         sdp->exit_status = sdp->exec_main_status + 128;
     else
@@ -589,12 +591,6 @@ static int get_properties_changed (flux_sdprocess_t *sdp)
                 goto cleanup;
             }
 
-            if (sd_bus_message_exit_container (m) < 0) {
-                flux_log (sdp->h, LOG_ERR, "sd_bus_message_exit_container: %s",
-                          error.message ? error.message : strerror (errno));
-                goto cleanup;
-            }
-
             if (!sdp->active_state
                 || strcmp (sdp->active_state, active_state) != 0) {
                 char *tmp;
@@ -602,6 +598,12 @@ static int get_properties_changed (flux_sdprocess_t *sdp)
                     goto cleanup;
                 free (sdp->active_state);
                 sdp->active_state = tmp;
+            }
+
+            if (sd_bus_message_exit_container (m) < 0) {
+                flux_log (sdp->h, LOG_ERR, "sd_bus_message_exit_container: %s",
+                          error.message ? error.message : strerror (errno));
+                goto cleanup;
             }
         }
         else if (!strcmp (member, "Result")) {
@@ -641,12 +643,6 @@ static int get_properties_changed (flux_sdprocess_t *sdp)
                 goto cleanup;
             }
 
-            if (sd_bus_message_exit_container (m) < 0) {
-                flux_log (sdp->h, LOG_ERR, "sd_bus_message_exit_container: %s",
-                          error.message ? error.message : strerror (errno));
-                goto cleanup;
-            }
-
             if (!sdp->result
                 || strcmp (sdp->result, result) != 0) {
                 char *tmp;
@@ -654,6 +650,12 @@ static int get_properties_changed (flux_sdprocess_t *sdp)
                     goto cleanup;
                 free (sdp->result);
                 sdp->result = tmp;
+            }
+
+            if (sd_bus_message_exit_container (m) < 0) {
+                flux_log (sdp->h, LOG_ERR, "sd_bus_message_exit_container: %s",
+                          error.message ? error.message : strerror (errno));
+                goto cleanup;
             }
         }
         else if (!strcmp (member, "ExecMainStatus")) {
@@ -693,14 +695,14 @@ static int get_properties_changed (flux_sdprocess_t *sdp)
                 goto cleanup;
             }
 
+            if (sdp->exec_main_status != exec_main_status)
+                sdp->exec_main_status = exec_main_status;
+
             if (sd_bus_message_exit_container (m) < 0) {
                 flux_log (sdp->h, LOG_ERR, "sd_bus_message_exit_container: %s",
                           error.message ? error.message : strerror (errno));
                 goto cleanup;
             }
-
-            if (sdp->exec_main_status != exec_main_status)
-                sdp->exec_main_status = exec_main_status;
         }
         else if (!strcmp (member, "ExecMainCode")) {
             const char *contents;
@@ -739,14 +741,14 @@ static int get_properties_changed (flux_sdprocess_t *sdp)
                 goto cleanup;
             }
 
+            if (sdp->exec_main_code != exec_main_code)
+                sdp->exec_main_code = exec_main_code;
+
             if (sd_bus_message_exit_container (m) < 0) {
                 flux_log (sdp->h, LOG_ERR, "sd_bus_message_exit_container: %s",
                           error.message ? error.message : strerror (errno));
                 goto cleanup;
             }
-
-            if (sdp->exec_main_code != exec_main_code)
-                sdp->exec_main_code = exec_main_code;
         }
         else {
             if (sd_bus_message_skip (m, "v") < 0) {
@@ -774,9 +776,11 @@ static int get_properties_changed (flux_sdprocess_t *sdp)
         goto cleanup;
     }
 
-    if (!strcmp (sdp->active_state, "inactive")
-        || !strcmp (sdp->active_state, "failed")
+    if ((sdp->active_state &&
+         (!strcmp (sdp->active_state, "inactive")
+          || !strcmp (sdp->active_state, "failed")))
         || sdp->exec_main_code == CLD_EXITED) {
+        /* XXX is it impossible for active_state to not yet be set here? */
         if (calc_exit_status (sdp, sdp->active_state) < 0)
             goto cleanup;
         sdp->completed = true;
@@ -805,7 +809,7 @@ static void watcher_properties_changed_cb (flux_reactor_t *r,
     flux_sdprocess_t *sdp = arg;
 
     if (revents & FLUX_POLLIN)
-        while ( sd_bus_process (sdp->bus, NULL) ) {  }
+        while ( sd_bus_process (sdp->bus, NULL) ) { }
     else {
         flux_log (sdp->h, LOG_ERR, "Unexpected revents: %X", revents);
         return;
@@ -908,7 +912,7 @@ static int wait_watcher (flux_sdprocess_t *sdp)
                                       fd,
                                       FLUX_POLLIN,
                                       watcher_properties_changed_cb,
-                                      &sdp))) {
+                                      sdp))) {
         flux_log_error (sdp->h, "flux_fd_watcher_create");
         goto cleanup;
     }
@@ -929,6 +933,11 @@ int flux_sdprocess_wait (flux_sdprocess_t *sdp)
     char *active_state = NULL;
     char *load_state = NULL;
     int rv = -1;
+
+    if (!sdp) {
+        errno = EINVAL;
+        return -1;
+    }
 
     if (sd_bus_get_property_string (sdp->bus,
                                     "org.freedesktop.systemd1",
