@@ -12,9 +12,9 @@ AM_CPPFLAGS = \
 	$(FLUX_SECURITY_CFLAGS) \
 	$(JANSSON_CFLAGS)
 
-fluxmod_LTLIBRARIES = job-list.la
+fluxmod_LTLIBRARIES = job-db.la
 
-job_list_la_SOURCES = \
+job_db_la_SOURCES = \
 	job-list.c \
 	job-list.h \
 	job_state.h \
@@ -28,8 +28,8 @@ job_list_la_SOURCES = \
 	stats.h \
 	stats.c
 
-job_list_la_LDFLAGS = $(fluxmod_ldflags) -module
-job_list_la_LIBADD = \
+job_db_la_LDFLAGS = $(fluxmod_ldflags) -module
+job_db_la_LIBADD = \
 	$(top_builddir)/src/common/libjob/libjob.la \
 	$(top_builddir)/src/common/libflux-internal.la \
 	$(top_builddir)/src/common/libflux-core.la \
