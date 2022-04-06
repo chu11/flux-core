@@ -193,11 +193,20 @@ error:
 
 int mod_main (flux_t *h, int argc, char **argv)
 {
-    struct list_ctx *ctx;
+    struct list_ctx *ctx = NULL;
+    flux_future_t *f = NULL;
     int rc = -1;
 
     if (!(ctx = list_ctx_create (h))) {
         flux_log_error (h, "initialization error");
+        goto done;
+    }
+    if (!(f = flux_service_register (h, "job-list"))) {
+        flux_log_error (h, "flux_service_register");
+        goto done;
+    }
+    if (flux_future_get (f, NULL) < 0) {
+        flux_log_error (h, "flux_future_get");
         goto done;
     }
     if (job_state_init_from_kvs (ctx) < 0)
@@ -207,6 +216,7 @@ int mod_main (flux_t *h, int argc, char **argv)
     rc = 0;
 done:
     list_ctx_destroy (ctx);
+    flux_future_destroy (f);
     return rc;
 }
 
