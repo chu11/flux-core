@@ -90,7 +90,7 @@ test_expect_success HAVE_JQ 'memo: available in flux-jobs {user} attribute' '
 	jlist_check_memo $pendingid a \"b\"
 '
 test_expect_success 'memo: reload job-list module' '
-	flux module reload job-list
+	flux module reload job-db
 '
 test_expect_success HAVE_JQ 'memo: non-volatile memos still available in job-list' '
 	jlist_check_memo $runid a.d \"test\" &&

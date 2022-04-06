@@ -36,7 +36,7 @@ modload 0 job-manager
 
 modload all job-ingest
 modload all job-info
-modload 0 job-list
+modload 0 job-db
 modload all barrier
 modload 0 heartbeat
 
