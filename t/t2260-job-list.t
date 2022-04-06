@@ -408,7 +408,7 @@ wait_inactive() {
 
 test_expect_success 'reload the job-list module' '
         flux job list -a > before_reload.out &&
-        flux module reload job-list &&
+        flux module reload job-db &&
         wait_inactive
 '
 
@@ -656,7 +656,7 @@ test_expect_success HAVE_JQ 'flux job lists full path for job name if basename f
 '
 
 test_expect_success 'reload the job-list module' '
-        flux module reload job-list
+        flux module reload job-db
 '
 
 test_expect_success HAVE_JQ 'verify job names preserved across restart' '
@@ -691,7 +691,7 @@ test_expect_success HAVE_JQ 'flux job list outputs ntasks correctly (4 tasks)' '
 '
 
 test_expect_success 'reload the job-list module' '
-        flux module reload job-list
+        flux module reload job-db
 '
 
 test_expect_success HAVE_JQ 'verify task count preserved across restart' '
@@ -803,7 +803,7 @@ test_expect_success HAVE_JQ 'flux job list outputs expiration time when set' '
 '
 
 test_expect_success 'reload the job-list module' '
-        flux module reload job-list
+        flux module reload job-db
 '
 
 test_expect_success HAVE_JQ 'verify nnodes/ranks/nodelist preserved across restart' '
@@ -865,9 +865,9 @@ test_expect_success 'job-list parses flux-restart events' '
         flux queue stop &&
         jobid=`flux mini submit hostname | flux job id` &&
         fj_wait_event $jobid priority &&
-        flux module unload job-list &&
+        flux module unload job-db &&
         flux module reload job-manager &&
-        flux module load job-list &&
+        flux module load job-db &&
         wait_jobid $jobid &&
         flux module reload job-exec &&
         flux module reload sched-simple

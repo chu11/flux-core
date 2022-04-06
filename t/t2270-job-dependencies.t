@@ -194,9 +194,9 @@ test_expect_success 'restart: remove 1 of 2 dependencies' '
 	flux python dep-check.py ${jobid} foo
 '
 job_manager_restart() {
-	flux module remove job-list &&
+	flux module remove job-db &&
 	flux module reload job-manager &&
-	flux module load job-list &&
+	flux module load job-db &&
 	flux module reload -f sched-simple &&
 	flux module reload -f job-exec
 }

@@ -10,7 +10,8 @@ AM_CPPFLAGS = \
 	-I$(top_srcdir)/src/include \
 	-I$(top_builddir)/src/common/libflux \
 	$(FLUX_SECURITY_CFLAGS) \
-	$(JANSSON_CFLAGS)
+	$(JANSSON_CFLAGS) \
+	$(SQLITE_CFLAGS)
 
 fluxmod_LTLIBRARIES = job-db.la
 
@@ -36,5 +37,5 @@ job_db_la_LIBADD = \
 	$(top_builddir)/src/common/libflux-optparse.la \
 	$(top_builddir)/src/common/librlist/librlist.la \
 	$(JANSSON_LIBS) \
-	$(HWLOC_LIBS)
-
+	$(HWLOC_LIBS) \
+	$(SQLITE_LIBS)
