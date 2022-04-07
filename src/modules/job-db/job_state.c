@@ -124,6 +124,7 @@ static void job_destroy (void *data)
         json_decref (job->jobspec_job);
         json_decref (job->jobspec_cmd);
         json_decref (job->R);
+        free (job->eventlog);
         grudgeset_destroy (job->dependencies);
         free (job->ranks);
         free (job->nodelist);
@@ -745,6 +746,71 @@ static void eventlog_inactive_complete (struct list_ctx *ctx,
     }
 }
 
+static void state_inactive_lookup_continuation (flux_future_t *f, void *arg)
+{
+    struct job *job = arg;
+    struct list_ctx *ctx = job->ctx;
+    struct state_transition *st;
+    const char *s;
+    void *handle;
+
+    if (flux_rpc_get_unpack (f, "{s:s}", "eventlog", &s) < 0) {
+        flux_log_error (ctx->h, "%s: error eventlog for %ju",
+                        __FUNCTION__, (uintmax_t)job->id);
+        goto out;
+    }
+
+    if (!(job->eventlog = strdup (s))) {
+        flux_log (ctx->h, LOG_ERR,
+                  "%s: job %ju strdup eventlog",
+                  __FUNCTION__, (uintmax_t)job->id);
+        goto out;
+    }
+
+    eventlog_inactive_complete (ctx, job);
+
+    st = zlist_head (job->next_states);
+    assert (st);
+    update_job_state_and_list (ctx, job, st->state, st->timestamp);
+    zlist_remove (job->next_states, st);
+    process_next_state (ctx, job);
+
+out:
+    handle = zlistx_find (ctx->jsctx->futures, f);
+    if (handle)
+        zlistx_detach (ctx->jsctx->futures, handle);
+    flux_future_destroy (f);
+}
+
+static flux_future_t *state_inactive_lookup (struct job_state_ctx *jsctx,
+                                           struct job *job)
+{
+    flux_future_t *f = NULL;
+    int saved_errno;
+
+    if (!(f = flux_rpc_pack (jsctx->h, "job-info.lookup", FLUX_NODEID_ANY, 0,
+                             "{s:I s:[s] s:i}",
+                             "id", job->id,
+                             "keys", "eventlog",
+                             "flags", 0))) {
+        flux_log_error (jsctx->h, "%s: flux_rpc_pack", __FUNCTION__);
+        goto error;
+    }
+
+    if (flux_future_then (f, -1, state_inactive_lookup_continuation, job) < 0) {
+        flux_log_error (jsctx->h, "%s: flux_future_then", __FUNCTION__);
+        goto error;
+    }
+
+    return f;
+
+ error:
+    saved_errno = errno;
+    flux_future_destroy (f);
+    errno = saved_errno;
+    return NULL;
+}
+
 static void state_transition_destroy (void *data)
 {
     struct state_transition *st = data;
@@ -819,7 +885,8 @@ static void process_next_state (struct list_ctx *ctx, struct job *job)
         }
 
         if (st->state == FLUX_JOB_STATE_DEPEND
-            || st->state == FLUX_JOB_STATE_RUN) {
+            || st->state == FLUX_JOB_STATE_RUN
+            || st->state == FLUX_JOB_STATE_INACTIVE) {
             flux_future_t *f = NULL;
 
             if (st->state == FLUX_JOB_STATE_DEPEND) {
@@ -829,10 +896,17 @@ static void process_next_state (struct list_ctx *ctx, struct job *job)
                     return;
                 }
             }
-            else { /* st->state == FLUX_JOB_STATE_RUN */
+            else if (st->state == FLUX_JOB_STATE_RUN) {
                 /* get R to get node count, etc. */
                 if (!(f = state_run_lookup (jsctx, job))) {
                     flux_log_error (jsctx->h, "%s: state_run_lookup", __FUNCTION__);
+                    return;
+                }
+            }
+            else { /* st->state == FLUX_JOB_STATE_INACTIVE */
+                /* get eventlog */
+                if (!(f = state_inactive_lookup (jsctx, job))) {
+                    flux_log_error (jsctx->h, "%s: state_inactive_lookup", __FUNCTION__);
                     return;
                 }
             }
@@ -850,10 +924,6 @@ static void process_next_state (struct list_ctx *ctx, struct job *job)
             /* FLUX_JOB_STATE_PRIORITY */
             /* FLUX_JOB_STATE_SCHED */
             /* FLUX_JOB_STATE_CLEANUP */
-            /* FLUX_JOB_STATE_INACTIVE */
-
-            if (st->state == FLUX_JOB_STATE_INACTIVE)
-                eventlog_inactive_complete (ctx, job);
 
             update_job_state_and_list (ctx, job, st->state, st->timestamp);
             zlist_remove (job->next_states, st);
