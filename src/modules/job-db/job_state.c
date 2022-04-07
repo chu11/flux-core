@@ -120,6 +120,7 @@ static void job_destroy (void *data)
     if (job) {
         json_decref (job->exception_context);
         json_decref (job->annotations);
+        json_decref (job->jobspec);
         json_decref (job->jobspec_job);
         json_decref (job->jobspec_cmd);
         json_decref (job->R);
@@ -404,6 +405,8 @@ static int jobspec_parse (struct list_ctx *ctx,
                   __FUNCTION__, (uintmax_t)job->id, error.text);
         goto error;
     }
+
+    job->jobspec = json_incref (jobspec);
 
     if (json_unpack_ex (jobspec, &error, 0,
                         "{s:{s:{s?:o}}}",
