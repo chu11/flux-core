@@ -88,6 +88,7 @@ struct job {
     int eventlog_seq;           /* last event seq read */
 
     /* cache of job information */
+    json_t *jobspec;
     json_t *jobspec_job;
     json_t *jobspec_cmd;
     json_t *R;
