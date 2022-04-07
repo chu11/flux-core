@@ -30,11 +30,6 @@ modload 0 cron sync=heartbeat.pulse
 modload 0 job-manager
 modload all job-info
 modload 0 job-db
-period=`flux config get --default= archive.period`
-if test $RANK -eq 0 -a -n "${period}"; then
-    flux module load job-archive
-fi
-
 if test $RANK -eq 0 && ! flux startlog --check --quiet; then
     flux queue stop
     flux queue disable "Flux is in safe mode due to an incomplete shutdown."
