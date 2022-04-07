@@ -16,6 +16,8 @@ AM_CPPFLAGS = \
 fluxmod_LTLIBRARIES = job-db.la
 
 job_db_la_SOURCES = \
+	job-archive.c \
+	job-archive.h \
 	job-list.c \
 	job-list.h \
 	job_state.h \
