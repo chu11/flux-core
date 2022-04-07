@@ -148,10 +148,9 @@ int mod_main (flux_t *h, int argc, char **argv)
     flux_future_t *f = NULL;
     int rc = -1;
 
-    if (!(actx = job_archive_setup (h, argc, argv))) {
+    if (!(actx = job_archive_setup (h, argc, argv)))
         flux_log_error (h, "archive initialization error");
-        goto done;
-    }
+
     if (!(ctx = list_ctx_create (h))) {
         flux_log_error (h, "initialization error");
         goto done;
