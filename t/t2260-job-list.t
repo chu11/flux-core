@@ -217,6 +217,7 @@ test_expect_success HAVE_JQ 'flux job list inactive jobs with correct state' '
 '
 
 test_expect_success HAVE_JQ 'flux job list inactive jobs results are correct' '
+        flux job list -s inactive > foo.out &&
         flux job list -s inactive | jq .result | ${JOB_CONV} resulttostr > list_result_I.out &&
         echo "CANCELED" >> list_result_I.exp &&
         echo "FAILED" >> list_result_I.exp &&

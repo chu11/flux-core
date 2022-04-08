@@ -374,7 +374,7 @@ static int parse_res_level (struct list_ctx *ctx,
 
 /* Return basename of path if there is a '/' in path.  Otherwise return
  * full path */
-const char *
+static const char *
 parse_job_name (const char *path)
 {
     char *p = strrchr (path, '/');
@@ -866,12 +866,9 @@ static void process_next_state (struct list_ctx *ctx, struct job *job)
             if (inactive) {
                 assert (job->state == FLUX_JOB_STATE_INACTIVE);
 
-                /* if no eventlog, assume from restart */
-                if (job->eventlog) {
-                    if (job_archive_store (jsctx->actx, job) < 0)
-                        flux_log_error (jsctx->h, "%s: job_archive_store",
-                                        __FUNCTION__);
-                }
+                if (job_archive_store (jsctx->actx, job) < 0)
+                    flux_log_error (jsctx->h, "%s: job_archive_store",
+                                    __FUNCTION__);
 
                 if (zlistx_detach (jsctx->inactive, job->list_handle) < 0)
                     flux_log_error (jsctx->h, "%s: zlistx_detach",
