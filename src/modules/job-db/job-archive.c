@@ -297,7 +297,7 @@ static int process_config (struct job_archive_ctx *ctx)
 
     if (flux_conf_unpack (flux_get_conf (ctx->h),
                           &err,
-                          "{s?{s?s s?s s?s}}",
+                          "{s?{s?s s?s}}",
                           "archive",
                             "dbpath", &dbpath,
                             "busytimeout", &busytimeout) < 0) {
