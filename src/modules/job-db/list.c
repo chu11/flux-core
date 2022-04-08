@@ -224,32 +224,34 @@ parse_job_name (const char *path)
 struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
 {
     struct job *job = NULL;
-    const unsigned char *s;
+    const char *s;
     char *endptr = NULL;
 
     if (!(job = calloc (1, sizeof (*job))))
         return NULL;
 
-    s = sqlite3_column_text (res, 0);
+    s = (const char *)sqlite3_column_text (res, 0);
     assert (s);
-    job->id = (flux_jobid_t)strtoul ((const char *)s, &endptr, 0);
+    job->id = (flux_jobid_t)strtoul (s, &endptr, 0);
+    flux_log (ctx->h, LOG_DEBUG, "loading job id %ju", (uintmax_t)job->id);
     job->userid = sqlite3_column_int (res, 1);
     job->ranks = strdup ((const char *)sqlite3_column_text (res, 2));
     job->t_submit = sqlite3_column_double (res, 3);
     job->t_run = sqlite3_column_double (res, 4);
     job->t_cleanup = sqlite3_column_double (res, 5);
     job->t_inactive = sqlite3_column_double (res, 6);
-    job->eventlog = strdup ((const char *)sqlite3_column_text (res, 7));
+    s = (const char *)sqlite3_column_text (res, 7);
+    job->eventlog = strdup (s);
     assert (job->eventlog);
-    job->jobspec = json_loads ((const char *)sqlite3_column_text (res, 8), 0, NULL);
+    s = (const char *)sqlite3_column_text (res, 8);
+    job->jobspec = json_loads (s, 0, NULL);
     assert (job->jobspec);
-    job->R = json_loads ((const char *)sqlite3_column_text (res, 8), 0, NULL);
-    assert (job->R);
+    s = (const char *)sqlite3_column_text (res, 9);
+    job->R = json_loads (s, 0, NULL);
     job->state = FLUX_JOB_STATE_INACTIVE;
 
     {
         json_error_t error;
-        json_t *jobspec = NULL;
         json_t *tasks, *resources, *command, *jobspec_job = NULL;
 
         if (json_unpack_ex (job->jobspec, &error, 0,
@@ -274,7 +276,7 @@ struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
             job->jobspec_job = json_incref (jobspec_job);
         }
 
-        if (json_unpack_ex (jobspec, &error, 0,
+        if (json_unpack_ex (job->jobspec, &error, 0,
                             "{s:o}",
                             "tasks", &tasks) < 0) {
             flux_log (ctx->h, LOG_ERR,
@@ -325,7 +327,7 @@ struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
             assert (job->name);
         }
 
-        if (json_unpack_ex (jobspec, &error, 0,
+        if (json_unpack_ex (job->jobspec, &error, 0,
                             "{s:o}",
                             "resources", &resources) < 0) {
             flux_log (ctx->h, LOG_ERR,
@@ -517,6 +519,7 @@ struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
         }
     }
 
+    if (job->R)
     {
         struct rlist *rl = NULL;
         struct idset *idset = NULL;
