@@ -165,7 +165,10 @@ static int store_attr (struct job *job,
     else if (!strcmp (attr, "dependencies")) {
         if (!job->dependencies)
             return 0;
-        val = json_incref (grudgeset_tojson (job->dependencies));
+        if (job->dependencies_json)
+            val = json_incref (job->dependencies_json);
+        else
+            val = json_incref (grudgeset_tojson (job->dependencies));
     }
     else {
         seterror (errp, "%s is not a valid attribute", attr);
