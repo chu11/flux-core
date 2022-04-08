@@ -28,6 +28,7 @@
 #include "src/common/libidset/idset.h"
 
 #include "job_state.h"
+#include "job-archive.h"
 #include "idsync.h"
 #include "job_util.h"
 
@@ -256,7 +257,13 @@ static void job_change_list (struct job_state_ctx *jsctx,
                         __FUNCTION__);
     job->list_handle = NULL;
 
-    job_insert_list (jsctx, job, newstate);
+    if (newstate == FLUX_JOB_STATE_INACTIVE) {
+        if (job_archive_store (jsctx->actx, job) < 0)
+            flux_log_error (jsctx->h, "%s: job_archive_store",
+                            __FUNCTION__);
+    }
+    else
+        job_insert_list (jsctx, job, newstate);
 }
 
 static zlistx_t *get_list (struct job_state_ctx *jsctx, flux_job_state_t state)
@@ -774,6 +781,9 @@ static void state_inactive_lookup_continuation (flux_future_t *f, void *arg)
     update_job_state_and_list (ctx, job, st->state, st->timestamp);
     zlist_remove (job->next_states, st);
     process_next_state (ctx, job);
+
+    /* should be stored in archive now */
+    zhashx_delete (ctx->jsctx->index, &job->id);
 
 out:
     handle = zlistx_find (ctx->jsctx->futures, f);
