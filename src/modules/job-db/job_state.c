@@ -127,9 +127,11 @@ void job_destroy (void *data)
         json_decref (job->R);
         free (job->eventlog);
         grudgeset_destroy (job->dependencies);
+        json_decref (job->dependencies_json);
         free (job->ranks);
         free (job->nodelist);
         zlist_destroy (&job->next_states);
+        json_decref (job->job_blob);
         free (job);
     }
 }
