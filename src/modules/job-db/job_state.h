@@ -97,6 +97,7 @@ struct job {
     flux_job_result_t result;
     json_t *annotations;
     struct grudgeset *dependencies;
+    json_t *dependencies_json;
     int eventlog_seq;           /* last event seq read */
 
     /* cache of job information */
@@ -140,6 +141,8 @@ struct job {
     double t_run;
     double t_cleanup;
     double t_inactive;
+
+    json_t *job_blob;
 };
 
 struct job *job_create_init (void);
