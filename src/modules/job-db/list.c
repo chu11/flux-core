@@ -22,6 +22,9 @@
 #include "src/common/libutil/grudgeset.h"
 #include "src/common/libutil/jpath.h"
 #include "src/common/libeventlog/eventlog.h"
+#include "src/common/librlist/rlist.h"
+#include "src/common/libidset/idset.h"
+
 
 #include "idsync.h"
 #include "list.h"
@@ -84,29 +87,6 @@ int get_jobs_from_list (json_t *jobs,
 
     return 0;
 }
-
-#if 0
-"  id CHAR(16) PRIMARY KEY,"
-"  userid INT,"
-"  ranks TEXT,"
-"  t_submit REAL,"
-"  t_run REAL,"
-"  t_cleanup REAL,"
-"  t_inactive REAL,"
-"  eventlog TEXT,"
-"  jobspec TEXT,"
-"  R TEXT"
-
-name
-ntasks
-nnodes
-nodelist
-expiration
-waitstatus
-success
-result
-
-#endif
 
 static int dependency_add (struct job *job,
                            const char *description)
@@ -193,6 +173,54 @@ static int memo_update (flux_t *h,
     return 0;
 }
 
+struct res_level {
+    const char *type;
+    int count;
+    json_t *with;
+};
+
+static int parse_res_level (struct list_ctx *ctx,
+                            struct job *job,
+                            json_t *o,
+                            struct res_level *resp)
+{
+    json_error_t error;
+    struct res_level res;
+
+    res.with = NULL;
+    /* For jobspec version 1, expect exactly one array element per level.
+     */
+    if (json_unpack_ex (o, &error, 0,
+                        "[{s:s s:i s?o}]",
+                        "type", &res.type,
+                        "count", &res.count,
+                        "with", &res.with) < 0) {
+        flux_log (ctx->h, LOG_ERR,
+                  "%s: job %ju invalid jobspec: %s",
+                  __FUNCTION__, (uintmax_t)job->id, error.text);
+        return -1;
+    }
+    *resp = res;
+    return 0;
+}
+
+/* Return basename of path if there is a '/' in path.  Otherwise return
+ * full path */
+static const char *
+parse_job_name (const char *path)
+{
+    char *p = strrchr (path, '/');
+    if (p) {
+        p++;
+        /* user mistake, specified a directory with trailing '/',
+         * return full path */
+        if (*p == '\0')
+            return path;
+        return p;
+    }
+    return path;
+}
+
 struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
 {
     struct job *job = NULL;
@@ -217,8 +245,155 @@ struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
     assert (job->jobspec);
     job->R = json_loads ((const char *)sqlite3_column_text (res, 8), 0, NULL);
     assert (job->R);
-
     job->state = FLUX_JOB_STATE_INACTIVE;
+
+    {
+        json_error_t error;
+        json_t *jobspec = NULL;
+        json_t *tasks, *resources, *command, *jobspec_job = NULL;
+
+        if (json_unpack_ex (job->jobspec, &error, 0,
+                            "{s:{s:{s?:o}}}",
+                            "attributes",
+                            "system",
+                            "job",
+                            &jobspec_job) < 0) {
+            flux_log (ctx->h, LOG_ERR,
+                      "%s: job %ju invalid jobspec: %s",
+                      __FUNCTION__, (uintmax_t)job->id, error.text);
+            return NULL;        /* leaking */
+        }
+
+        if (jobspec_job) {
+            if (!json_is_object (jobspec_job)) {
+                flux_log (ctx->h, LOG_ERR,
+                          "%s: job %ju invalid jobspec",
+                          __FUNCTION__, (uintmax_t)job->id);
+                return NULL;        /* leaking */
+            }
+            job->jobspec_job = json_incref (jobspec_job);
+        }
+
+        if (json_unpack_ex (jobspec, &error, 0,
+                            "{s:o}",
+                            "tasks", &tasks) < 0) {
+            flux_log (ctx->h, LOG_ERR,
+                      "%s: job %ju invalid jobspec: %s",
+                      __FUNCTION__, (uintmax_t)job->id, error.text);
+            return NULL;        /* leaking */
+        }
+        if (json_unpack_ex (tasks, &error, 0,
+                            "[{s:o}]",
+                            "command", &command) < 0) {
+            flux_log (ctx->h, LOG_ERR,
+                      "%s: job %ju invalid jobspec: %s",
+                      __FUNCTION__, (uintmax_t)job->id, error.text);
+            return NULL;        /* leaking */
+        }
+
+        if (!json_is_array (command)) {
+            flux_log (ctx->h, LOG_ERR,
+                      "%s: job %ju invalid jobspec",
+                      __FUNCTION__, (uintmax_t)job->id);
+            return NULL;        /* leaking */
+        }
+
+        job->jobspec_cmd = json_incref (command);
+
+        if (job->jobspec_job) {
+            if (json_unpack_ex (job->jobspec_job, &error, 0,
+                                "{s?:s}",
+                                "name", &job->name) < 0) {
+                flux_log (ctx->h, LOG_ERR,
+                          "%s: job %ju invalid job dictionary: %s",
+                          __FUNCTION__, (uintmax_t)job->id, error.text);
+                return NULL;        /* leaking */
+            }
+        }
+
+        /* If user did not specify job.name, we treat arg 0 of the command
+         * as the job name */
+        if (!job->name) {
+            json_t *arg0 = json_array_get (job->jobspec_cmd, 0);
+            if (!arg0 || !json_is_string (arg0)) {
+                flux_log (ctx->h, LOG_ERR,
+                          "%s: job %ju invalid job command",
+                          __FUNCTION__, (uintmax_t)job->id);
+                return NULL;        /* leaking */
+            }
+            job->name = parse_job_name (json_string_value (arg0));
+            assert (job->name);
+        }
+
+        if (json_unpack_ex (jobspec, &error, 0,
+                            "{s:o}",
+                            "resources", &resources) < 0) {
+            flux_log (ctx->h, LOG_ERR,
+                      "%s: job %ju invalid jobspec: %s",
+                      __FUNCTION__, (uintmax_t)job->id, error.text);
+            return NULL;        /* leaking */
+        }
+
+        /* Set job->ntasks
+         */
+        if (json_unpack_ex (tasks, NULL, 0,
+                            "[{s:{s:i}}]",
+                            "count", "total", &job->ntasks) < 0) {
+            int per_slot, slot_count = 0;
+            struct res_level res[3];
+
+            if (json_unpack_ex (tasks, NULL, 0,
+                                "[{s:{s:i}}]",
+                                "count", "per_slot", &per_slot) < 0) {
+                flux_log (ctx->h, LOG_ERR,
+                          "%s: job %ju invalid jobspec: %s",
+                          __FUNCTION__, (uintmax_t)job->id, error.text);
+                return NULL; /* leaking */;
+            }
+            if (per_slot != 1) {
+                flux_log (ctx->h, LOG_ERR,
+                          "%s: job %ju: per_slot count: expected 1 got %d: %s",
+                          __FUNCTION__, (uintmax_t)job->id, per_slot,
+                          error.text);
+                return NULL; /* leaking */;
+            }
+            /* For jobspec version 1, expect either:
+             * - node->slot->core->NIL
+             * - slot->core->NIL
+             * Set job->slot_count and job->cores_per_slot.
+             */
+            memset (res, 0, sizeof (res));
+            if (parse_res_level (ctx, job, resources, &res[0]) < 0)
+                return NULL; /* leaking */;
+            if (res[0].with && parse_res_level (ctx, job, res[0].with, &res[1]) < 0)
+                return NULL; /* leaking */;
+            if (res[1].with && parse_res_level (ctx, job, res[1].with, &res[2]) < 0)
+                return NULL; /* leaking */;
+            if (res[0].type != NULL && !strcmp (res[0].type, "slot")
+                && res[1].type != NULL && !strcmp (res[1].type, "core")
+                && res[1].with == NULL) {
+                slot_count = res[0].count;
+            }
+            else if (res[0].type != NULL && !strcmp (res[0].type, "node")
+                     && res[1].type != NULL && !strcmp (res[1].type, "slot")
+                     && res[2].type != NULL && !strcmp (res[2].type, "core")
+                     && res[2].with == NULL) {
+                slot_count = res[0].count * res[1].count;
+            }
+            else {
+                flux_log (ctx->h, LOG_WARNING,
+                          "%s: job %ju: Unexpected resources: %s->%s->%s%s",
+                          __FUNCTION__,
+                          (uintmax_t)job->id,
+                          res[0].type ? res[0].type : "NULL",
+                          res[1].type ? res[1].type : "NULL",
+                          res[2].type ? res[2].type : "NULL",
+                          res[2].with ? "->..." : NULL);
+                slot_count = -1;
+            }
+            job->ntasks = slot_count;
+        }
+    }
 
     {
         json_t *a = NULL;
@@ -320,6 +495,9 @@ struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
                               __FUNCTION__, (uintmax_t)job->id);
                     return NULL;        /* leaking */
                 }
+
+                if (!job->wait_status)
+                    job->success = true;
             }
             else if (!strncmp (name, "dependency-", 11)) {
                 if (dependency_context_parse (ctx->h, job, name+11, context) < 0) {
@@ -337,6 +515,54 @@ struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
             }
 
         }
+    }
+
+    {
+        struct rlist *rl = NULL;
+        struct idset *idset = NULL;
+        struct hostlist *hl = NULL;
+        json_error_t error;
+        int flags = IDSET_FLAG_BRACKETS | IDSET_FLAG_RANGE;
+
+        if (!(rl = rlist_from_json (job->R, &error))) {
+            flux_log_error (ctx->h, "rlist_from_json: %s", error.text);
+            return NULL;        /* leaking */
+        }
+
+        job->expiration = rl->expiration;
+
+        if (!(idset = rlist_ranks (rl)))
+            return NULL;        /* leaking */
+
+        job->nnodes = idset_count (idset);
+        if (!(job->ranks = idset_encode (idset, flags)))
+            return NULL;        /* leaking */
+
+        /* reading nodelist from R directly would avoid the creation /
+         * destruction of a hostlist.  However, we get a hostlist to
+         * ensure that the nodelist we return to users is consistently
+         * formatted.
+         */
+        if (!(hl = rlist_nodelist (rl)))
+            return NULL;        /* leaking */
+
+        if (!(job->nodelist = hostlist_encode (hl)))
+            return NULL;        /* leaking */
+
+        hostlist_destroy (hl);
+        idset_destroy (idset);
+        rlist_destroy (rl);
+    }
+
+
+    /* Default result is failed, overridden below */
+    if (job->success)
+        job->result = FLUX_JOB_RESULT_COMPLETED;
+    else if (job->exception_occurred) {
+        if (!strcmp (job->exception_type, "cancel"))
+            job->result = FLUX_JOB_RESULT_CANCELED;
+        else if (!strcmp (job->exception_type, "timeout"))
+            job->result = FLUX_JOB_RESULT_TIMEOUT;
     }
 
     return job;
