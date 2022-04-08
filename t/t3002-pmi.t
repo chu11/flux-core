@@ -7,7 +7,10 @@ test_description="Test Flux PMI implementation"
 
 export TEST_UNDER_FLUX_CORES_PER_RANK=4
 SIZE=$(test_size_large)
-test_under_flux ${SIZE} job
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux ${SIZE} job -o,-Sstatedir=${STATEDIR}
 
 kvstest=${FLUX_BUILD_DIR}/src/common/libpmi/test_kvstest
 kvstest2=${FLUX_BUILD_DIR}/src/common/libpmi/test_kvstest2

@@ -5,7 +5,10 @@ test_description='Tests for job-archive'
 . $(dirname $0)/sharness.sh
 
 export FLUX_CONF_DIR=$(pwd)
-test_under_flux 4 job
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 4 job -o,-Sstatedir=${STATEDIR}
 
 ARCHIVEDIR=`pwd`
 ARCHIVEDB="${ARCHIVEDIR}/jobarchive.db"

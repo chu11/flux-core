@@ -16,7 +16,10 @@ command = [
 ]
 EOF
 
-test_under_flux 4 full -o,--config-path=$(pwd)/config
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 4 full -o,-Sstatedir=${STATEDIR} -o,--config-path=$(pwd)/config
 
 flux setattr log-stderr-level 1
 

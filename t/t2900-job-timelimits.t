@@ -4,7 +4,10 @@ test_description='Test job time limit functionality'
 
 . $(dirname $0)/sharness.sh
 
-test_under_flux 1
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 1 full -o,-Sstatedir=${STATEDIR}
 
 # Set CLIMain log level to logging.DEBUG (10), to enable stack traces
 export FLUX_PYCLI_LOGLEVEL=10
@@ -40,7 +43,8 @@ test_expect_success HAVE_JQ 'job timelimits are propagated' '
         flux job cancelall -f
 	EOF
 	chmod +x limit.sh &&
-	flux mini run --time-limit=10m flux start ./limit.sh
+        STATEDIR=$(mktemp -d) &&
+	flux mini run --time-limit=10m flux start -o,--setattr=statedir=${STATEDIR} ./limit.sh
 '
 test_expect_success 'job may exit before time limit' '
         flux mini run --time-limit=5m sleep 0.25

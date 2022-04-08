@@ -5,7 +5,10 @@ test_description='Test resource drain/undrain'
 . `dirname $0`/sharness.sh
 
 SIZE=4
-test_under_flux $SIZE
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux $SIZE full -o,-Sstatedir=${STATEDIR}
 
 # Usage: waitup N
 #   where N is a count of online ranks

@@ -4,7 +4,10 @@ test_description='Test flux-shell default affinity implementation'
 
 . `dirname $0`/sharness.sh
 
-test_under_flux 2
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 2 full -o,-Sstatedir=${STATEDIR}
 
 if ! which hwloc-bind > /dev/null; then
     skip_all='skipping affinity tests since hwloc-bind not found'

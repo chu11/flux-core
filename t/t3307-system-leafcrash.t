@@ -14,7 +14,11 @@ transition through lost occurs.
 
 . `dirname $0`/sharness.sh
 
-test_under_flux 2 system
+
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 2 system -o,-Sstatedir=${STATEDIR}
 
 startctl="flux python ${SHARNESS_TEST_SRCDIR}/scripts/startctl.py"
 

@@ -13,7 +13,10 @@ and ensure that it wires up.
 export TEST_UNDER_FLUX_QUORUM=0
 export TEST_UNDER_FLUX_START_MODE=leader
 
-test_under_flux 2 system
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 2 system -o,-Sstatedir=${STATEDIR}
 
 startctl="flux python ${SHARNESS_TEST_SRCDIR}/scripts/startctl.py"
 

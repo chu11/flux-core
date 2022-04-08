@@ -9,7 +9,10 @@ test_description='Test resource acquire'
 export FLUX_CONF_DIR=$(pwd)
 
 SIZE=4
-test_under_flux $SIZE
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux $SIZE full -o,-Sstatedir=${STATEDIR}
 
 RPC=${FLUX_BUILD_DIR}/t/request/rpc
 RPC_STREAM=${FLUX_BUILD_DIR}/t/request/rpc_stream

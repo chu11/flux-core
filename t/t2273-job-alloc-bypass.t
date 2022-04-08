@@ -4,7 +4,10 @@ test_description='Test alloc-bypass job manager plugin'
 
 . $(dirname $0)/sharness.sh
 
-test_under_flux 2 job
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 2 job -o,-Sstatedir=${STATEDIR}
 
 flux version | grep -q libflux-security && test_set_prereq FLUX_SECURITY
 

@@ -15,7 +15,10 @@ cat >job-manager.toml <<EOF
 events_maxlen = 50
 EOF
 
-test_under_flux 4
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 4 full -o,-Sstatedir=${STATEDIR}
 
 RPC=${FLUX_BUILD_DIR}/t/request/rpc
 EVENTS_JOURNAL_STREAM=${FLUX_BUILD_DIR}/t/job-manager/events_journal_stream

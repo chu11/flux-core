@@ -14,48 +14,56 @@ plugin_i=${FLUX_BUILD_DIR}/t/stats/.libs/stats-immediate.so
 plugin_b=${FLUX_BUILD_DIR}/t/stats/.libs/stats-basic.so
 
 test_expect_success 'prefix set' '
-	$timeout flux python $udp -s flux.job.state.immediate flux start \
+        STATEDIR=$(mktemp -d) &&
+	$timeout flux python $udp -s flux.job.state.immediate flux start -o,--setattr=statedir=${STATEDIR} \
 	"flux jobtap load $plugin_i && flux mini run hostname"
 '
 
 test_expect_success 'multiple packets received' '
-	$timeout flux python $udp -w 3 flux start \
+        STATEDIR=$(mktemp -d) &&
+	$timeout flux python $udp -w 3 flux start -o,--setattr=statedir=${STATEDIR} \
 	"flux jobtap load $plugin_i && flux mini run hostname"
 '
 
 test_expect_success 'validate packets immediate' '
-	$timeout flux python $udp -V flux start \
+	$timeout flux python $udp -V flux start -o,--setattr=statedir=${STATEDIR} \
 	"flux jobtap load $plugin_i && flux mini run hostname"
 '
 
 test_expect_success 'timing packets received immediate' '
-	$timeout flux python $udp -s timing flux start \
+        STATEDIR=$(mktemp -d) &&
+	$timeout flux python $udp -s timing flux start -o,--setattr=statedir=${STATEDIR} \
 	"flux jobtap load $plugin_i && flux mini run hostname"
 '
 
 test_expect_success 'timing packets received basic' '
-	$timeout flux python $udp -s timing flux start \
+        STATEDIR=$(mktemp -d) &&
+	$timeout flux python $udp -s timing flux start -o,--setattr=statedir=${STATEDIR} \
 	"flux jobtap load $plugin_b && flux mini run hostname && sleep 1"
 '
 
 test_expect_success 'valid content-cache packets received' '
-	$timeout flux python $udp -s content-cache -V flux start sleep 1
+        STATEDIR=$(mktemp -d) &&
+	$timeout flux python $udp -s content-cache -V flux start -o,--setattr=statedir=${STATEDIR} sleep 1
 '
 
 test_expect_success 'nothing received with no endpoint' '
+        STATEDIR=$(mktemp -d) &&
 	unset FLUX_FRIPP_STATSD &&
-	test_expect_code 137 $timeout5 flux python $udp -n flux start
+	test_expect_code 137 $timeout5 flux python $udp -n flux start -o,--setattr=statedir=${STATEDIR}
 '
 
 test_expect_success 'FLUX_FRIPP_STATSD with colectomy' '
+        STATEDIR=$(mktemp -d) &&
 	FLUX_FRIPP_STATSD=localhost \
-		flux start /bin/true sleep 1 2>colon.err &&
+		flux start -o,--setattr=statedir=${STATEDIR} /bin/true sleep 1 2>colon.err &&
 	grep "parse error" colon.err
 '
 
 test_expect_success 'FLUX_FRIPP_STATSD with invalid hostname' '
+        STATEDIR=$(mktemp -d) &&
 	FLUX_FRIPP_STATSD=thiscantpossiblybevalid:9000 \
-		flux start /bin/true sleep 1 2>host.err &&
+		flux start -o,--setattr=statedir=${STATEDIR} /bin/true sleep 1 2>host.err &&
 	grep "parse error" host.err
 '
 

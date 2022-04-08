@@ -4,7 +4,10 @@ test_description='Test flux shutdown command'
 
 . $(dirname $0)/sharness.sh
 
-test_under_flux 4
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 4 full -o,-Sstatedir=${STATEDIR}
 
 waitfile="${SHARNESS_TEST_SRCDIR}/scripts/waitfile.lua"
 
@@ -33,7 +36,8 @@ test_expect_success 'flux-shutdown fails if job argument is unknown' '
 '
 
 test_expect_success 'run a test job to completion' '
-	flux mini submit --wait -n1 flux start /bin/true >jobid
+        STATEDIR=$(mktemp -d) &&
+	flux mini submit --wait -n1 flux start -o,--setattr=statedir=${STATEDIR} /bin/true >jobid
 '
 test_expect_success 'flux-shutdown fails if job is not running' '
 	test_must_fail flux shutdown $(cat jobid) 2>notrun.err &&
@@ -79,8 +83,9 @@ test_expect_success 'cancel that job' '
 '
 
 test_expect_success 'run instance with no initial program and wait for it to start' '
+        STATEDIR=$(mktemp -d) &&
 	flux mini submit --wait-event=start \
-		flux start -o,-Sbroker.rc2_none >jobid3 &&
+		flux start -o,-Sbroker.rc2_none -o,--setattr=statedir=${STATEDIR} >jobid3 &&
 	run_timeout 30 bash -c "while ! flux uri $(cat jobid3) >uri3; do \
 		sleep 0.1; \
 	done"
@@ -133,7 +138,8 @@ test_expect_success 'job exit code indicates SIGHUP termination' '
 '
 
 test_expect_success 'flux-shutdown as initial program does not hang' '
-	test_expect_code 129 run_timeout 30 flux start flux shutdown
+        STATEDIR=$(mktemp -d) &&
+	test_expect_code 129 run_timeout 30 flux start -o,--setattr=statedir=${STATEDIR} flux shutdown
 '
 
 test_done

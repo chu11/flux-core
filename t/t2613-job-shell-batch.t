@@ -4,7 +4,10 @@ test_description='Test flux-shell per-reosurce and batch support'
 
 . `dirname $0`/sharness.sh
 
-test_under_flux 2 job
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 2 job -o,-Sstatedir=${STATEDIR}
 
 test_expect_success 'flux-shell: bails on invalid per-resource' '
 	test_expect_code 1 flux mini run -o per-resource.type=foo hostname

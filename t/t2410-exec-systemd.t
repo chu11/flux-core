@@ -25,7 +25,10 @@ then
     test_done
 fi
 
-test_under_flux 1 full
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 1 full -o,-Sstatedir=${STATEDIR}
 
 waitfile=${SHARNESS_TEST_SRCDIR}/scripts/waitfile.lua
 

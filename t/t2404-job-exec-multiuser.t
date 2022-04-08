@@ -24,7 +24,10 @@ if ! test -d conf.d; then
 fi
 
 export FLUX_CONF_DIR=$(pwd)/conf.d
-test_under_flux 2 job
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 2 job -o,-Sstatedir=${STATEDIR}
 
 test_expect_success 'job-exec: module configured to use IMP' '
 	flux dmesg | grep "using imp path ${IMP}"

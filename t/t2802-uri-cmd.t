@@ -4,7 +4,10 @@ test_description='Test flux uri command'
 
 . $(dirname $0)/sharness.sh
 
-test_under_flux 1
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 1 job -o,-Sstatedir=${STATEDIR}
 
 testssh="${SHARNESS_TEST_SRCDIR}/scripts/tssh"
 

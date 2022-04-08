@@ -24,7 +24,10 @@ MINJOBID_WORDS="academy-academy-academy--academy-academy-academy"
 MINJOBID_F58="f1"
 MINJOBIDS_LIST="$MINJOBID_DEC $MINJOBID_HEX $MINJOBID_KVS $MINJOBID_DOTHEX $MINJOBID_WORDS $MINJOBID_F58"
 
-test_under_flux 1 job
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 1 job -o,-Sstatedir=${STATEDIR}
 
 flux setattr log-stderr-level 1
 

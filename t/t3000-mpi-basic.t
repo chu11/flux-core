@@ -19,7 +19,10 @@ fi
 export TEST_UNDER_FLUX_CORES_PER_RANK=4
 SIZE=2
 MAX_MPI_SIZE=$(($SIZE*$TEST_UNDER_FLUX_CORES_PER_RANK))
-test_under_flux $SIZE job
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux $SIZE job -o,-Sstatedir=${STATEDIR}
 
 OPTS="-ocpu-affinity=off -overbose=1"
 

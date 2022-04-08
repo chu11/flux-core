@@ -11,7 +11,8 @@
 #
 ulimit -n 113
 ulimit -Hn 113
-flux start \
+STATEDIR=$(mktemp -d)
+flux start -o,-Sstatedir=${STATEDIR} \
     sh -c '
 flux mini submit --cc=1-12 hostname &&
 flux queue drain &&

@@ -4,7 +4,10 @@ test_description='Test flux-shell pty support'
 
 . `dirname $0`/sharness.sh
 
-test_under_flux 4 job
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 4 job -o,-Sstatedir=${STATEDIR}
 
 # an existing FLUX_TERMINUS_SESSION will interfere with tests below
 unset FLUX_TERMINUS_SESSION

@@ -4,7 +4,10 @@ test_description='Test flux jobs command'
 
 . $(dirname $0)/sharness.sh
 
-test_under_flux 4 job
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 4 job -o,-Sstatedir=${STATEDIR}
 
 RPC=${FLUX_BUILD_DIR}/t/request/rpc
 runpty="${SHARNESS_TEST_SRCDIR}/scripts/runpty.py --line-buffer -f asciicast"

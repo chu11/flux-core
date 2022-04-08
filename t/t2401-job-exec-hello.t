@@ -4,7 +4,10 @@ test_description='Test flux job exec hello protocol with multiple providers'
 
 . $(dirname $0)/sharness.sh
 
-test_under_flux 1 job
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 1 job -o,-Sstatedir=${STATEDIR}
 
 flux setattr log-stderr-level 1
 execservice=${SHARNESS_TEST_SRCDIR}/job-manager/exec-service.lua

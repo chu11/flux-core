@@ -14,6 +14,7 @@ import os
 import sys
 import subprocess
 import argparse
+import tempfile
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -57,7 +58,9 @@ def rerun_under_flux(size=1, personality="full"):
     # ported from sharness.d/flux-sharness.sh
     child_env["FLUX_BUILD_DIR"] = builddir
     child_env["FLUX_SOURCE_DIR"] = srcdir
-    command = [flux_exe, "start", "--test-size", str(size)]
+    # will leak / not remove the tempdir
+    statedir = tempfile.TemporaryDirectory()
+    command = [flux_exe, "start", "--test-size", str(size), "-o,-Sstatedir=", statedir]
     if personality != "full":
         for rc_num in [1, 3]:
             attr = "broker.rc{}_path".format(rc_num)

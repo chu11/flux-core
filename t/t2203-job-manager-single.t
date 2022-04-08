@@ -7,7 +7,10 @@ test_description='Test flux job manager service with sched-simple (single)'
 . $(dirname $0)/sharness.sh
 
 export TEST_UNDER_FLUX_NO_JOB_EXEC=y
-test_under_flux 2 job
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 2 job -o,-Sstatedir=${STATEDIR}
 
 flux setattr log-stderr-level 1
 

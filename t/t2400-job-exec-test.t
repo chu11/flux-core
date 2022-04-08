@@ -4,7 +4,10 @@ test_description='Test flux job execution service in simulated mode'
 
 . $(dirname $0)/sharness.sh
 
-test_under_flux 1 job
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 1 job -o,-Sstatedir=${STATEDIR}
 
 flux setattr log-stderr-level 1
 

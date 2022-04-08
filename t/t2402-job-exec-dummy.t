@@ -15,7 +15,10 @@ if ! test -f dummy.toml; then
 fi
 
 export FLUX_CONF_DIR=$(pwd)
-test_under_flux 4 job
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 4 job -o,-Sstatedir=${STATEDIR}
 
 flux setattr log-stderr-level 1
 

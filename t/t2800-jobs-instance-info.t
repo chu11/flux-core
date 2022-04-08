@@ -4,7 +4,10 @@ test_description='Test flux jobs command with instance.* attributes'
 
 . $(dirname $0)/sharness.sh
 
-test_under_flux 4 job
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 4 job -o,-Sstatedir=${STATEDIR}
 
 export FLUX_URI_RESOLVE_LOCAL=t
 waitfile="${SHARNESS_TEST_SRCDIR}/scripts/waitfile.lua"
@@ -21,8 +24,10 @@ waitfile="${SHARNESS_TEST_SRCDIR}/scripts/waitfile.lua"
 #     jobs.
 #
 test_expect_success 'start a set of Flux instances' '
-	id=$(flux mini submit flux start /bin/true) &&
-	id2=$(flux mini submit -n2 -c1 flux start \
+        STATEDIR1=$(mktemp -d) &&
+        STATEDIR2=$(mktemp -d) &&
+	id=$(flux mini submit flux start -o,--setattr=statedir=${STATEDIR1} /bin/true) &&
+	id2=$(flux mini submit -n2 -c1 flux start -o,--setattr=statedir=${STATEDIR2} \
 		"flux mini run /bin/false ; \
 		 flux mini submit --cc=1-4 sleep 300 && \
 		 touch ready && \

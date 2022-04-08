@@ -6,7 +6,10 @@ test_description='simple sched-simple tests'
 test -n "$FLUX_TESTS_LOGFILE" && set -- "$@" --logfile
 . $(dirname $0)/sharness.sh
 
-test_under_flux 4 job
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 4 job -o,-Sstatedir=${STATEDIR}
 
 query="flux resource list --state=free -no {rlist}"
 

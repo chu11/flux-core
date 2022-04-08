@@ -8,7 +8,10 @@ if flux job submit --help 2>&1 | grep -q sign-type; then
 	test_set_prereq HAVE_FLUX_SECURITY
 fi
 
-test_under_flux 1 job
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 1 job -o,-Sstatedir=${STATEDIR}
 
 
 flux setattr log-stderr-level 1

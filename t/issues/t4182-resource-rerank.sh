@@ -34,7 +34,8 @@ flux mini run -o per-resource.type=node -o cpu-affinity=off -n 11 \
 
 EOF
 
-flux start -o,-Shostlist=foo[0-3] --test-size=4 bash ./t4182-test.sh
+STATEDIR=$(mktemp -d)
+flux start -o,-Sstatedir=${STATEDIR} -o,-Shostlist=foo[0-3] --test-size=4 bash ./t4182-test.sh
 
 jq -S . <t4182-test.out
 

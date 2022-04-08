@@ -4,7 +4,10 @@ test_description='Test flux-shell initrc.lua implementation'
 
 . `dirname $0`/sharness.sh
 
-test_under_flux 1
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 1 full -o,-Sstatedir=${STATEDIR}
 
 FLUX_SHELL="${FLUX_BUILD_DIR}/src/shell/flux-shell"
 

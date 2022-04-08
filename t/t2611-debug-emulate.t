@@ -11,7 +11,10 @@ stop_tasks_test()     {
 	jq '.attributes.system.shell.options."stop-tasks-in-exec" = 1';
 }
 
-test_under_flux 2
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 2 full -o,-Sstatedir=${STATEDIR}
 
 TIMEOUT=10
 

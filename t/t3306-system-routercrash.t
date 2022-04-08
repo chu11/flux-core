@@ -15,7 +15,10 @@ This test verifies that the invariant holds when ther router crashes.
 
 export TEST_UNDER_FLUX_FANOUT=1
 
-test_under_flux 3 system
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 3 system -o,-Sstatedir=${STATEDIR}
 
 startctl="flux python ${SHARNESS_TEST_SRCDIR}/scripts/startctl.py"
 groups="flux python ${SHARNESS_TEST_SRCDIR}/scripts/groups.py"

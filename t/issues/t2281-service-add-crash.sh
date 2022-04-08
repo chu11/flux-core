@@ -8,4 +8,5 @@ EOF
 chmod +x service.add.lua
 
 # Run service.add 3x and ensure no broker crash
-flux start sh -c './service.add.lua; ./service.add.lua; ./service.add.lua'
+STATEDIR=$(mktemp -d)
+flux start -o,-Sstatedir=${STATEDIR} sh -c './service.add.lua; ./service.add.lua; ./service.add.lua'

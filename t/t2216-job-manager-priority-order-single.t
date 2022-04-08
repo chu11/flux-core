@@ -8,7 +8,10 @@ test_description='Test flux job manager urgency change to job (mode=single)'
 
 export TEST_UNDER_FLUX_NO_JOB_EXEC=y
 export TEST_UNDER_FLUX_SCHED_SIMPLE_MODE="limited=1"
-test_under_flux 1 job
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 1 job -o,-Sstatedir=${STATEDIR}
 
 flux setattr log-stderr-level 1
 

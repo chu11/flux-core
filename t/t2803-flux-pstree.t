@@ -4,7 +4,10 @@ test_description='Test the flux-pstree command'
 
 . $(dirname $0)/sharness.sh
 
-test_under_flux 2 job
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 2 job -o,-Sstatedir=${STATEDIR}
 
 export FLUX_PYCLI_LOGLEVEL=10
 export FLUX_URI_RESOLVE_LOCAL=t
@@ -67,10 +70,13 @@ test_expect_success 'flux-pstree -x --skip-root=no works in empty instance' '
 #   the sleep job to finish.
 #
 test_expect_success 'start a recursive job' '
-	id=$(flux mini submit flux start /bin/true) &&
+        STATEDIR1=$(mktemp -d) &&
+        STATEDIR2=$(mktemp -d) &&
+        STATEDIR3=$(mktemp -d) &&
+	id=$(flux mini submit flux start -o,--setattr=statedir=${STATEDIR1} /bin/true) &&
 	rid=$(flux mini submit -n2 \
-		flux start \
-		flux mini submit --wait --cc=1-2 flux start \
+		flux start -o,--setattr=statedir=${STATEDIR2} \
+		flux mini submit --wait --cc=1-2 flux start -o,--setattr=statedir=${STATEDIR3} \
 			"flux mini submit sleep 300 && \
 			 touch ready.\$FLUX_JOB_CC && \
 			 flux queue idle") &&

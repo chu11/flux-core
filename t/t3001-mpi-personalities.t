@@ -6,7 +6,10 @@ test_description="Test that Flux's MPI personalities work"
 . `dirname $0`/sharness.sh
 
 SIZE=4
-test_under_flux ${SIZE}
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux ${SIZE} job -o,-Sstatedir=${STATEDIR}
 
 run_program() {
 	local timeout=$1

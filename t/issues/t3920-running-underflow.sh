@@ -4,7 +4,8 @@
 #  does not cause underflow of the running job count.
 #
 export PLUGIN=${FLUX_BUILD_DIR}/t/job-manager/plugins/.libs/cleanup-event.so
-SHELL=/bin/sh flux start '\
+STATEDIR=$(mktemp -d)
+SHELL=/bin/sh flux start -o,-Sstatedir=${STATEDIR} '\
    flux jobtap load $PLUGIN \
 && flux queue stop \
 && jobid=$(flux mini submit hostname) \

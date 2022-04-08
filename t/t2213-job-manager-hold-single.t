@@ -9,7 +9,10 @@ test_description='Test flux job manager job hold (single mode)'
 export TEST_UNDER_FLUX_CORES_PER_RANK=1
 export TEST_UNDER_FLUX_NO_JOB_EXEC=y
 export TEST_UNDER_FLUX_SCHED_SIMPLE_MODE="limited=1"
-test_under_flux 1 job
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 1 job -o,-Sstatedir=${STATEDIR}
 
 flux setattr log-stderr-level 1
 

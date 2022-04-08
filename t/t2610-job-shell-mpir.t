@@ -6,7 +6,10 @@ test_description='Test flux-shell MPIR and ptrace support'
 
 skip_all_unless_have jq
 
-test_under_flux 4 job
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 4 job -o,-Sstatedir=${STATEDIR}
 
 FLUX_SHELL="${FLUX_BUILD_DIR}/src/shell/flux-shell"
 

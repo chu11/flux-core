@@ -11,7 +11,10 @@ if test_have_prereq ASAN; then
 fi
 
 SIZE=4
-test_under_flux ${SIZE}
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux ${SIZE} full -o,-Sstatedir=${STATEDIR}
 echo "# $0: flux session size will be ${SIZE}"
 
 if test -z "$T4000_ISSUES_GLOB"; then

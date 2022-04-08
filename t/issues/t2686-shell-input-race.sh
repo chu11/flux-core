@@ -36,4 +36,5 @@ done
 exit \$RC
 EOF
 
-flux start -s 4 sh ./test.sh
+STATEDIR=$(mktemp -d)
+flux start -o,-Sstatedir=${STATEDIR} -s 4 sh ./test.sh

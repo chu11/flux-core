@@ -4,7 +4,10 @@ test_description='Test flux job manager wait handling'
 
 . $(dirname $0)/sharness.sh
 
-test_under_flux 1
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 1 full -o,-Sstatedir=${STATEDIR}
 
 list_jobs=${FLUX_BUILD_DIR}/t/job-manager/list-jobs
 SUBMIT_WAIT="flux python ${FLUX_SOURCE_DIR}/t/job-manager/submit-wait.py"

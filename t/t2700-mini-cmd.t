@@ -4,7 +4,10 @@ test_description='Test flux mini command'
 
 . $(dirname $0)/sharness.sh
 
-test_under_flux 4
+if test -z "${TEST_UNDER_FLUX_ACTIVE}"; then
+    STATEDIR=$(mktemp -d)
+fi
+test_under_flux 4 job -o,-Sstatedir=${STATEDIR}
 
 # Set CLIMain log level to logging.DEBUG (10), to enable stack traces
 export FLUX_PYCLI_LOGLEVEL=10

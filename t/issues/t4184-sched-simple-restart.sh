@@ -43,4 +43,5 @@ EOF
 
 chmod +x t4184.sh
 
-flux start -s 1 ./t4184.sh
+STATEDIR=$(mktemp -d)
+flux start -o,-Sstatedir=${STATEDIR} -s 1 ./t4184.sh
