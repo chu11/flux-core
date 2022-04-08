@@ -19,6 +19,9 @@
 
 #include "src/common/libutil/errno_safe.h"
 #include "src/common/libczmqcontainers/czmq_containers.h"
+#include "src/common/libutil/grudgeset.h"
+#include "src/common/libutil/jpath.h"
+#include "src/common/libeventlog/eventlog.h"
 
 #include "idsync.h"
 #include "list.h"
@@ -94,8 +97,6 @@ int get_jobs_from_list (json_t *jobs,
 "  jobspec TEXT,"
 "  R TEXT"
 
-urgency
-priority
 name
 ntasks
 nnodes
@@ -103,15 +104,94 @@ nodelist
 expiration
 waitstatus
 success
-exception_occurred
-exception_severity
-exception_type
-exception_note
 result
-annotations
-dependencies
 
 #endif
+
+static int dependency_add (struct job *job,
+                           const char *description)
+{
+    if (grudgeset_add (&job->dependencies, description) < 0
+        && errno != EEXIST)
+        /*  Log non-EEXIST errors, but it is not fatal */
+        flux_log_error (job->ctx->h,
+                        "job %ju: dependency-add",
+                        (uintmax_t) job->id);
+    return 0;
+}
+
+static int dependency_remove (struct job *job,
+                              const char *description)
+{
+    int rc = grudgeset_remove (job->dependencies, description);
+    if (rc < 0 && errno == ENOENT) {
+        /*  No matching dependency is non-fatal error */
+        flux_log (job->ctx->h,
+                  LOG_DEBUG,
+                  "job %ju: dependency-remove '%s' not found",
+                  (uintmax_t) job->id,
+                  description);
+        rc = 0;
+    }
+    return rc;
+}
+
+static int dependency_context_parse (flux_t *h,
+                                     struct job *job,
+                                     const char *cmd,
+                                     json_t *context)
+{
+    int rc;
+    const char *description = NULL;
+
+    if (!context
+        || json_unpack (context,
+                        "{s:s}",
+                        "description", &description) < 0) {
+        flux_log (h, LOG_ERR,
+                  "job %ju: dependency-%s context invalid",
+                  (uintmax_t) job->id,
+                  cmd);
+        errno = EPROTO;
+        return -1;
+    }
+
+    if (strcmp (cmd, "add") == 0)
+        rc = dependency_add (job, description);
+    else if (strcmp (cmd, "remove") == 0)
+        rc = dependency_remove (job, description);
+    else {
+        flux_log (h, LOG_ERR,
+                  "job %ju: invalid dependency event: dependency-%s",
+                  (uintmax_t) job->id,
+                  cmd);
+        return -1;
+    }
+    return rc;
+}
+
+static int memo_update (flux_t *h,
+                        struct job *job,
+                        json_t *o)
+{
+    if (!o) {
+        flux_log (h, LOG_ERR, "%ju: invalid memo context", (uintmax_t) job->id);
+        errno = EPROTO;
+        return -1;
+    }
+    if (!job->annotations && !(job->annotations = json_object ())) {
+        errno = ENOMEM;
+        return -1;
+    }
+    if (jpath_update (job->annotations, "user", o) < 0
+        || jpath_clear_null (job->annotations) < 0)
+        return -1;
+    if (json_object_size (job->annotations) == 0) {
+        json_decref (job->annotations);
+        job->annotations = NULL;
+    }
+    return 0;
+}
 
 struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
 {
@@ -140,6 +220,125 @@ struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
 
     job->state = FLUX_JOB_STATE_INACTIVE;
 
+    {
+        json_t *a = NULL;
+        size_t index;
+        json_t *value;
+
+
+        if (!(a = eventlog_decode (job->eventlog))) {
+            flux_log_error (ctx->h, "%s: error parsing eventlog for %ju",
+                            __FUNCTION__, (uintmax_t)job->id);
+            return NULL;        /* leaking */
+        }
+
+        json_array_foreach (a, index, value) {
+            const char *name;
+            double timestamp;
+            json_t *context = NULL;
+
+            if (eventlog_entry_parse (value, &timestamp, &name, &context) < 0) {
+                flux_log_error (ctx->h, "%s: error parsing entry for %ju",
+                                __FUNCTION__, (uintmax_t)job->id);
+                return NULL;        /* leaking */
+            }
+
+            if (!strcmp (name, "submit")) {
+                assert (context);
+                if (json_unpack (context,
+                                 "{ s:i }",
+                                 "urgency", &job->urgency) < 0) {
+                    flux_log (ctx->h, LOG_ERR, "%s: submit context invalid: %ju",
+                              __FUNCTION__, (uintmax_t)job->id);
+                    return NULL;        /* leaking */
+                }
+            }
+            else if (!strcmp (name, "priority")) {
+               assert (context);
+               if (json_unpack (context,
+                                 "{ s:I }",
+                                 "priority", (json_int_t *)&job->priority) < 0) {
+                    flux_log (ctx->h, LOG_ERR, "%s: priority context invalid: %ju",
+                              __FUNCTION__, (uintmax_t)job->id);
+                    return NULL;        /* leaking */
+                }
+            }
+            else if (!strcmp (name, "urgency")) {
+                assert (context);
+                if (json_unpack (context, "{ s:i }", "urgency", &job->urgency) < 0) {
+                    flux_log (ctx->h, LOG_ERR, "%s: urgency context invalid: %ju",
+                              __FUNCTION__, (uintmax_t)job->id);
+                    return NULL;        /* leaking */
+                }
+            }
+            else if (!strcmp (name, "exception")) {
+                const char *type;
+                int severity;
+                const char *note = NULL;
+
+                assert (context);
+                if (json_unpack (context,
+                                 "{s:s s:i s?:s}",
+                                 "type", &type,
+                                 "severity", &severity,
+                                 "note", &note) < 0) {
+                    flux_log (ctx->h, LOG_ERR, "%s: exception context invalid: %ju",
+                              __FUNCTION__, (uintmax_t)job->id);
+                    return NULL;        /* leaking */
+                }
+
+                if (!job->exception_occurred
+                    || severity < job->exception_severity) {
+                    job->exception_occurred = true;
+                    job->exception_severity = severity;
+                    job->exception_type = type;
+                    job->exception_note = note;
+                    json_decref (job->exception_context);
+                    job->exception_context = json_incref (context);
+                }
+            }
+            else if (!strcmp (name, "alloc")) {
+                /* context not required if no annotations */
+                if (context) {
+                    json_t *annotations;
+                    if (!(annotations = json_object_get (context, "annotations"))) {
+                        flux_log (ctx->h, LOG_ERR,
+                                  "%s: alloc context for %ju invalid",
+                                  __FUNCTION__, (uintmax_t)job->id);
+                        return NULL;        /* leaking */
+                    }
+                    if (!json_is_null (annotations))
+                        job->annotations = json_incref (annotations);
+                }
+            }
+            else if (!strcmp (name, "finish")) {
+                assert (context);
+                if (json_unpack (context,
+                                 "{ s:i }",
+                                 "status", &job->wait_status) < 0) {
+                    flux_log (ctx->h, LOG_ERR, "%s: finish context invalid: %ju",
+                              __FUNCTION__, (uintmax_t)job->id);
+                    return NULL;        /* leaking */
+                }
+            }
+            else if (!strncmp (name, "dependency-", 11)) {
+                if (dependency_context_parse (ctx->h, job, name+11, context) < 0) {
+                    flux_log (ctx->h, LOG_ERR, "%s: dependency context invalid: %ju",
+                              __FUNCTION__, (uintmax_t)job->id);
+                    return NULL;        /* leaking */
+                }
+            }
+            else if (!strcmp (name, "memo")) {
+                if (context && memo_update (ctx->h, job, context) < 0) {
+                    flux_log (ctx->h, LOG_ERR, "%s: memo context invalid: %ju",
+                              __FUNCTION__, (uintmax_t)job->id);
+                    return NULL;        /* leaking */
+                }
+            }
+
+        }
+    }
+
     return job;
 }
 
@@ -152,8 +351,8 @@ int get_jobs_from_sqlite (struct list_ctx *ctx,
                           int states,
                           int results)
 {
-    char *sql = "SELECT * FROM jobs";
-    char *sqllimit = "SELECT * FROM jobs LIMIT ?";
+    char *sql = "SELECT * FROM jobs ORDER BY t_inactive DESC;";
+    char *sqllimit = "SELECT * FROM jobs ORDER BY t_inactive DESC LIMIT ?";
     sqlite3_stmt *res = NULL;
     struct job *job;
 
