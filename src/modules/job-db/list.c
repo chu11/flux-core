@@ -15,6 +15,7 @@
 #endif
 #include <jansson.h>
 #include <flux/core.h>
+#include <assert.h>
 
 #include "src/common/libutil/errno_safe.h"
 #include "src/common/libczmqcontainers/czmq_containers.h"
@@ -81,6 +82,133 @@ int get_jobs_from_list (json_t *jobs,
     return 0;
 }
 
+#if 0
+"  id CHAR(16) PRIMARY KEY,"
+"  userid INT,"
+"  ranks TEXT,"
+"  t_submit REAL,"
+"  t_run REAL,"
+"  t_cleanup REAL,"
+"  t_inactive REAL,"
+"  eventlog TEXT,"
+"  jobspec TEXT,"
+"  R TEXT"
+
+urgency
+priority
+name
+ntasks
+nnodes
+nodelist
+expiration
+waitstatus
+success
+exception_occurred
+exception_severity
+exception_type
+exception_note
+result
+annotations
+dependencies
+
+#endif
+
+struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
+{
+    struct job *job = NULL;
+    const unsigned char *s;
+    char *endptr = NULL;
+
+    if (!(job = calloc (1, sizeof (*job))))
+        return NULL;
+
+    s = sqlite3_column_text (res, 0);
+    assert (s);
+    job->id = (flux_jobid_t)strtoul ((const char *)s, &endptr, 0);
+    job->userid = sqlite3_column_int (res, 1);
+    job->ranks = strdup ((const char *)sqlite3_column_text (res, 2));
+    job->t_submit = sqlite3_column_double (res, 3);
+    job->t_run = sqlite3_column_double (res, 4);
+    job->t_cleanup = sqlite3_column_double (res, 5);
+    job->t_inactive = sqlite3_column_double (res, 6);
+    job->eventlog = strdup ((const char *)sqlite3_column_text (res, 7));
+    assert (job->eventlog);
+    job->jobspec = json_loads ((const char *)sqlite3_column_text (res, 8), 0, NULL);
+    assert (job->jobspec);
+    job->R = json_loads ((const char *)sqlite3_column_text (res, 8), 0, NULL);
+    assert (job->R);
+
+    job->state = FLUX_JOB_STATE_INACTIVE;
+
+    return job;
+}
+
+int get_jobs_from_sqlite (struct list_ctx *ctx,
+                          json_t *jobs,
+                          job_list_error_t *errp,
+                          int max_entries,
+                          json_t *attrs,
+                          uint32_t userid,
+                          int states,
+                          int results)
+{
+    char *sql = "SELECT * FROM jobs";
+    char *sqllimit = "SELECT * FROM jobs LIMIT ?";
+    sqlite3_stmt *res = NULL;
+    struct job *job;
+
+    if (max_entries) {
+        if (sqlite3_prepare_v2 (ctx->actx->db,
+                                sqllimit,
+                                -1,
+                                &res,
+                                0) != SQLITE_OK) {
+            flux_log_error (ctx->h, "sqlite3_prepare_v2");
+            return -1;
+        }
+        if (sqlite3_bind_int (res, 1, max_entries) != SQLITE_OK) {
+            flux_log_error (ctx->h, "sqlite3_bind_int");
+            return -1;          /* leak res */
+        }
+    }
+    else {
+        if (sqlite3_prepare_v2 (ctx->actx->db,
+                                sql,
+                                -1,
+                                &res,
+                                0) != SQLITE_OK) {
+            flux_log_error (ctx->h, "sqlite3_prepare_v2");
+            return -1;
+        }
+    }
+
+    while (sqlite3_step (res) == SQLITE_ROW) {
+        if (!(job = sqliterow_2_job (ctx, res))) {
+            flux_log_error (ctx->h, "sqliterow_2_job");
+            return -1;          /* leak job & res */
+        }
+        if (job_filter (job, userid, states, results)) {
+            json_t *o;
+            if (!(o = job_to_json (job, attrs, errp)))
+                return -1;
+            if (json_array_append_new (jobs, o) < 0) {
+                json_decref (o);
+                errno = ENOMEM;
+                return -1;
+            }
+            if (json_array_size (jobs) == max_entries)
+                return 1;
+        }
+
+        /* lots of leaking here, deal with later with proper destroy
+         * function */
+        free (job);
+    }
+
+    sqlite3_finalize (res);
+    return 0;
+}
+
 /* Create a JSON array of 'job' objects.  'max_entries' determines the
  * max number of jobs to return, 0=unlimited.  Returns JSON object
  * which the caller must free.  On error, return NULL with errno set:
@@ -134,14 +262,14 @@ json_t *get_jobs (struct list_ctx *ctx,
 
     if (states & FLUX_JOB_STATE_INACTIVE) {
         if (!ret) {
-            if ((ret = get_jobs_from_list (jobs,
-                                           errp,
-                                           ctx->jsctx->inactive,
-                                           max_entries,
-                                           attrs,
-                                           userid,
-                                           states,
-                                           results)) < 0)
+            if ((ret = get_jobs_from_sqlite (ctx,
+                                             jobs,
+                                             errp,
+                                             max_entries,
+                                             attrs,
+                                             userid,
+                                             states,
+                                             results)) < 0)
                 goto error;
         }
     }
