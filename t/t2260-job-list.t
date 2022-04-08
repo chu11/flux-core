@@ -4,7 +4,8 @@ test_description='Test flux job list services'
 
 . $(dirname $0)/sharness.sh
 
-test_under_flux 4 job
+rm -f /tmp/achu/*.sqlite
+test_under_flux 4 job -o,--setattr=statedir=/tmp/achu
 
 RPC=${FLUX_BUILD_DIR}/t/request/rpc
 listRPC="flux python ${SHARNESS_TEST_SRCDIR}/job-list/list-rpc.py"
@@ -934,269 +935,269 @@ test_expect_success HAVE_JQ 'list-attrs works' '
 	done
 '
 
-#
-#
-# stats & corner cases
-#
+# #
+# #
+# # stats & corner cases
+# #
 
-test_expect_success 'job-list stats works' '
-        flux module stats --parse jobs.pending job-list &&
-        flux module stats --parse jobs.running job-list &&
-        flux module stats --parse jobs.inactive job-list &&
-        flux module stats --parse idsync.lookups job-list &&
-        flux module stats --parse idsync.waits job-list
-'
-test_expect_success 'list request with empty payload fails with EPROTO(71)' '
-	${RPC} job-list.list 71 </dev/null
-'
-test_expect_success HAVE_JQ 'list request with invalid input fails with EPROTO(71) (attrs not an array)' '
-	name="attrs-not-array" &&
-        id=$(id -u) &&
-        $jq -j -c -n  "{max_entries:5, userid:${id}, states:0, results:0, attrs:5}" \
-          | $listRPC >${name}.out &&
-	cat <<-EOF >${name}.expected &&
-	errno 71: invalid payload: attrs must be an array
-	EOF
-	test_cmp ${name}.expected ${name}.out
-'
-test_expect_success HAVE_JQ 'list request with invalid input fails with EINVAL(22) (attrs non-string)' '
-	name="attr-not-string" &&
-        id=$(id -u) &&
-        $jq -j -c -n  "{max_entries:5, userid:${id}, states:0, results:0, attrs:[5]}" \
-	  | $listRPC > ${name}.out &&
-	cat <<-EOF >${name}.expected &&
-	errno 22: attr has no string value
-	EOF
-	test_cmp ${name}.expected ${name}.out
-'
-test_expect_success HAVE_JQ 'list request with invalid input fails with EINVAL(22) (attrs illegal field)' '
-	name="field-not-valid" &&
-        id=$(id -u) &&
-        $jq -j -c -n  "{max_entries:5, userid:${id}, states:0, results:0, attrs:[\"foo\"]}" \
-          | $listRPC > ${name}.out &&
-	cat <<-EOF >${name}.expected &&
-	errno 22: foo is not a valid attribute
-	EOF
-	test_cmp ${name}.expected ${name}.out
-'
-test_expect_success 'list-id request with empty payload fails with EPROTO(71)' '
-	${RPC} job-list.list-id 71 </dev/null
-'
-test_expect_success HAVE_JQ 'list-id request with invalid input fails with EPROTO(71) (attrs not an array)' '
-	name="list-id-attrs-not-array" &&
-        id=`flux mini submit hostname | flux job id` &&
-        $jq -j -c -n  "{id:${id}, attrs:5}" \
-          | $listRPC list-id > ${name}.out &&
-	cat <<-EOF >${name}.expected &&
-	errno 71: invalid payload: attrs must be an array
-	EOF
-	test_cmp ${name}.expected ${name}.out
-'
-test_expect_success HAVE_JQ 'list-id request with invalid input fails with EINVAL(22) (attrs non-string)' '
-	name="list-id-invalid-attrs" &&
-	id=$(flux jobs -c1 -ano {id.dec}) &&
-        $jq -j -c -n  "{id:${id}, attrs:[5]}" \
-          | $listRPC list-id > ${name}.out &&
-	cat <<-EOF >${name}.expected &&
-	errno 22: attr has no string value
-	EOF
-	test_cmp ${name}.expected ${name}.out
-'
-test_expect_success HAVE_JQ 'list-id request with invalid input fails with EINVAL(22) (attrs illegal field)' '
-	name="list-id-invalid-attr" &&
-	id=$(flux jobs -c1 -ano {id.dec}) &&
-        $jq -j -c -n  "{id:${id}, attrs:[\"foo\"]}" \
-          | $listRPC list-id >${name}.out &&
-	cat <<-EOF >${name}.expected &&
-	errno 22: foo is not a valid attribute
-	EOF
-	test_cmp ${name}.expected ${name}.out
-'
-test_expect_success 'list-inactive request with empty payload fails with EPROTO(71)' '
-	name="list-inactive-empty" &&
-	${listRPC} list-inactive </dev/null >${name}.out &&
-	cat <<-EOF >${name}.expected &&
-	errno 71: invalid payload: '\''['\'' or '\''{'\'' expected near end of file
-	EOF
-	test_cmp ${name}.expected ${name}.out
-'
-test_expect_success HAVE_JQ 'list-inactive request with invalid input fails with EPROTO(71) (attrs not an array)' '
-	name="list-inactive-invalid" &&
-        $jq -j -c -n  "{max_entries:5, since:0.0, attrs:5}" \
-          | $listRPC list-inactive > ${name}.out &&
-	cat <<-EOF >${name}.expected &&
-	errno 71: invalid payload: attrs must be an array
-	EOF
-	test_cmp ${name}.expected ${name}.out
-'
-test_expect_success HAVE_JQ 'list-inactive request with invalid input fails with EINVAL(22) (attrs non-string)' '
-	name="list-inactive-attrs-invalid" &&
-        $jq -j -c -n  "{max_entries:5, since:0.0, attrs:[5]}" \
-          | $listRPC list-inactive >${name}.out &&
-	cat <<-EOF >${name}.expected &&
-	errno 22: attr has no string value
-	EOF
-	test_cmp ${name}.expected ${name}.out
-'
-test_expect_success HAVE_JQ 'list-inactive request with invalid input fails with EINVAL(22) (attrs illegal field)' '
-        $jq -j -c -n  "{max_entries:5, since:0.0, attrs:[\"foo\"]}" \
-          | $listRPC list-inactive >${name}.out &&
-	cat <<-EOF >${name}.expected &&
-	errno 22: foo is not a valid attribute
-	EOF
-	test_cmp ${name}.expected ${name}.out
-'
+# test_expect_success 'job-list stats works' '
+#         flux module stats --parse jobs.pending job-list &&
+#         flux module stats --parse jobs.running job-list &&
+#         flux module stats --parse jobs.inactive job-list &&
+#         flux module stats --parse idsync.lookups job-list &&
+#         flux module stats --parse idsync.waits job-list
+# '
+# test_expect_success 'list request with empty payload fails with EPROTO(71)' '
+# 	${RPC} job-list.list 71 </dev/null
+# '
+# test_expect_success HAVE_JQ 'list request with invalid input fails with EPROTO(71) (attrs not an array)' '
+# 	name="attrs-not-array" &&
+#         id=$(id -u) &&
+#         $jq -j -c -n  "{max_entries:5, userid:${id}, states:0, results:0, attrs:5}" \
+#           | $listRPC >${name}.out &&
+# 	cat <<-EOF >${name}.expected &&
+# 	errno 71: invalid payload: attrs must be an array
+# 	EOF
+# 	test_cmp ${name}.expected ${name}.out
+# '
+# test_expect_success HAVE_JQ 'list request with invalid input fails with EINVAL(22) (attrs non-string)' '
+# 	name="attr-not-string" &&
+#         id=$(id -u) &&
+#         $jq -j -c -n  "{max_entries:5, userid:${id}, states:0, results:0, attrs:[5]}" \
+# 	  | $listRPC > ${name}.out &&
+# 	cat <<-EOF >${name}.expected &&
+# 	errno 22: attr has no string value
+# 	EOF
+# 	test_cmp ${name}.expected ${name}.out
+# '
+# test_expect_success HAVE_JQ 'list request with invalid input fails with EINVAL(22) (attrs illegal field)' '
+# 	name="field-not-valid" &&
+#         id=$(id -u) &&
+#         $jq -j -c -n  "{max_entries:5, userid:${id}, states:0, results:0, attrs:[\"foo\"]}" \
+#           | $listRPC > ${name}.out &&
+# 	cat <<-EOF >${name}.expected &&
+# 	errno 22: foo is not a valid attribute
+# 	EOF
+# 	test_cmp ${name}.expected ${name}.out
+# '
+# test_expect_success 'list-id request with empty payload fails with EPROTO(71)' '
+# 	${RPC} job-list.list-id 71 </dev/null
+# '
+# test_expect_success HAVE_JQ 'list-id request with invalid input fails with EPROTO(71) (attrs not an array)' '
+# 	name="list-id-attrs-not-array" &&
+#         id=`flux mini submit hostname | flux job id` &&
+#         $jq -j -c -n  "{id:${id}, attrs:5}" \
+#           | $listRPC list-id > ${name}.out &&
+# 	cat <<-EOF >${name}.expected &&
+# 	errno 71: invalid payload: attrs must be an array
+# 	EOF
+# 	test_cmp ${name}.expected ${name}.out
+# '
+# test_expect_success HAVE_JQ 'list-id request with invalid input fails with EINVAL(22) (attrs non-string)' '
+# 	name="list-id-invalid-attrs" &&
+# 	id=$(flux jobs -c1 -ano {id.dec}) &&
+#         $jq -j -c -n  "{id:${id}, attrs:[5]}" \
+#           | $listRPC list-id > ${name}.out &&
+# 	cat <<-EOF >${name}.expected &&
+# 	errno 22: attr has no string value
+# 	EOF
+# 	test_cmp ${name}.expected ${name}.out
+# '
+# test_expect_success HAVE_JQ 'list-id request with invalid input fails with EINVAL(22) (attrs illegal field)' '
+# 	name="list-id-invalid-attr" &&
+# 	id=$(flux jobs -c1 -ano {id.dec}) &&
+#         $jq -j -c -n  "{id:${id}, attrs:[\"foo\"]}" \
+#           | $listRPC list-id >${name}.out &&
+# 	cat <<-EOF >${name}.expected &&
+# 	errno 22: foo is not a valid attribute
+# 	EOF
+# 	test_cmp ${name}.expected ${name}.out
+# '
+# test_expect_success 'list-inactive request with empty payload fails with EPROTO(71)' '
+# 	name="list-inactive-empty" &&
+# 	${listRPC} list-inactive </dev/null >${name}.out &&
+# 	cat <<-EOF >${name}.expected &&
+# 	errno 71: invalid payload: '\''['\'' or '\''{'\'' expected near end of file
+# 	EOF
+# 	test_cmp ${name}.expected ${name}.out
+# '
+# test_expect_success HAVE_JQ 'list-inactive request with invalid input fails with EPROTO(71) (attrs not an array)' '
+# 	name="list-inactive-invalid" &&
+#         $jq -j -c -n  "{max_entries:5, since:0.0, attrs:5}" \
+#           | $listRPC list-inactive > ${name}.out &&
+# 	cat <<-EOF >${name}.expected &&
+# 	errno 71: invalid payload: attrs must be an array
+# 	EOF
+# 	test_cmp ${name}.expected ${name}.out
+# '
+# test_expect_success HAVE_JQ 'list-inactive request with invalid input fails with EINVAL(22) (attrs non-string)' '
+# 	name="list-inactive-attrs-invalid" &&
+#         $jq -j -c -n  "{max_entries:5, since:0.0, attrs:[5]}" \
+#           | $listRPC list-inactive >${name}.out &&
+# 	cat <<-EOF >${name}.expected &&
+# 	errno 22: attr has no string value
+# 	EOF
+# 	test_cmp ${name}.expected ${name}.out
+# '
+# test_expect_success HAVE_JQ 'list-inactive request with invalid input fails with EINVAL(22) (attrs illegal field)' '
+#         $jq -j -c -n  "{max_entries:5, since:0.0, attrs:[\"foo\"]}" \
+#           | $listRPC list-inactive >${name}.out &&
+# 	cat <<-EOF >${name}.expected &&
+# 	errno 22: foo is not a valid attribute
+# 	EOF
+# 	test_cmp ${name}.expected ${name}.out
+# '
 
-#
-# stress test
-#
+# #
+# # stress test
+# #
 
-wait_jobs_finish() {
-        local i=0
-        while ([ "$(flux job list | wc -l)" != "0" ]) \
-              && [ $i -lt 1000 ]
-        do
-                sleep 0.1
-                i=$((i + 1))
-        done
-        if [ "$i" -eq "1000" ]
-        then
-            return 1
-        fi
-        return 0
-}
+# wait_jobs_finish() {
+#         local i=0
+#         while ([ "$(flux job list | wc -l)" != "0" ]) \
+#               && [ $i -lt 1000 ]
+#         do
+#                 sleep 0.1
+#                 i=$((i + 1))
+#         done
+#         if [ "$i" -eq "1000" ]
+#         then
+#             return 1
+#         fi
+#         return 0
+# }
 
-test_expect_success LONGTEST 'stress job-list.list-id' '
-        flux python ${FLUX_SOURCE_DIR}/t/job-list/list-id.py 500 &&
-        wait_jobs_finish
-'
+# test_expect_success LONGTEST 'stress job-list.list-id' '
+#         flux python ${FLUX_SOURCE_DIR}/t/job-list/list-id.py 500 &&
+#         wait_jobs_finish
+# '
 
-# invalid job data tests
-#
-# to avoid potential racyness, wait up to 5 seconds for job to appear
-# in job list.  Note that we can't use `flux job list-ids`, b/c we
-# need specific job states to be crossed to ensure the job-list module
-# has processed the invalid data.
-#
-# In addition, note that the tests below are specific to how the data
-# is invalid in these tests and how job-list parses the invalid data.
-# Different parsing errors could have some fields initialized but
-# others not.
-#
-# note that these tests should be done last, as the introduction of
-# invalid job data into the KVS could affect tests above.
-#
+# # invalid job data tests
+# #
+# # to avoid potential racyness, wait up to 5 seconds for job to appear
+# # in job list.  Note that we can't use `flux job list-ids`, b/c we
+# # need specific job states to be crossed to ensure the job-list module
+# # has processed the invalid data.
+# #
+# # In addition, note that the tests below are specific to how the data
+# # is invalid in these tests and how job-list parses the invalid data.
+# # Different parsing errors could have some fields initialized but
+# # others not.
+# #
+# # note that these tests should be done last, as the introduction of
+# # invalid job data into the KVS could affect tests above.
+# #
 
-# Following tests use invalid jobspecs, must load a more permissive validator
+# # Following tests use invalid jobspecs, must load a more permissive validator
 
-ingest_module ()
-{
-        cmd=$1; shift
-        flux module ${cmd} job-ingest $*
-}
+# ingest_module ()
+# {
+#         cmd=$1; shift
+#         flux module ${cmd} job-ingest $*
+# }
 
-test_expect_success 'reload job-ingest without validator' '
-        ingest_module reload disable-validator
-'
+# test_expect_success 'reload job-ingest without validator' '
+#         ingest_module reload disable-validator
+# '
 
-test_expect_success HAVE_JQ 'create illegal jobspec with empty command array' '
-        cat hostname.json | $jq ".tasks[0].command = []" > bad_jobspec.json
-'
+# test_expect_success HAVE_JQ 'create illegal jobspec with empty command array' '
+#         cat hostname.json | $jq ".tasks[0].command = []" > bad_jobspec.json
+# '
 
-test_expect_success HAVE_JQ 'flux job list works on job with illegal jobspec' '
-        jobid=`flux job submit bad_jobspec.json | flux job id` &&
-        fj_wait_event $jobid clean >/dev/null &&
-        i=0 &&
-        while ! flux job list --states=inactive | grep $jobid > /dev/null \
-               && [ $i -lt 5 ]
-        do
-                sleep 1
-                i=$((i + 1))
-        done &&
-        test "$i" -lt "5" &&
-        flux job list --states=inactive | grep $jobid > list_illegal_jobspec.out &&
-        cat list_illegal_jobspec.out | $jq -e ".name == \"\"" &&
-        cat list_illegal_jobspec.out | $jq -e ".ntasks == 0"
-'
+# test_expect_success HAVE_JQ 'flux job list works on job with illegal jobspec' '
+#         jobid=`flux job submit bad_jobspec.json | flux job id` &&
+#         fj_wait_event $jobid clean >/dev/null &&
+#         i=0 &&
+#         while ! flux job list --states=inactive | grep $jobid > /dev/null \
+#                && [ $i -lt 5 ]
+#         do
+#                 sleep 1
+#                 i=$((i + 1))
+#         done &&
+#         test "$i" -lt "5" &&
+#         flux job list --states=inactive | grep $jobid > list_illegal_jobspec.out &&
+#         cat list_illegal_jobspec.out | $jq -e ".name == \"\"" &&
+#         cat list_illegal_jobspec.out | $jq -e ".ntasks == 0"
+# '
 
-test_expect_success HAVE_JQ,NO_CHAIN_LINT 'flux job list-ids works on job with illegal jobspec' '
-	${RPC} job-list.job-state-pause 0 </dev/null
-        jobid=`flux job submit bad_jobspec.json | flux job id`
-        fj_wait_event $jobid clean >/dev/null
-        flux job list-ids ${jobid} > list_id_illegal_jobspec.out &
-        pid=$!
-        wait_idsync 1 &&
-	${RPC} job-list.job-state-unpause 0 </dev/null &&
-        wait $pid &&
-        cat list_id_illegal_jobspec.out | $jq -e ".id == ${jobid}"
-'
+# test_expect_success HAVE_JQ,NO_CHAIN_LINT 'flux job list-ids works on job with illegal jobspec' '
+# 	${RPC} job-list.job-state-pause 0 </dev/null
+#         jobid=`flux job submit bad_jobspec.json | flux job id`
+#         fj_wait_event $jobid clean >/dev/null
+#         flux job list-ids ${jobid} > list_id_illegal_jobspec.out &
+#         pid=$!
+#         wait_idsync 1 &&
+# 	${RPC} job-list.job-state-unpause 0 </dev/null &&
+#         wait $pid &&
+#         cat list_id_illegal_jobspec.out | $jq -e ".id == ${jobid}"
+# '
 
-test_expect_success 'reload job-ingest with defaults' '
-        ingest_module reload
-'
+# test_expect_success 'reload job-ingest with defaults' '
+#         ingest_module reload
+# '
 
-# we make R invalid by overwriting it in the KVS before job-list will
-# look it up
-test_expect_success HAVE_JQ 'flux job list works on job with illegal R' '
-	${RPC} job-list.job-state-pause 0 </dev/null &&
-        jobid=`flux mini submit --wait hostname | flux job id` &&
-        jobkvspath=`flux job id --to kvs $jobid` &&
-        flux kvs put "${jobkvspath}.R=foobar" &&
-	${RPC} job-list.job-state-unpause 0 </dev/null &&
-        i=0 &&
-        while ! flux job list --states=inactive | grep $jobid > /dev/null \
-               && [ $i -lt 5 ]
-        do
-                sleep 1
-                i=$((i + 1))
-        done &&
-        test "$i" -lt "5" &&
-        flux job list --states=inactive | grep $jobid > list_illegal_R.out &&
-        cat list_illegal_R.out | $jq -e ".ranks == \"\"" &&
-        cat list_illegal_R.out | $jq -e ".nnodes == 0" &&
-        cat list_illegal_R.out | $jq -e ".nodelist == \"\""
-'
+# # we make R invalid by overwriting it in the KVS before job-list will
+# # look it up
+# test_expect_success HAVE_JQ 'flux job list works on job with illegal R' '
+# 	${RPC} job-list.job-state-pause 0 </dev/null &&
+#         jobid=`flux mini submit --wait hostname | flux job id` &&
+#         jobkvspath=`flux job id --to kvs $jobid` &&
+#         flux kvs put "${jobkvspath}.R=foobar" &&
+# 	${RPC} job-list.job-state-unpause 0 </dev/null &&
+#         i=0 &&
+#         while ! flux job list --states=inactive | grep $jobid > /dev/null \
+#                && [ $i -lt 5 ]
+#         do
+#                 sleep 1
+#                 i=$((i + 1))
+#         done &&
+#         test "$i" -lt "5" &&
+#         flux job list --states=inactive | grep $jobid > list_illegal_R.out &&
+#         cat list_illegal_R.out | $jq -e ".ranks == \"\"" &&
+#         cat list_illegal_R.out | $jq -e ".nnodes == 0" &&
+#         cat list_illegal_R.out | $jq -e ".nodelist == \"\""
+# '
 
-test_expect_success HAVE_JQ,NO_CHAIN_LINT 'flux job list-ids works on job with illegal R' '
-	${RPC} job-list.job-state-pause 0 </dev/null
-        jobid=`flux mini submit --wait hostname | flux job id`
-        jobkvspath=`flux job id --to kvs $jobid` &&
-        flux kvs put "${jobkvspath}.R=foobar" &&
-        flux job list-ids ${jobid} > list_id_illegal_R.out &
-        pid=$!
-        wait_idsync 1 &&
-	${RPC} job-list.job-state-unpause 0 </dev/null &&
-        wait $pid &&
-        cat list_id_illegal_R.out | $jq -e ".id == ${jobid}"
-'
+# test_expect_success HAVE_JQ,NO_CHAIN_LINT 'flux job list-ids works on job with illegal R' '
+# 	${RPC} job-list.job-state-pause 0 </dev/null
+#         jobid=`flux mini submit --wait hostname | flux job id`
+#         jobkvspath=`flux job id --to kvs $jobid` &&
+#         flux kvs put "${jobkvspath}.R=foobar" &&
+#         flux job list-ids ${jobid} > list_id_illegal_R.out &
+#         pid=$!
+#         wait_idsync 1 &&
+# 	${RPC} job-list.job-state-unpause 0 </dev/null &&
+#         wait $pid &&
+#         cat list_id_illegal_R.out | $jq -e ".id == ${jobid}"
+# '
 
-test_expect_success HAVE_JQ,NO_CHAIN_LINT 'flux job list-ids works on job with illegal eventlog' '
-	${RPC} job-list.job-state-pause 0 </dev/null
-        jobid=`flux mini submit --wait hostname | flux job id`
-        jobkvspath=`flux job id --to kvs $jobid` &&
-        flux kvs put "${jobkvspath}.eventlog=foobar" &&
-        flux job list-ids ${jobid} > list_id_illegal_eventlog.out &
-        pid=$!
-        wait_idsync 1 &&
-	${RPC} job-list.job-state-unpause 0 </dev/null &&
-        wait $pid &&
-        cat list_id_illegal_eventlog.out | $jq -e ".id == ${jobid}"
-'
+# test_expect_success HAVE_JQ,NO_CHAIN_LINT 'flux job list-ids works on job with illegal eventlog' '
+# 	${RPC} job-list.job-state-pause 0 </dev/null
+#         jobid=`flux mini submit --wait hostname | flux job id`
+#         jobkvspath=`flux job id --to kvs $jobid` &&
+#         flux kvs put "${jobkvspath}.eventlog=foobar" &&
+#         flux job list-ids ${jobid} > list_id_illegal_eventlog.out &
+#         pid=$!
+#         wait_idsync 1 &&
+# 	${RPC} job-list.job-state-unpause 0 </dev/null &&
+#         wait $pid &&
+#         cat list_id_illegal_eventlog.out | $jq -e ".id == ${jobid}"
+# '
 
-test_expect_success HAVE_JQ 'flux job list works on racy annotations' '
-	${RPC} job-list.job-state-pause 0 </dev/null &&
-        jobid=`flux mini submit --wait hostname | flux job id` &&
-	${RPC} job-list.job-state-unpause 0 </dev/null &&
-        i=0 &&
-        while ! flux job list --states=inactive | grep $jobid > /dev/null \
-               && [ $i -lt 5 ]
-        do
-                sleep 1
-                i=$((i + 1))
-        done &&
-        test "$i" -lt "5"  &&
-        flux job list --states=inactive | grep $jobid > list_racy_annotation.out &&
-        cat list_racy_annotation.out | $jq -e ".annotations"
-'
+# test_expect_success HAVE_JQ 'flux job list works on racy annotations' '
+# 	${RPC} job-list.job-state-pause 0 </dev/null &&
+#         jobid=`flux mini submit --wait hostname | flux job id` &&
+# 	${RPC} job-list.job-state-unpause 0 </dev/null &&
+#         i=0 &&
+#         while ! flux job list --states=inactive | grep $jobid > /dev/null \
+#                && [ $i -lt 5 ]
+#         do
+#                 sleep 1
+#                 i=$((i + 1))
+#         done &&
+#         test "$i" -lt "5"  &&
+#         flux job list --states=inactive | grep $jobid > list_racy_annotation.out &&
+#         cat list_racy_annotation.out | $jq -e ".annotations"
+# '
 
 test_done
