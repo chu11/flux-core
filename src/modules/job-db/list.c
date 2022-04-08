@@ -15,9 +15,16 @@
 #endif
 #include <jansson.h>
 #include <flux/core.h>
+#include <assert.h>
 
 #include "src/common/libutil/errno_safe.h"
 #include "src/common/libczmqcontainers/czmq_containers.h"
+#include "src/common/libutil/grudgeset.h"
+#include "src/common/libutil/jpath.h"
+#include "src/common/libeventlog/eventlog.h"
+#include "src/common/librlist/rlist.h"
+#include "src/common/libidset/idset.h"
+
 
 #include "idsync.h"
 #include "list.h"
@@ -81,6 +88,587 @@ int get_jobs_from_list (json_t *jobs,
     return 0;
 }
 
+static int dependency_add (struct job *job,
+                           const char *description)
+{
+    if (grudgeset_add (&job->dependencies, description) < 0
+        && errno != EEXIST)
+        /*  Log non-EEXIST errors, but it is not fatal */
+        flux_log_error (job->ctx->h,
+                        "job %ju: dependency-add",
+                        (uintmax_t) job->id);
+    return 0;
+}
+
+static int dependency_remove (struct job *job,
+                              const char *description)
+{
+    int rc = grudgeset_remove (job->dependencies, description);
+    if (rc < 0 && errno == ENOENT) {
+        /*  No matching dependency is non-fatal error */
+        flux_log (job->ctx->h,
+                  LOG_DEBUG,
+                  "job %ju: dependency-remove '%s' not found",
+                  (uintmax_t) job->id,
+                  description);
+        rc = 0;
+    }
+    return rc;
+}
+
+static int dependency_context_parse (flux_t *h,
+                                     struct job *job,
+                                     const char *cmd,
+                                     json_t *context)
+{
+    int rc;
+    const char *description = NULL;
+
+    if (!context
+        || json_unpack (context,
+                        "{s:s}",
+                        "description", &description) < 0) {
+        flux_log (h, LOG_ERR,
+                  "job %ju: dependency-%s context invalid",
+                  (uintmax_t) job->id,
+                  cmd);
+        errno = EPROTO;
+        return -1;
+    }
+
+    if (strcmp (cmd, "add") == 0)
+        rc = dependency_add (job, description);
+    else if (strcmp (cmd, "remove") == 0)
+        rc = dependency_remove (job, description);
+    else {
+        flux_log (h, LOG_ERR,
+                  "job %ju: invalid dependency event: dependency-%s",
+                  (uintmax_t) job->id,
+                  cmd);
+        return -1;
+    }
+    return rc;
+}
+
+static int memo_update (flux_t *h,
+                        struct job *job,
+                        json_t *o)
+{
+    if (!o) {
+        flux_log (h, LOG_ERR, "%ju: invalid memo context", (uintmax_t) job->id);
+        errno = EPROTO;
+        return -1;
+    }
+    if (!job->annotations && !(job->annotations = json_object ())) {
+        errno = ENOMEM;
+        return -1;
+    }
+    if (jpath_update (job->annotations, "user", o) < 0
+        || jpath_clear_null (job->annotations) < 0)
+        return -1;
+    if (json_object_size (job->annotations) == 0) {
+        json_decref (job->annotations);
+        job->annotations = NULL;
+    }
+    return 0;
+}
+
+struct res_level {
+    const char *type;
+    int count;
+    json_t *with;
+};
+
+static int parse_res_level (struct list_ctx *ctx,
+                            struct job *job,
+                            json_t *o,
+                            struct res_level *resp)
+{
+    json_error_t error;
+    struct res_level res;
+
+    res.with = NULL;
+    /* For jobspec version 1, expect exactly one array element per level.
+     */
+    if (json_unpack_ex (o, &error, 0,
+                        "[{s:s s:i s?o}]",
+                        "type", &res.type,
+                        "count", &res.count,
+                        "with", &res.with) < 0) {
+        flux_log (ctx->h, LOG_ERR,
+                  "%s: job %ju invalid jobspec: %s",
+                  __FUNCTION__, (uintmax_t)job->id, error.text);
+        return -1;
+    }
+    *resp = res;
+    return 0;
+}
+
+/* Return basename of path if there is a '/' in path.  Otherwise return
+ * full path */
+static const char *
+parse_job_name (const char *path)
+{
+    char *p = strrchr (path, '/');
+    if (p) {
+        p++;
+        /* user mistake, specified a directory with trailing '/',
+         * return full path */
+        if (*p == '\0')
+            return path;
+        return p;
+    }
+    return path;
+}
+
+struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
+{
+    struct job *job = NULL;
+    const char *s;
+    char *endptr = NULL;
+
+    if (!(job = calloc (1, sizeof (*job))))
+        return NULL;
+
+    s = (const char *)sqlite3_column_text (res, 0);
+    assert (s);
+    job->id = (flux_jobid_t)strtoul (s, &endptr, 0);
+    flux_log (ctx->h, LOG_DEBUG, "loading job id %ju", (uintmax_t)job->id);
+    job->userid = sqlite3_column_int (res, 1);
+    job->ranks = strdup ((const char *)sqlite3_column_text (res, 2));
+    job->t_submit = sqlite3_column_double (res, 3);
+    job->t_run = sqlite3_column_double (res, 4);
+    job->t_cleanup = sqlite3_column_double (res, 5);
+    job->t_inactive = sqlite3_column_double (res, 6);
+    s = (const char *)sqlite3_column_text (res, 7);
+    job->eventlog = strdup (s);
+    assert (job->eventlog);
+    s = (const char *)sqlite3_column_text (res, 8);
+    job->jobspec = json_loads (s, 0, NULL);
+    assert (job->jobspec);
+    s = (const char *)sqlite3_column_text (res, 9);
+    job->R = json_loads (s, 0, NULL);
+    job->state = FLUX_JOB_STATE_INACTIVE;
+
+    {
+        json_error_t error;
+        json_t *tasks, *resources, *command, *jobspec_job = NULL;
+
+        if (json_unpack_ex (job->jobspec, &error, 0,
+                            "{s:{s:{s?:o}}}",
+                            "attributes",
+                            "system",
+                            "job",
+                            &jobspec_job) < 0) {
+            flux_log (ctx->h, LOG_ERR,
+                      "%s: job %ju invalid jobspec: %s",
+                      __FUNCTION__, (uintmax_t)job->id, error.text);
+            return NULL;        /* leaking */
+        }
+
+        if (jobspec_job) {
+            if (!json_is_object (jobspec_job)) {
+                flux_log (ctx->h, LOG_ERR,
+                          "%s: job %ju invalid jobspec",
+                          __FUNCTION__, (uintmax_t)job->id);
+                return NULL;        /* leaking */
+            }
+            job->jobspec_job = json_incref (jobspec_job);
+        }
+
+        if (json_unpack_ex (job->jobspec, &error, 0,
+                            "{s:o}",
+                            "tasks", &tasks) < 0) {
+            flux_log (ctx->h, LOG_ERR,
+                      "%s: job %ju invalid jobspec: %s",
+                      __FUNCTION__, (uintmax_t)job->id, error.text);
+            return NULL;        /* leaking */
+        }
+        if (json_unpack_ex (tasks, &error, 0,
+                            "[{s:o}]",
+                            "command", &command) < 0) {
+            flux_log (ctx->h, LOG_ERR,
+                      "%s: job %ju invalid jobspec: %s",
+                      __FUNCTION__, (uintmax_t)job->id, error.text);
+            return NULL;        /* leaking */
+        }
+
+        if (!json_is_array (command)) {
+            flux_log (ctx->h, LOG_ERR,
+                      "%s: job %ju invalid jobspec",
+                      __FUNCTION__, (uintmax_t)job->id);
+            return NULL;        /* leaking */
+        }
+
+        job->jobspec_cmd = json_incref (command);
+
+        if (job->jobspec_job) {
+            if (json_unpack_ex (job->jobspec_job, &error, 0,
+                                "{s?:s}",
+                                "name", &job->name) < 0) {
+                flux_log (ctx->h, LOG_ERR,
+                          "%s: job %ju invalid job dictionary: %s",
+                          __FUNCTION__, (uintmax_t)job->id, error.text);
+                return NULL;        /* leaking */
+            }
+        }
+
+        /* If user did not specify job.name, we treat arg 0 of the command
+         * as the job name */
+        if (!job->name) {
+            json_t *arg0 = json_array_get (job->jobspec_cmd, 0);
+            if (!arg0 || !json_is_string (arg0)) {
+                flux_log (ctx->h, LOG_ERR,
+                          "%s: job %ju invalid job command",
+                          __FUNCTION__, (uintmax_t)job->id);
+                return NULL;        /* leaking */
+            }
+            job->name = parse_job_name (json_string_value (arg0));
+            assert (job->name);
+        }
+
+        if (json_unpack_ex (job->jobspec, &error, 0,
+                            "{s:o}",
+                            "resources", &resources) < 0) {
+            flux_log (ctx->h, LOG_ERR,
+                      "%s: job %ju invalid jobspec: %s",
+                      __FUNCTION__, (uintmax_t)job->id, error.text);
+            return NULL;        /* leaking */
+        }
+
+        /* Set job->ntasks
+         */
+        if (json_unpack_ex (tasks, NULL, 0,
+                            "[{s:{s:i}}]",
+                            "count", "total", &job->ntasks) < 0) {
+            int per_slot, slot_count = 0;
+            struct res_level res[3];
+
+            if (json_unpack_ex (tasks, NULL, 0,
+                                "[{s:{s:i}}]",
+                                "count", "per_slot", &per_slot) < 0) {
+                flux_log (ctx->h, LOG_ERR,
+                          "%s: job %ju invalid jobspec: %s",
+                          __FUNCTION__, (uintmax_t)job->id, error.text);
+                return NULL; /* leaking */;
+            }
+            if (per_slot != 1) {
+                flux_log (ctx->h, LOG_ERR,
+                          "%s: job %ju: per_slot count: expected 1 got %d: %s",
+                          __FUNCTION__, (uintmax_t)job->id, per_slot,
+                          error.text);
+                return NULL; /* leaking */;
+            }
+            /* For jobspec version 1, expect either:
+             * - node->slot->core->NIL
+             * - slot->core->NIL
+             * Set job->slot_count and job->cores_per_slot.
+             */
+            memset (res, 0, sizeof (res));
+            if (parse_res_level (ctx, job, resources, &res[0]) < 0)
+                return NULL; /* leaking */;
+            if (res[0].with && parse_res_level (ctx, job, res[0].with, &res[1]) < 0)
+                return NULL; /* leaking */;
+            if (res[1].with && parse_res_level (ctx, job, res[1].with, &res[2]) < 0)
+                return NULL; /* leaking */;
+            if (res[0].type != NULL && !strcmp (res[0].type, "slot")
+                && res[1].type != NULL && !strcmp (res[1].type, "core")
+                && res[1].with == NULL) {
+                slot_count = res[0].count;
+            }
+            else if (res[0].type != NULL && !strcmp (res[0].type, "node")
+                     && res[1].type != NULL && !strcmp (res[1].type, "slot")
+                     && res[2].type != NULL && !strcmp (res[2].type, "core")
+                     && res[2].with == NULL) {
+                slot_count = res[0].count * res[1].count;
+            }
+            else {
+                flux_log (ctx->h, LOG_WARNING,
+                          "%s: job %ju: Unexpected resources: %s->%s->%s%s",
+                          __FUNCTION__,
+                          (uintmax_t)job->id,
+                          res[0].type ? res[0].type : "NULL",
+                          res[1].type ? res[1].type : "NULL",
+                          res[2].type ? res[2].type : "NULL",
+                          res[2].with ? "->..." : NULL);
+                slot_count = -1;
+            }
+            job->ntasks = slot_count;
+        }
+    }
+
+    {
+        json_t *a = NULL;
+        size_t index;
+        json_t *value;
+
+
+        if (!(a = eventlog_decode (job->eventlog))) {
+            flux_log_error (ctx->h, "%s: error parsing eventlog for %ju",
+                            __FUNCTION__, (uintmax_t)job->id);
+            return NULL;        /* leaking */
+        }
+
+#if 0
+        FLUX_JOB_STATE_NEW                    = 1,
+            FLUX_JOB_STATE_DEPEND                 = 2,
+            FLUX_JOB_STATE_PRIORITY               = 4,
+            FLUX_JOB_STATE_SCHED                  = 8,
+            FLUX_JOB_STATE_RUN                    = 16,
+            FLUX_JOB_STATE_CLEANUP                = 32,
+            FLUX_JOB_STATE_INACTIVE               = 64,   // captive end state
+#endif
+
+
+        job->states_mask |= FLUX_JOB_STATE_NEW;
+        json_array_foreach (a, index, value) {
+            const char *name;
+            double timestamp;
+            json_t *context = NULL;
+
+            if (eventlog_entry_parse (value, &timestamp, &name, &context) < 0) {
+                flux_log_error (ctx->h, "%s: error parsing entry for %ju",
+                                __FUNCTION__, (uintmax_t)job->id);
+                return NULL;        /* leaking */
+            }
+
+            if (!strcmp (name, "submit")) {
+                assert (context);
+                if (json_unpack (context,
+                                 "{ s:i }",
+                                 "urgency", &job->urgency) < 0) {
+                    flux_log (ctx->h, LOG_ERR, "%s: submit context invalid: %ju",
+                              __FUNCTION__, (uintmax_t)job->id);
+                    return NULL;        /* leaking */
+                }
+                job->states_mask |= FLUX_JOB_STATE_DEPEND;
+            }
+            else if (!strcmp (name, "depend")) {
+                job->states_mask |= FLUX_JOB_STATE_PRIORITY;
+            }
+            else if (!strcmp (name, "priority")) {
+               assert (context);
+               if (json_unpack (context,
+                                 "{ s:I }",
+                                 "priority", (json_int_t *)&job->priority) < 0) {
+                    flux_log (ctx->h, LOG_ERR, "%s: priority context invalid: %ju",
+                              __FUNCTION__, (uintmax_t)job->id);
+                    return NULL;        /* leaking */
+                }
+                job->states_mask |= FLUX_JOB_STATE_SCHED;
+            }
+            else if (!strcmp (name, "urgency")) {
+                assert (context);
+                if (json_unpack (context, "{ s:i }", "urgency", &job->urgency) < 0) {
+                    flux_log (ctx->h, LOG_ERR, "%s: urgency context invalid: %ju",
+                              __FUNCTION__, (uintmax_t)job->id);
+                    return NULL;        /* leaking */
+                }
+            }
+            else if (!strcmp (name, "exception")) {
+                const char *type;
+                int severity;
+                const char *note = NULL;
+
+                assert (context);
+                if (json_unpack (context,
+                                 "{s:s s:i s?:s}",
+                                 "type", &type,
+                                 "severity", &severity,
+                                 "note", &note) < 0) {
+                    flux_log (ctx->h, LOG_ERR, "%s: exception context invalid: %ju",
+                              __FUNCTION__, (uintmax_t)job->id);
+                    return NULL;        /* leaking */
+                }
+
+                if (!job->exception_occurred
+                    || severity < job->exception_severity) {
+                    job->exception_occurred = true;
+                    job->exception_severity = severity;
+                    job->exception_type = type;
+                    job->exception_note = note;
+                    json_decref (job->exception_context);
+                    job->exception_context = json_incref (context);
+                }
+                if (severity == 0)
+                    job->states_mask |= FLUX_JOB_STATE_CLEANUP;
+            }
+            else if (!strcmp (name, "alloc")) {
+                /* context not required if no annotations */
+                if (context) {
+                    json_t *annotations;
+                    if (!(annotations = json_object_get (context, "annotations"))) {
+                        flux_log (ctx->h, LOG_ERR,
+                                  "%s: alloc context for %ju invalid",
+                                  __FUNCTION__, (uintmax_t)job->id);
+                        return NULL;        /* leaking */
+                    }
+                    if (!json_is_null (annotations))
+                        job->annotations = json_incref (annotations);
+                }
+                /* this ok? */
+                if (job->states_mask & FLUX_JOB_STATE_SCHED)
+                    job->states_mask |= FLUX_JOB_STATE_RUN;
+            }
+            else if (!strcmp (name, "finish")) {
+                assert (context);
+                if (json_unpack (context,
+                                 "{ s:i }",
+                                 "status", &job->wait_status) < 0) {
+                    flux_log (ctx->h, LOG_ERR, "%s: finish context invalid: %ju",
+                              __FUNCTION__, (uintmax_t)job->id);
+                    return NULL;        /* leaking */
+                }
+
+                if (!job->wait_status)
+                    job->success = true;
+
+                if (job->states_mask & FLUX_JOB_STATE_RUN)
+                    job->states_mask |= FLUX_JOB_STATE_CLEANUP;
+            }
+            else if (!strcmp (name, "clean")) {
+                job->states_mask |= FLUX_JOB_STATE_INACTIVE;
+            }
+            else if (!strcmp (name, "flux-restart")) {
+                /* should track current job->state? and set accordingly? not clear */
+            }
+            else if (!strncmp (name, "dependency-", 11)) {
+                if (dependency_context_parse (ctx->h, job, name+11, context) < 0) {
+                    flux_log (ctx->h, LOG_ERR, "%s: dependency context invalid: %ju",
+                              __FUNCTION__, (uintmax_t)job->id);
+                    return NULL;        /* leaking */
+                }
+            }
+            else if (!strcmp (name, "memo")) {
+                if (context && memo_update (ctx->h, job, context) < 0) {
+                    flux_log (ctx->h, LOG_ERR, "%s: memo context invalid: %ju",
+                              __FUNCTION__, (uintmax_t)job->id);
+                    return NULL;        /* leaking */
+                }
+            }
+
+        }
+    }
+
+    if (job->R)
+    {
+        struct rlist *rl = NULL;
+        struct idset *idset = NULL;
+        struct hostlist *hl = NULL;
+        json_error_t error;
+        int flags = IDSET_FLAG_BRACKETS | IDSET_FLAG_RANGE;
+
+        if (!(rl = rlist_from_json (job->R, &error))) {
+            flux_log_error (ctx->h, "rlist_from_json: %s", error.text);
+            return NULL;        /* leaking */
+        }
+
+        job->expiration = rl->expiration;
+
+        if (!(idset = rlist_ranks (rl)))
+            return NULL;        /* leaking */
+
+        job->nnodes = idset_count (idset);
+        if (!(job->ranks = idset_encode (idset, flags)))
+            return NULL;        /* leaking */
+
+        /* reading nodelist from R directly would avoid the creation /
+         * destruction of a hostlist.  However, we get a hostlist to
+         * ensure that the nodelist we return to users is consistently
+         * formatted.
+         */
+        if (!(hl = rlist_nodelist (rl)))
+            return NULL;        /* leaking */
+
+        if (!(job->nodelist = hostlist_encode (hl)))
+            return NULL;        /* leaking */
+
+        hostlist_destroy (hl);
+        idset_destroy (idset);
+        rlist_destroy (rl);
+    }
+
+
+    /* Default result is failed, overridden below */
+    job->result = FLUX_JOB_RESULT_FAILED;
+    if (job->success)
+        job->result = FLUX_JOB_RESULT_COMPLETED;
+    else if (job->exception_occurred) {
+        if (!strcmp (job->exception_type, "cancel"))
+            job->result = FLUX_JOB_RESULT_CANCELED;
+        else if (!strcmp (job->exception_type, "timeout"))
+            job->result = FLUX_JOB_RESULT_TIMEOUT;
+    }
+
+    return job;
+}
+
+int get_jobs_from_sqlite (struct list_ctx *ctx,
+                          json_t *jobs,
+                          job_list_error_t *errp,
+                          int max_entries,
+                          json_t *attrs,
+                          uint32_t userid,
+                          int states,
+                          int results)
+{
+    char *sql = "SELECT * FROM jobs ORDER BY t_inactive DESC;";
+    char *sqllimit = "SELECT * FROM jobs ORDER BY t_inactive DESC LIMIT ?";
+    sqlite3_stmt *res = NULL;
+    struct job *job;
+
+    if (max_entries) {
+        if (sqlite3_prepare_v2 (ctx->actx->db,
+                                sqllimit,
+                                -1,
+                                &res,
+                                0) != SQLITE_OK) {
+            flux_log_error (ctx->h, "sqlite3_prepare_v2");
+            return -1;
+        }
+        if (sqlite3_bind_int (res, 1, max_entries) != SQLITE_OK) {
+            flux_log_error (ctx->h, "sqlite3_bind_int");
+            return -1;          /* leak res */
+        }
+    }
+    else {
+        if (sqlite3_prepare_v2 (ctx->actx->db,
+                                sql,
+                                -1,
+                                &res,
+                                0) != SQLITE_OK) {
+            flux_log_error (ctx->h, "sqlite3_prepare_v2");
+            return -1;
+        }
+    }
+
+    while (sqlite3_step (res) == SQLITE_ROW) {
+        if (!(job = sqliterow_2_job (ctx, res))) {
+            flux_log_error (ctx->h, "sqliterow_2_job");
+            return -1;          /* leak job & res */
+        }
+        if (job_filter (job, userid, states, results)) {
+            json_t *o;
+            if (!(o = job_to_json (job, attrs, errp)))
+                return -1;
+            if (json_array_append_new (jobs, o) < 0) {
+                json_decref (o);
+                errno = ENOMEM;
+                return -1;
+            }
+            if (json_array_size (jobs) == max_entries)
+                return 1;
+        }
+
+        /* lots of leaking here, deal with later with proper destroy
+         * function */
+        free (job);
+    }
+
+    sqlite3_finalize (res);
+    return 0;
+}
+
 /* Create a JSON array of 'job' objects.  'max_entries' determines the
  * max number of jobs to return, 0=unlimited.  Returns JSON object
  * which the caller must free.  On error, return NULL with errno set:
@@ -134,14 +722,14 @@ json_t *get_jobs (struct list_ctx *ctx,
 
     if (states & FLUX_JOB_STATE_INACTIVE) {
         if (!ret) {
-            if ((ret = get_jobs_from_list (jobs,
-                                           errp,
-                                           ctx->jsctx->inactive,
-                                           max_entries,
-                                           attrs,
-                                           userid,
-                                           states,
-                                           results)) < 0)
+            if ((ret = get_jobs_from_sqlite (ctx,
+                                             jobs,
+                                             errp,
+                                             max_entries,
+                                             attrs,
+                                             userid,
+                                             states,
+                                             results)) < 0)
                 goto error;
         }
     }
