@@ -1659,6 +1659,20 @@ static int journal_process_event (struct job_state_ctx *jsctx, json_t *event)
                                   timestamp,
                                   context) < 0)
             return -1;
+
+        if (!job) {
+            job = zhashx_lookup (jsctx->index, &id);
+            assert (job);
+            char *s = json_dumps (entry, 0);
+            job->eventlog_len = strlen (s) + 2; /* +2 for \n and \0 */
+            if (!(job->eventlog = calloc (1, job->eventlog_len))) {
+                flux_log_error (jsctx->h, "malloc");
+                return -1;          /* leak */
+            }
+            strcpy (job->eventlog, s);
+            strcat (job->eventlog, "\n");
+            free (s);
+        }
     }
     else if (!strcmp (name, "depend")) {
         if (journal_advance_job (jsctx,
@@ -1735,20 +1749,6 @@ static int journal_process_event (struct job_state_ctx *jsctx, json_t *event)
                                 job,
                                 timestamp) < 0)
             return -1;
-    }
-
-    if (!job) {
-        job = zhashx_lookup (jsctx->index, &id);
-        assert (job);
-        char *s = json_dumps (entry, 0);
-        job->eventlog_len = strlen (s) + 2; /* +2 for \n and \0 */
-        if (!(job->eventlog = calloc (1, job->eventlog_len))) {
-            flux_log_error (jsctx->h, "malloc");
-            return -1;          /* leak */
-        }
-        strcpy (job->eventlog, s);
-        strcat (job->eventlog, "\n");
-        free (s);
     }
 
     return 0;
