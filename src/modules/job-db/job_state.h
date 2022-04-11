@@ -92,6 +92,8 @@ struct job {
     json_t *jobspec_job;
     json_t *jobspec_cmd;
     json_t *R;
+    char *eventlog;
+    size_t eventlog_len;
 
     /* Track which states we have seen and have completed transition
      * to.  We do not immediately update to the new state and place

@@ -124,6 +124,7 @@ static void job_destroy (void *data)
         json_decref (job->jobspec_job);
         json_decref (job->jobspec_cmd);
         json_decref (job->R);
+        free (job->eventlog);
         grudgeset_destroy (job->dependencies);
         free (job->ranks);
         free (job->nodelist);
@@ -1620,6 +1621,18 @@ static int journal_process_event (struct job_state_ctx *jsctx, json_t *event)
         return 0;
     }
 
+    if (job && job->eventlog) {
+        char *s = json_dumps (entry, 0);
+        job->eventlog_len += strlen (s) + 1; /* +1 for \n */
+        if (!(job->eventlog = realloc (job->eventlog, job->eventlog_len))) {
+            flux_log_error (jsctx->h, "malloc");
+            return -1;          /* leak */
+        }
+        strcat (job->eventlog, s);
+        strcat (job->eventlog, "\n");
+        free (s);
+    }
+
     if (!strcmp (name, "submit")) {
         if (journal_submit_event (jsctx,
                                   job,
@@ -1705,6 +1718,21 @@ static int journal_process_event (struct job_state_ctx *jsctx, json_t *event)
                                 timestamp) < 0)
             return -1;
     }
+
+    if (!job) {
+        job = zhashx_lookup (jsctx->index, &id);
+        assert (job);
+        char *s = json_dumps (entry, 0);
+        job->eventlog_len = strlen (s) + 2; /* +2 for \n and \0 */
+        if (!(job->eventlog = calloc (1, job->eventlog_len))) {
+            flux_log_error (jsctx->h, "malloc");
+            return -1;          /* leak */
+        }
+        strcpy (job->eventlog, s);
+        strcat (job->eventlog, "\n");
+        free (s);
+    }
+
     return 0;
 }
 
