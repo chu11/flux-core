@@ -409,6 +409,18 @@ struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
             return NULL;        /* leaking */
         }
 
+#if 0
+        FLUX_JOB_STATE_NEW                    = 1,
+            FLUX_JOB_STATE_DEPEND                 = 2,
+            FLUX_JOB_STATE_PRIORITY               = 4,
+            FLUX_JOB_STATE_SCHED                  = 8,
+            FLUX_JOB_STATE_RUN                    = 16,
+            FLUX_JOB_STATE_CLEANUP                = 32,
+            FLUX_JOB_STATE_INACTIVE               = 64,   // captive end state
+#endif
+
+
+        job->states_mask |= FLUX_JOB_STATE_NEW;
         json_array_foreach (a, index, value) {
             const char *name;
             double timestamp;
@@ -429,6 +441,10 @@ struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
                               __FUNCTION__, (uintmax_t)job->id);
                     return NULL;        /* leaking */
                 }
+                job->states_mask |= FLUX_JOB_STATE_DEPEND;
+            }
+            else if (!strcmp (name, "depend")) {
+                job->states_mask |= FLUX_JOB_STATE_PRIORITY;
             }
             else if (!strcmp (name, "priority")) {
                assert (context);
@@ -439,6 +455,7 @@ struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
                               __FUNCTION__, (uintmax_t)job->id);
                     return NULL;        /* leaking */
                 }
+                job->states_mask |= FLUX_JOB_STATE_SCHED;
             }
             else if (!strcmp (name, "urgency")) {
                 assert (context);
@@ -473,6 +490,8 @@ struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
                     json_decref (job->exception_context);
                     job->exception_context = json_incref (context);
                 }
+                if (severity == 0)
+                    job->states_mask |= FLUX_JOB_STATE_CLEANUP;
             }
             else if (!strcmp (name, "alloc")) {
                 /* context not required if no annotations */
@@ -487,6 +506,9 @@ struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
                     if (!json_is_null (annotations))
                         job->annotations = json_incref (annotations);
                 }
+                /* this ok? */
+                if (job->states_mask & FLUX_JOB_STATE_SCHED)
+                    job->states_mask |= FLUX_JOB_STATE_RUN;
             }
             else if (!strcmp (name, "finish")) {
                 assert (context);
@@ -500,6 +522,15 @@ struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
 
                 if (!job->wait_status)
                     job->success = true;
+
+                if (job->states_mask & FLUX_JOB_STATE_RUN)
+                    job->states_mask |= FLUX_JOB_STATE_CLEANUP;
+            }
+            else if (!strcmp (name, "clean")) {
+                job->states_mask |= FLUX_JOB_STATE_INACTIVE;
+            }
+            else if (!strcmp (name, "flux-restart")) {
+                /* should track current job->state? and set accordingly? not clear */
             }
             else if (!strncmp (name, "dependency-", 11)) {
                 if (dependency_context_parse (ctx->h, job, name+11, context) < 0) {
