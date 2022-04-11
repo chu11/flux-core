@@ -4,6 +4,7 @@ test_description='Test flux job list services'
 
 . $(dirname $0)/sharness.sh
 
+rm -f /tmp/achu/*.sqlite
 test_under_flux 4 job -o,--setattr=statedir=/tmp/achu
 
 RPC=${FLUX_BUILD_DIR}/t/request/rpc
