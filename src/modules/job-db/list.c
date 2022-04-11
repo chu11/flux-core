@@ -559,6 +559,7 @@ struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
 
 
     /* Default result is failed, overridden below */
+    job->result = FLUX_JOB_RESULT_FAILED;
     if (job->success)
         job->result = FLUX_JOB_RESULT_COMPLETED;
     else if (job->exception_occurred) {
