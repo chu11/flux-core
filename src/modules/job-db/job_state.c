@@ -865,13 +865,17 @@ static void process_next_state (struct list_ctx *ctx, struct job *job)
 
             if (inactive) {
                 assert (job->state == FLUX_JOB_STATE_INACTIVE);
-                if (job_archive_store (jsctx->actx, job) < 0)
-                    flux_log_error (jsctx->h, "%s: job_archive_store",
-                                    __FUNCTION__);
+
+                /* if no eventlog, assume from restart */
+                if (job->eventlog) {
+                    if (job_archive_store (jsctx->actx, job) < 0)
+                        flux_log_error (jsctx->h, "%s: job_archive_store",
+                                        __FUNCTION__);
+                }
 
                 if (zlistx_detach (jsctx->inactive, job->list_handle) < 0)
                     flux_log_error (jsctx->h, "%s: zlistx_detach",
-                                    __FUNCTION__);
+                                        __FUNCTION__);
                 job->list_handle = NULL;
                 zhashx_delete (jsctx->index, &job->id);
                 break;
