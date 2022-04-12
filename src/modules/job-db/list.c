@@ -321,10 +321,13 @@ struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
                 flux_log (ctx->h, LOG_ERR,
                           "%s: job %ju invalid job command",
                           __FUNCTION__, (uintmax_t)job->id);
-                return NULL;        /* leaking */
+                /* non fatal error */
+                goto outjobspec;
             }
-            job->name = parse_job_name (json_string_value (arg0));
-            assert (job->name);
+            else {
+                job->name = parse_job_name (json_string_value (arg0));
+                assert (job->name);
+            }
         }
 
         if (json_unpack_ex (job->jobspec, &error, 0,
@@ -397,6 +400,7 @@ struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
         }
     }
 
+ outjobspec:
     {
         json_t *a = NULL;
         size_t index;
