@@ -616,6 +616,56 @@ error:
     return -1;
 }
 
+struct job *get_job_by_id_sqlite (struct list_ctx *ctx,
+                                  job_list_error_t *errp,
+                                  const flux_msg_t *msg,
+                                  flux_jobid_t id,
+                                  json_t *attrs,
+                                  bool *stall)
+{
+    char *sql = "SELECT * FROM jobs WHERE id = ?;";
+    sqlite3_stmt *res = NULL;
+    struct job *job = NULL;
+    struct job *rv = NULL;
+
+    if (sqlite3_prepare_v2 (ctx->actx->db,
+                            sql,
+                            -1,
+                            &res,
+                            0) != SQLITE_OK) {
+        flux_log_error (ctx->h, "sqlite3_prepare_v2");
+        goto error;
+    }
+
+    if (sqlite3_bind_int64 (res, 1, id) != SQLITE_OK) {
+        flux_log_error (ctx->h, "sqlite3_bind_int64");
+        goto error;
+    }
+
+
+    if (sqlite3_step (res) == SQLITE_ROW) {
+        if (!(job = sqliterow_2_job (ctx, res))) {
+            flux_log_error (ctx->h, "sqliterow_2_job");
+            goto error;
+        }
+        goto out;
+    }
+
+    if (stall) {
+        if (check_id_valid (ctx, msg, id, attrs) < 0) {
+            flux_log_error (ctx->h, "%s: check_id_valid", __FUNCTION__);
+            goto error;
+        }
+        (*stall) = true;
+    }
+
+out:
+    rv = job;
+error:
+    sqlite3_finalize (res);
+    return rv;
+}
+
 /* Returns JSON object which the caller must free.  On error, return
  * NULL with errno set:
  *
@@ -633,14 +683,8 @@ json_t *get_job_by_id (struct list_ctx *ctx,
     struct job *job;
 
     if (!(job = zhashx_lookup (ctx->jsctx->index, &id))) {
-        if (stall) {
-            if (check_id_valid (ctx, msg, id, attrs) < 0) {
-                flux_log_error (ctx->h, "%s: check_id_valid", __FUNCTION__);
-                return NULL;
-            }
-            (*stall) = true;
-        }
-        return NULL;
+        if (!(job = get_job_by_id_sqlite (ctx, errp, msg, id, attrs, stall)))
+            return NULL;
     }
 
     if (job->state == FLUX_JOB_STATE_NEW) {
