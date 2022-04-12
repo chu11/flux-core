@@ -1060,6 +1060,34 @@ json_t *get_job_by_id (struct list_ctx *ctx,
     struct job *job;
 
     if (!(job = zhashx_lookup (ctx->jsctx->index, &id))) {
+        /* first check sql */
+        char *sql = "SELECT * FROM jobs WHERE id = ?;";
+        sqlite3_stmt *res = NULL;
+        struct job *job;
+
+        if (sqlite3_prepare_v2 (ctx->actx->db,
+                                sql,
+                                -1,
+                                &res,
+                                0) != SQLITE_OK) {
+            flux_log_error (ctx->h, "sqlite3_prepare_v2");
+            return NULL;
+        }
+
+        if (sqlite3_bind_int64 (res, 1, id) != SQLITE_OK) {
+            flux_log_error (ctx->h, "sqlite3_bind_int64");
+            return NULL;          /* leak res */
+        }
+
+
+        if (sqlite3_step (res) == SQLITE_ROW) {
+            if (!(job = sqliterow_2_job (ctx, res))) {
+                flux_log_error (ctx->h, "sqliterow_2_job");
+                return NULL;          /* leak res */
+            }
+            return job_to_json (job, attrs, errp); /* leak job */
+        }
+
         if (stall) {
             if (check_id_valid (ctx, msg, id, attrs) < 0) {
                 flux_log_error (ctx->h, "%s: check_id_valid", __FUNCTION__);
