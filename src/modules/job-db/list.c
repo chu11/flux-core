@@ -827,6 +827,9 @@ json_t *get_inactive_jobs (struct list_ctx *ctx,
                            json_t *attrs,
                            const char *name)
 {
+    char *sql = "SELECT * FROM jobs ORDER BY t_inactive DESC;";
+    char *sqllimit = "SELECT * FROM jobs ORDER BY t_inactive DESC LIMIT ?";
+    sqlite3_stmt *res = NULL;
     json_t *jobs = NULL;
     struct job *job;
     int saved_errno;
@@ -834,10 +837,42 @@ json_t *get_inactive_jobs (struct list_ctx *ctx,
     if (!(jobs = json_array ()))
         goto error_nomem;
 
-    job = zlistx_first (ctx->jsctx->inactive);
-    while (job && (job->t_inactive > since)) {
-        json_t *o;
+    if (max_entries) {
+        if (sqlite3_prepare_v2 (ctx->actx->db,
+                                sqllimit,
+                                -1,
+                                &res,
+                                0) != SQLITE_OK) {
+            flux_log_error (ctx->h, "sqlite3_prepare_v2");
+            goto error;
+        }
+        if (sqlite3_bind_int (res, 1, max_entries) != SQLITE_OK) {
+            flux_log_error (ctx->h, "sqlite3_bind_int");
+            goto error;          /* leak res */
+        }
+    }
+    else {
+        if (sqlite3_prepare_v2 (ctx->actx->db,
+                                sql,
+                                -1,
+                                &res,
+                                0) != SQLITE_OK) {
+            flux_log_error (ctx->h, "sqlite3_prepare_v2");
+            goto error;
+        }
+    }
+
+    while (sqlite3_step (res) == SQLITE_ROW) {
+        if (!(job = sqliterow_2_job (ctx, res))) {
+            flux_log_error (ctx->h, "sqliterow_2_job");
+            goto error;          /* leak job & res */
+        }
+        if (job->t_inactive <= since) {
+            /* leak */
+            break;
+        }
         if (!name || strcmp (job->name, name) == 0) {
+            json_t *o;
             if (!(o = job_to_json (job, attrs, errp)))
                 goto error;
             if (json_array_append_new (jobs, o) < 0) {
@@ -848,10 +883,14 @@ json_t *get_inactive_jobs (struct list_ctx *ctx,
             if (json_array_size (jobs) == max_entries)
                 goto out;
         }
-        job = zlistx_next (ctx->jsctx->inactive);
+
+        /* lots of leaking here, deal with later with proper destroy
+         * function */
+        free (job);
     }
 
 out:
+    sqlite3_finalize (res);
     return jobs;
 
 error_nomem:
