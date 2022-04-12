@@ -945,6 +945,29 @@ static struct job *eventlog_restart_parse (struct list_ctx *ctx,
             goto error;
         }
 
+        if (!job->eventlog) {
+            char *s = json_dumps (value, 0);
+            job->eventlog_len = strlen (s) + 2; /* +2 for \n and \0 */
+            if (!(job->eventlog = calloc (1, job->eventlog_len))) {
+                flux_log_error (ctx->h, "malloc");
+                return NULL;          /* leak */
+            }
+            strcpy (job->eventlog, s);
+            strcat (job->eventlog, "\n");
+            free (s);
+        }
+        else {
+            char *s = json_dumps (value, 0);
+            job->eventlog_len += strlen (s) + 1; /* +1 for \n */
+            if (!(job->eventlog = realloc (job->eventlog, job->eventlog_len))) {
+                flux_log_error (ctx->h, "malloc");
+                return NULL;          /* leak */
+            }
+            strcat (job->eventlog, s);
+            strcat (job->eventlog, "\n");
+            free (s);
+        }
+
         job->eventlog_seq++;
         if (!strcmp (name, "submit")) {
             if (submit_context_parse (ctx->h, job, context) < 0)
