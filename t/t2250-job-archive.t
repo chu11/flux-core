@@ -270,8 +270,9 @@ EOF
 	flux config reload
 '
 
+# b/c of statedir change, this test will now fail, flip it
 test_expect_success 'job-archive: load module failure, statedir not set' '
-        test_must_fail flux module load job-archive
+        flux module load job-archive
 '
 
 test_expect_success 'job-archive: setup config file without period' '
