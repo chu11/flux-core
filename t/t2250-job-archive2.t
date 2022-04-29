@@ -303,20 +303,22 @@ test_expect_success 'job-archive2: load module failure, period illegal' '
         test_must_fail flux module load job-archive2
 '
 
-test_expect_success 'job-archive2: setup config file with only period' '
-        cat >archive2.toml <<EOF &&
-[archive2]
-period = "0.5s"
-EOF
-	flux config reload
-'
+# rc1 doesn't load `job-archive2`, nix these tests
 
-test_expect_success 'job-archive2: launch flux with statedir set' '
-        flux start -o,--setattr=statedir=$(pwd) /bin/true
-'
+# test_expect_success 'job-archive2: setup config file with only period' '
+#         cat >archive2.toml <<EOF &&
+# [archive2]
+# period = "0.5s"
+# EOF
+# 	flux config reload
+# '
 
-test_expect_success 'job-archive2: job-archive2 setup in statedir' '
-        ls $(pwd)/job-archive2.sqlite
-'
+# test_expect_success 'job-archive2: launch flux with statedir set' '
+#         flux start -o,--setattr=statedir=$(pwd) /bin/true
+# '
+
+# test_expect_success 'job-archive2: job-archive2 setup in statedir' '
+#         ls $(pwd)/job-archive2.sqlite
+# '
 
 test_done
