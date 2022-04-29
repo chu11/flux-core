@@ -128,6 +128,7 @@ TESTSCRIPTS = \
 	t2232-job-info-security.t \
 	t2240-queue-cmd.t \
 	t2250-job-archive.t \
+	t2250-job-archive2.t \
 	t2260-job-list.t \
 	t2261-job-list-update.t \
 	t2270-job-dependencies.t \
