@@ -25,6 +25,41 @@ def statetostr(args):
         print(raw.flux_job_statetostr(int(state), fmt).decode("utf-8"))
 
 
+def get_highest_power2():
+    state = ffi.new("flux_job_state_t [1]")
+    raw.flux_job_strtostate("INACTIVE", state)
+    return (int)(state[0])
+
+
+def getpowersof2(n):
+    l = []
+    p = get_highest_power2()
+    while p > 0 and n > 0:
+        if p <= n:
+            l.insert(0, p)
+            n = n - p
+        p = (int)(p / 2)
+    return l
+
+
+def statesmasktostr(args):
+    fmt = "L"
+    if args.single:
+        fmt = "S"
+    if not args.states_mask:
+        args.states_mask = [line.strip() for line in sys.stdin]
+
+    for states_mask in args.states_mask:
+        states_list = getpowersof2(int(states_mask))
+        s = ""
+        for state in states_list:
+            if s:
+                s = s + "," + raw.flux_job_statetostr(state, fmt).decode("utf-8")
+            else:
+                s = raw.flux_job_statetostr(state, fmt).decode("utf-8")
+        print(s)
+
+
 def strtostate(args):
     state = ffi.new("flux_job_state_t [1]")
     if not args.strings:
@@ -84,6 +119,20 @@ if __name__ == "__main__":
         help="List of states to convert",
     )
     statetostr_parser.set_defaults(func=statetostr)
+
+    statesmasktostr_parser = subparsers.add_parser("statesmasktostr")
+    statesmasktostr_parser.add_argument(
+        "-s",
+        "--single",
+        action="store_true",
+        help="Output single string abbreviation",
+    )
+    statesmasktostr_parser.add_argument(
+        "states_mask",
+        nargs="*",
+        help="Bitmask of states to convert",
+    )
+    statesmasktostr_parser.set_defaults(func=statesmasktostr)
 
     strtostate_parser = subparsers.add_parser("strtostate")
     strtostate_parser.add_argument(
