@@ -40,6 +40,8 @@ const char *sql_create_table = "CREATE TABLE if not exists jobs("
                                "  userid INT,"
                                "  urgency INT,"
                                "  priority BIGINT,"
+                               "  state INT,"
+                               "  states_mask INT,"
                                "  ranks TEXT,"
                                "  t_submit REAL,"
                                "  t_run REAL,"
@@ -50,14 +52,14 @@ const char *sql_create_table = "CREATE TABLE if not exists jobs("
                                "  R TEXT"
     ");";
 
-const char *sql_store =                                   \
-    "INSERT INTO jobs"                                    \
-    "("                                                   \
-    "  id,userid,urgency,priority,ranks,"                 \
-    "  t_submit,t_run,t_cleanup,t_inactive,"              \
-    "  eventlog,jobspec,R"                                \
-    ") values ("                                          \
-    "  ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12" \
+const char *sql_store =                                               \
+    "INSERT INTO jobs"                                                \
+    "("                                                               \
+    "  id,userid,urgency,priority,state,states_mask,ranks,"           \
+    "  t_submit,t_run,t_cleanup,t_inactive,"                          \
+    "  eventlog,jobspec,R"                                            \
+    ") values ("                                                      \
+    "  ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14 "  \
     ")";
 
 const char *sql_since = "SELECT MAX(t_inactive) FROM jobs;";
@@ -264,6 +266,8 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
     uint32_t userid;
     int urgency;
     int64_t priority;
+    int state;
+    int states_mask;
     const char *ranks = NULL;
     double t_submit = 0.0;
     double t_run = 0.0;
@@ -290,11 +294,13 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
         goto out;
     }
 
-    if (json_unpack (job, "{s:I s:i s:i s:I s?:s s:f s?:f s?:f s:f}",
+    if (json_unpack (job, "{s:I s:i s:i s:I s:i s:i s?:s s:f s?:f s?:f s:f}",
                      "id", &id,
                      "userid", &userid,
                      "urgency", &urgency,
                      "priority", &priority,
+                     "state", &state,
+                     "states_mask", &states_mask,
                      "ranks", &ranks,
                      "t_submit", &t_submit,
                      "t_run", &t_run,
@@ -331,8 +337,20 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
         log_sqlite_error (ctx, "store: binding priority");
         goto out;
     }
+    if (sqlite3_bind_int (ctx->store_stmt,
+                          5,
+                          state) != SQLITE_OK) {
+        log_sqlite_error (ctx, "store: binding state");
+        goto out;
+    }
+    if (sqlite3_bind_int (ctx->store_stmt,
+                          6,
+                          states_mask) != SQLITE_OK) {
+        log_sqlite_error (ctx, "store: binding states_mask");
+        goto out;
+    }
     if (sqlite3_bind_text (ctx->store_stmt,
-                           5,
+                           7,
                            ranks ? ranks: "",
                            ranks ? strlen (ranks) : 0,
                            SQLITE_STATIC) != SQLITE_OK) {
@@ -340,31 +358,31 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
         goto out;
     }
     if (sqlite3_bind_double (ctx->store_stmt,
-                             6,
+                             8,
                              t_submit) != SQLITE_OK) {
         log_sqlite_error (ctx, "store: binding t_submit");
         goto out;
     }
     if (sqlite3_bind_double (ctx->store_stmt,
-                             7,
+                             9,
                              t_run) != SQLITE_OK) {
         log_sqlite_error (ctx, "store: binding t_run");
         goto out;
     }
     if (sqlite3_bind_double (ctx->store_stmt,
-                             8,
+                             10,
                              t_cleanup) != SQLITE_OK) {
         log_sqlite_error (ctx, "store: binding t_cleanup");
         goto out;
     }
     if (sqlite3_bind_double (ctx->store_stmt,
-                             9,
+                             11,
                              t_inactive) != SQLITE_OK) {
         log_sqlite_error (ctx, "store: binding t_inactive");
         goto out;
     }
     if (sqlite3_bind_text (ctx->store_stmt,
-                           10,
+                           12,
                            eventlog,
                            strlen (eventlog),
                            SQLITE_STATIC) != SQLITE_OK) {
@@ -372,7 +390,7 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
         goto out;
     }
     if (sqlite3_bind_text (ctx->store_stmt,
-                           11,
+                           13,
                            jobspec,
                            strlen (jobspec),
                            SQLITE_STATIC) != SQLITE_OK) {
@@ -380,7 +398,7 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
         goto out;
     }
     if (sqlite3_bind_text (ctx->store_stmt,
-                           12,
+                           14,
                            R ? R: "",
                            R ? strlen (R) : 0,
                            SQLITE_STATIC) != SQLITE_OK) {
@@ -512,7 +530,8 @@ void job_archive2_cb (flux_reactor_t *r,
                       void *arg)
 {
     struct job_archive2_ctx *ctx = arg;
-    char *attrs = "[\"userid\", \"urgency\", \"priority\", \"ranks\", " \
+    char *attrs = "[\"userid\", \"urgency\", \"priority\", \"state\", " \
+                   "\"states_mask\", \"ranks\", " \
                    "\"t_submit\", \"t_run\", \"t_cleanup\", \"t_inactive\"]";
     flux_future_t *f;
 

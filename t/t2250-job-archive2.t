@@ -78,6 +78,8 @@ db_check_entries() {
             && grep -q "userid = " query.out \
             && grep -q "urgency = " query.out \
             && grep -q "priority = " query.out \
+            && grep -q "state = " query.out \
+            && grep -q "states_mask = " query.out \
             && grep -q "ranks = " query.out \
             && grep -q "t_submit = " query.out \
             && grep -q "t_run = " query.out \
@@ -103,6 +105,8 @@ get_db_values() {
         userid=`grep "userid = " query.out | awk '{print \$3}'`
         urgency=`grep "urgency = " query.out | awk '{print \$3}'`
         priority=`grep "priority = " query.out | awk '{print \$3}'`
+        state=`grep "state = " query.out | awk '{print \$3}'`
+        states_mask=`grep "states_mask = " query.out | awk '{print \$3}'`
         ranks=`grep "ranks = " query.out | awk '{print \$3}'`
         t_submit=`grep "t_submit = " query.out | awk '{print \$3}'`
         t_run=`grep "t_run = " query.out | awk '{print \$3}'`
@@ -123,6 +127,8 @@ db_check_values_run() {
         if [ -z "$userid" ] \
             || [ -z "$urgency" ] \
             || [ -z "$priority" ] \
+            || [ -z "$state" ] \
+            || [ -z "$states_mask" ] \
             || [ -z "$ranks" ] \
             || [ "$t_submit" == "0.0" ] \
             || [ "$t_run" == "0.0" ] \
@@ -147,6 +153,8 @@ db_check_values_no_run() {
         if [ -z "$userid" ] \
             || [ -z "$urgency" ] \
             || [ -z "$priority" ] \
+            || [ -z "$state" ] \
+            || [ -z "$states_mask" ] \
             || [ -n "$ranks" ] \
             || [ "$t_submit" == "0.0" ] \
             || [ "$t_run" != "0.0" ] \
