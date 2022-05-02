@@ -23,6 +23,9 @@
 #include <flux/core.h>
 #include <jansson.h>
 #include <sqlite3.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "src/common/libutil/log.h"
 #include "src/common/libutil/fsd.h"
@@ -505,6 +508,15 @@ void job_archive_cb (flux_reactor_t *r,
     }
 }
 
+static unsigned long long get_file_size (const char *path)
+{
+    struct stat sb;
+
+    if (stat (path, &sb) < 0)
+        return 0;
+    return sb.st_size;
+}
+
 void stats_get_cb (flux_t *h,
                    flux_msg_handler_t *mh,
                    const flux_msg_t *msg,
@@ -514,12 +526,14 @@ void stats_get_cb (flux_t *h,
 
     if (flux_respond_pack (h,
                            msg,
-                           "{s:i s:f s:f s:f s:f}",
-                           "count", tstat_count (&ctx->sqlstore),
-                           "min", tstat_min (&ctx->sqlstore),
-                           "max", tstat_max (&ctx->sqlstore),
-                           "mean", tstat_mean (&ctx->sqlstore),
-                           "stddev", tstat_stddev (&ctx->sqlstore)) < 0)
+                           "{s:I s:{s:i s:f s:f s:f s:f}}",
+                           "dbfile_size", get_file_size (ctx->dbpath),
+                           "store",
+                             "count", tstat_count (&ctx->sqlstore),
+                             "min", tstat_min (&ctx->sqlstore),
+                             "max", tstat_max (&ctx->sqlstore),
+                             "mean", tstat_mean (&ctx->sqlstore),
+                             "stddev", tstat_stddev (&ctx->sqlstore)) < 0)
         flux_log_error (h, "error responding to stats.get request");
     return;
 }
