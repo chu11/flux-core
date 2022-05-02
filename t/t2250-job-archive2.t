@@ -81,6 +81,10 @@ db_check_entries() {
             && grep -q "state = " query.out \
             && grep -q "states_mask = " query.out \
             && grep -q "ranks = " query.out \
+            && grep -q "nnodes = " query.out \
+            && grep -q "nodelist = " query.out \
+            && grep -q "ntasks = " query.out \
+            && grep -q "name = " query.out \
             && grep -q "t_submit = " query.out \
             && grep -q "t_run = " query.out \
             && grep -q "t_cleanup = " query.out \
@@ -108,6 +112,10 @@ get_db_values() {
         state=`grep "state = " query.out | awk '{print \$3}'`
         states_mask=`grep "states_mask = " query.out | awk '{print \$3}'`
         ranks=`grep "ranks = " query.out | awk '{print \$3}'`
+        nnodes=`grep "nnodes = " query.out | awk '{print \$3}'`
+        nodelist=`grep "nodelist = " query.out | awk '{print \$3}'`
+        ntasks=`grep "ntasks = " query.out | awk '{print \$3}'`
+        name=`grep "name = " query.out | awk '{print \$3}'`
         t_submit=`grep "t_submit = " query.out | awk '{print \$3}'`
         t_run=`grep "t_run = " query.out | awk '{print \$3}'`
         t_cleanup=`grep "t_cleanup = " query.out | awk '{print \$3}'`
@@ -130,6 +138,10 @@ db_check_values_run() {
             || [ -z "$state" ] \
             || [ -z "$states_mask" ] \
             || [ -z "$ranks" ] \
+            || [ "$nnodes" == "0" ] \
+            || [ -z "$nodelist" ] \
+            || [ -z "$ntasks" ] \
+            || [ -z "$name" ] \
             || [ "$t_submit" == "0.0" ] \
             || [ "$t_run" == "0.0" ] \
             || [ "$t_cleanup" == "0.0" ] \
@@ -156,6 +168,10 @@ db_check_values_no_run() {
             || [ -z "$state" ] \
             || [ -z "$states_mask" ] \
             || [ -n "$ranks" ] \
+            || [ "$nnodes" != "0" ] \
+            || [ -n "$nodelist" ] \
+            || [ -z "$ntasks" ] \
+            || [ -z "$name" ] \
             || [ "$t_submit" == "0.0" ] \
             || [ "$t_run" != "0.0" ] \
             || [ "$t_cleanup" == "0.0" ] \
