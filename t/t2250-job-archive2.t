@@ -85,6 +85,10 @@ db_check_entries() {
             && grep -q "nodelist = " query.out \
             && grep -q "ntasks = " query.out \
             && grep -q "name = " query.out \
+            && grep -q "waitstatus = " query.out \
+            && grep -q "success = " query.out \
+            && grep -q "result = " query.out \
+            && grep -q "expiration = " query.out \
             && grep -q "t_submit = " query.out \
             && grep -q "t_run = " query.out \
             && grep -q "t_cleanup = " query.out \
@@ -116,6 +120,10 @@ get_db_values() {
         nodelist=`grep "nodelist = " query.out | awk '{print \$3}'`
         ntasks=`grep "ntasks = " query.out | awk '{print \$3}'`
         name=`grep "name = " query.out | awk '{print \$3}'`
+        waitstatus=`grep "waitstatus = " query.out | awk '{print \$3}'`
+        success=`grep "success = " query.out | awk '{print \$3}'`
+        result=`grep "result = " query.out | awk '{print \$3}'`
+        expiration=`grep "expiration = " query.out | awk '{print \$3}'`
         t_submit=`grep "t_submit = " query.out | awk '{print \$3}'`
         t_run=`grep "t_run = " query.out | awk '{print \$3}'`
         t_cleanup=`grep "t_cleanup = " query.out | awk '{print \$3}'`
@@ -142,6 +150,10 @@ db_check_values_run() {
             || [ -z "$nodelist" ] \
             || [ -z "$ntasks" ] \
             || [ -z "$name" ] \
+            || [ "$waitstatus" == "-1" ] \
+            || [ -z "$success" ] \
+            || [ -z "$result" ] \
+            || [ -z "$expiration" ] \
             || [ "$t_submit" == "0.0" ] \
             || [ "$t_run" == "0.0" ] \
             || [ "$t_cleanup" == "0.0" ] \
@@ -172,6 +184,10 @@ db_check_values_no_run() {
             || [ -n "$nodelist" ] \
             || [ -z "$ntasks" ] \
             || [ -z "$name" ] \
+            || [ "$waitstatus" != "-1" ] \
+            || [ "$success" != "0" ] \
+            || [ -z "$result" ] \
+            || [ -z "$expiration" ] \
             || [ "$t_submit" == "0.0" ] \
             || [ "$t_run" != "0.0" ] \
             || [ "$t_cleanup" == "0.0" ] \
