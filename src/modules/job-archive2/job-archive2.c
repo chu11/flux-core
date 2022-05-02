@@ -51,6 +51,8 @@ const char *sql_create_table = "CREATE TABLE if not exists jobs("
                                "  success INT,"
                                "  result INT,"
                                "  expiration REAL,"
+                               "  annotations TEXT,"
+                               "  dependencies TEXT,"
                                "  t_submit REAL,"
                                "  t_run REAL,"
                                "  t_cleanup REAL,"
@@ -66,10 +68,11 @@ const char *sql_store =                                               \
     "  id,userid,urgency,priority,state,states_mask,"                 \
     "  ranks,nnodes,nodelist,ntasks,name,"                            \
     "  waitstatus,success,result,expiration,"                         \
+    "  annotations,dependencies,"                                     \
     "  t_submit,t_run,t_cleanup,t_inactive,"                          \
     "  eventlog,jobspec,R"                                            \
     ") values ("                                                      \
-    "  ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22 "  \
+    "  ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24 "  \
     ")";
 
 const char *sql_since = "SELECT MAX(t_inactive) FROM jobs;";
@@ -287,6 +290,10 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
     int success = 0;
     int result = 0;
     double expiration = 0.0;
+    json_t *annotations = NULL;
+    json_t *dependencies = NULL;
+    char *annotations_str = NULL;
+    char *dependencies_str = NULL;
     double t_submit = 0.0;
     double t_run = 0.0;
     double t_cleanup = 0.0;
@@ -312,7 +319,7 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
         goto out;
     }
 
-    if (json_unpack (job, "{s:I s:i s:i s:I s:i s:i s?:s s?:i s?:s s:i s:s s?:i s:b s:i s?:f s:f s?:f s?:f s:f}",
+    if (json_unpack (job, "{s:I s:i s:i s:I s:i s:i s?:s s?:i s?:s s:i s:s s?:i s:b s:i s?:f s?:o s?:o s:f s?:f s?:f s:f}",
                      "id", &id,
                      "userid", &userid,
                      "urgency", &urgency,
@@ -328,6 +335,8 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
                      "success", &success,
                      "result", &result,
                      "expiration", &expiration,
+                     "annotations", &annotations,
+                     "dependencies", &dependencies,
                      "t_submit", &t_submit,
                      "t_run", &t_run,
                      "t_cleanup", &t_cleanup,
@@ -435,32 +444,56 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
         log_sqlite_error (ctx, "store: binding expiration");
         goto out;
     }
+    if (annotations) {
+        if (!(annotations_str = json_dumps (annotations, JSON_COMPACT)))
+            flux_log (ctx->h, LOG_ERR, "%s: json_dumps", __FUNCTION__);
+    }
+    if (sqlite3_bind_text (ctx->store_stmt,
+                           16,
+                           annotations_str ? annotations_str: "",
+                           annotations_str ? strlen (annotations_str) : 0,
+                           SQLITE_STATIC) != SQLITE_OK) {
+        log_sqlite_error (ctx, "store: binding annotations");
+        goto out;
+    }
+    if (dependencies) {
+        if (!(dependencies_str = json_dumps (dependencies, JSON_COMPACT)))
+            flux_log (ctx->h, LOG_ERR, "%s: json_dumps", __FUNCTION__);
+    }
+    if (sqlite3_bind_text (ctx->store_stmt,
+                           17,
+                           dependencies_str ? dependencies_str: "",
+                           dependencies_str ? strlen (dependencies_str) : 0,
+                           SQLITE_STATIC) != SQLITE_OK) {
+        log_sqlite_error (ctx, "store: binding dependencies");
+        goto out;
+    }
     if (sqlite3_bind_double (ctx->store_stmt,
-                             16,
+                             18,
                              t_submit) != SQLITE_OK) {
         log_sqlite_error (ctx, "store: binding t_submit");
         goto out;
     }
     if (sqlite3_bind_double (ctx->store_stmt,
-                             17,
+                             19,
                              t_run) != SQLITE_OK) {
         log_sqlite_error (ctx, "store: binding t_run");
         goto out;
     }
     if (sqlite3_bind_double (ctx->store_stmt,
-                             18,
+                             20,
                              t_cleanup) != SQLITE_OK) {
         log_sqlite_error (ctx, "store: binding t_cleanup");
         goto out;
     }
     if (sqlite3_bind_double (ctx->store_stmt,
-                             19,
+                             21,
                              t_inactive) != SQLITE_OK) {
         log_sqlite_error (ctx, "store: binding t_inactive");
         goto out;
     }
     if (sqlite3_bind_text (ctx->store_stmt,
-                           20,
+                           22,
                            eventlog,
                            strlen (eventlog),
                            SQLITE_STATIC) != SQLITE_OK) {
@@ -468,7 +501,7 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
         goto out;
     }
     if (sqlite3_bind_text (ctx->store_stmt,
-                           21,
+                           23,
                            jobspec,
                            strlen (jobspec),
                            SQLITE_STATIC) != SQLITE_OK) {
@@ -476,7 +509,7 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
         goto out;
     }
     if (sqlite3_bind_text (ctx->store_stmt,
-                           22,
+                           24,
                            R ? R: "",
                            R ? strlen (R) : 0,
                            SQLITE_STATIC) != SQLITE_OK) {
@@ -513,6 +546,8 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
 out:
     sqlite3_reset (ctx->store_stmt);
     flux_future_destroy (f);
+    free (annotations_str);
+    free (dependencies_str);
     if (ctx->kvs_lookup_count
         && (--(ctx->kvs_lookup_count)) == 0) {
         flux_timer_watcher_reset (ctx->w, ctx->period, 0.);
@@ -611,6 +646,7 @@ void job_archive2_cb (flux_reactor_t *r,
     char *attrs = "[\"userid\", \"urgency\", \"priority\", \"state\", " \
                    "\"states_mask\", \"ranks\", \"nnodes\", \"nodelist\", \"ntasks\", \"name\"," \
                    "\"waitstatus\", \"success\", \"result\", \"expiration\"," \
+                   "\"annotations\", \"dependencies\"," \
                    "\"t_submit\", \"t_run\", \"t_cleanup\", \"t_inactive\"]";
     flux_future_t *f;
 

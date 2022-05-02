@@ -89,6 +89,8 @@ db_check_entries() {
             && grep -q "success = " query.out \
             && grep -q "result = " query.out \
             && grep -q "expiration = " query.out \
+            && grep -q "annotations = " query.out \
+            && grep -q "dependencies = " query.out \
             && grep -q "t_submit = " query.out \
             && grep -q "t_run = " query.out \
             && grep -q "t_cleanup = " query.out \
@@ -124,6 +126,8 @@ get_db_values() {
         success=`grep "success = " query.out | awk '{print \$3}'`
         result=`grep "result = " query.out | awk '{print \$3}'`
         expiration=`grep "expiration = " query.out | awk '{print \$3}'`
+        annotations=`grep "annotations = " query.out | awk '{print \$3}'`
+        dependencies=`grep "dependencies = " query.out | awk '{print \$3}'`
         t_submit=`grep "t_submit = " query.out | awk '{print \$3}'`
         t_run=`grep "t_run = " query.out | awk '{print \$3}'`
         t_cleanup=`grep "t_cleanup = " query.out | awk '{print \$3}'`
