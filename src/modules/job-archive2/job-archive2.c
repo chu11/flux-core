@@ -53,6 +53,10 @@ const char *sql_create_table = "CREATE TABLE if not exists jobs("
                                "  expiration REAL,"
                                "  annotations TEXT,"
                                "  dependencies TEXT,"
+                               "  exception_occurred INT,"
+                               "  exception_type TEXT,"
+                               "  exception_severity INT,"
+                               "  exception_note TEXT,"
                                "  t_submit REAL,"
                                "  t_run REAL,"
                                "  t_cleanup REAL,"
@@ -69,10 +73,11 @@ const char *sql_store =                                               \
     "  ranks,nnodes,nodelist,ntasks,name,"                            \
     "  waitstatus,success,result,expiration,"                         \
     "  annotations,dependencies,"                                     \
+    "  exception_occurred,exception_type,exception_severity,exception_note," \
     "  t_submit,t_run,t_cleanup,t_inactive,"                          \
     "  eventlog,jobspec,R"                                            \
     ") values ("                                                      \
-    "  ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24 "  \
+    "  ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28 "  \
     ")";
 
 const char *sql_since = "SELECT MAX(t_inactive) FROM jobs;";
@@ -294,6 +299,10 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
     json_t *dependencies = NULL;
     char *annotations_str = NULL;
     char *dependencies_str = NULL;
+    int exception_occurred = 0;
+    const char *exception_type = NULL;
+    int exception_severity = -1;
+    const char *exception_note = NULL;
     double t_submit = 0.0;
     double t_run = 0.0;
     double t_cleanup = 0.0;
@@ -319,7 +328,7 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
         goto out;
     }
 
-    if (json_unpack (job, "{s:I s:i s:i s:I s:i s:i s?:s s?:i s?:s s:i s:s s?:i s:b s:i s?:f s?:o s?:o s:f s?:f s?:f s:f}",
+    if (json_unpack (job, "{s:I s:i s:i s:I s:i s:i s?:s s?:i s?:s s:i s:s s?:i s:b s:i s?:f s?:o s?:o s:b s?:s s?:i s?:s s:f s?:f s?:f s:f}",
                      "id", &id,
                      "userid", &userid,
                      "urgency", &urgency,
@@ -337,6 +346,10 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
                      "expiration", &expiration,
                      "annotations", &annotations,
                      "dependencies", &dependencies,
+                     "exception_occurred", &exception_occurred,
+                     "exception_type", &exception_type,
+                     "exception_severity", &exception_severity,
+                     "exception_note", &exception_note,
                      "t_submit", &t_submit,
                      "t_run", &t_run,
                      "t_cleanup", &t_cleanup,
@@ -468,32 +481,60 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
         log_sqlite_error (ctx, "store: binding dependencies");
         goto out;
     }
+    if (sqlite3_bind_int (ctx->store_stmt,
+                          18,
+                          exception_occurred) != SQLITE_OK) {
+        log_sqlite_error (ctx, "store: binding exception_occurred");
+        goto out;
+    }
+    if (sqlite3_bind_text (ctx->store_stmt,
+                           19,
+                           exception_type ? exception_type: "",
+                           exception_type ? strlen (exception_type) : 0,
+                           SQLITE_STATIC) != SQLITE_OK) {
+        log_sqlite_error (ctx, "store: binding exception_type");
+        goto out;
+    }
+    if (sqlite3_bind_int (ctx->store_stmt,
+                          20,
+                          exception_severity) != SQLITE_OK) {
+        log_sqlite_error (ctx, "store: binding exception_severity");
+        goto out;
+    }
+    if (sqlite3_bind_text (ctx->store_stmt,
+                           21,
+                           exception_note ? exception_note: "",
+                           exception_note ? strlen (exception_note) : 0,
+                           SQLITE_STATIC) != SQLITE_OK) {
+        log_sqlite_error (ctx, "store: binding exception_note");
+        goto out;
+    }
     if (sqlite3_bind_double (ctx->store_stmt,
-                             18,
+                             22,
                              t_submit) != SQLITE_OK) {
         log_sqlite_error (ctx, "store: binding t_submit");
         goto out;
     }
     if (sqlite3_bind_double (ctx->store_stmt,
-                             19,
+                             23,
                              t_run) != SQLITE_OK) {
         log_sqlite_error (ctx, "store: binding t_run");
         goto out;
     }
     if (sqlite3_bind_double (ctx->store_stmt,
-                             20,
+                             24,
                              t_cleanup) != SQLITE_OK) {
         log_sqlite_error (ctx, "store: binding t_cleanup");
         goto out;
     }
     if (sqlite3_bind_double (ctx->store_stmt,
-                             21,
+                             25,
                              t_inactive) != SQLITE_OK) {
         log_sqlite_error (ctx, "store: binding t_inactive");
         goto out;
     }
     if (sqlite3_bind_text (ctx->store_stmt,
-                           22,
+                           26,
                            eventlog,
                            strlen (eventlog),
                            SQLITE_STATIC) != SQLITE_OK) {
@@ -501,7 +542,7 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
         goto out;
     }
     if (sqlite3_bind_text (ctx->store_stmt,
-                           23,
+                           27,
                            jobspec,
                            strlen (jobspec),
                            SQLITE_STATIC) != SQLITE_OK) {
@@ -509,7 +550,7 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
         goto out;
     }
     if (sqlite3_bind_text (ctx->store_stmt,
-                           24,
+                           28,
                            R ? R: "",
                            R ? strlen (R) : 0,
                            SQLITE_STATIC) != SQLITE_OK) {
@@ -647,6 +688,7 @@ void job_archive2_cb (flux_reactor_t *r,
                    "\"states_mask\", \"ranks\", \"nnodes\", \"nodelist\", \"ntasks\", \"name\"," \
                    "\"waitstatus\", \"success\", \"result\", \"expiration\"," \
                    "\"annotations\", \"dependencies\"," \
+                   "\"exception_occurred\", \"exception_type\", \"exception_severity\", \"exception_note\"," \
                    "\"t_submit\", \"t_run\", \"t_cleanup\", \"t_inactive\"]";
     flux_future_t *f;
 

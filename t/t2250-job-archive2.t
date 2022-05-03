@@ -91,6 +91,10 @@ db_check_entries() {
             && grep -q "expiration = " query.out \
             && grep -q "annotations = " query.out \
             && grep -q "dependencies = " query.out \
+            && grep -q "exception_occurred = " query.out \
+            && grep -q "exception_type = " query.out \
+            && grep -q "exception_severity = " query.out \
+            && grep -q "exception_note = " query.out \
             && grep -q "t_submit = " query.out \
             && grep -q "t_run = " query.out \
             && grep -q "t_cleanup = " query.out \
@@ -128,6 +132,10 @@ get_db_values() {
         expiration=`grep "expiration = " query.out | awk '{print \$3}'`
         annotations=`grep "annotations = " query.out | awk '{print \$3}'`
         dependencies=`grep "dependencies = " query.out | awk '{print \$3}'`
+        exception_occurred=`grep "exception_occurred = " query.out | awk '{print \$3}'`
+        exception_type=`grep "exception_type = " query.out | awk '{print \$3}'`
+        exception_severity=`grep "exception_severity = " query.out | awk '{print \$3}'`
+        exception_note=`grep "exception_note = " query.out | cut -f3- -d' '`
         t_submit=`grep "t_submit = " query.out | awk '{print \$3}'`
         t_run=`grep "t_run = " query.out | awk '{print \$3}'`
         t_cleanup=`grep "t_cleanup = " query.out | awk '{print \$3}'`
@@ -171,6 +179,42 @@ db_check_values_run() {
         return 0
 }
 
+# check database values (job ran good)
+# arg1 - jobid
+# arg2 - database path
+db_check_values_run_success() {
+        db_check_values_run $1 $2
+        if [ $? -ne 0 ]; then
+            return 1
+        fi
+        if [ "$exception_occurred" != "0" ] \
+            || [ -n "$exception_type" ] \
+            || [ "$exception_severity" != "-1" ] \
+            || [ -n "$exception_note" ]
+        then
+            return 1
+        fi
+        return 0
+}
+
+# check database values (job ran fail)
+# arg1 - jobid
+# arg2 - database path
+db_check_values_run_fail() {
+        db_check_values_run $1 $2
+        if [ $? -ne 0 ]; then
+            return 1
+        fi
+        if [ "$exception_occurred" != "1" ] \
+            || [ -z "$exception_type" ] \
+            || [ "$exception_severity" == "-1" ] \
+            || [ -z "$exception_note" ]
+        then
+            return 1
+        fi
+        return 0
+}
+
 # check database values (job did not run)
 # arg1 - jobid
 # arg2 - database path
@@ -205,6 +249,42 @@ db_check_values_no_run() {
         return 0
 }
 
+# check database values (job did not run - canceled)
+# arg1 - jobid
+# arg2 - database path
+db_check_values_no_run_canceled() {
+        db_check_values_no_run $1 $2
+        if [ $? -ne 0 ]; then
+            return 1
+        fi
+        if [ "$exception_occurred" != "1" ] \
+            || [ "$exception_type" != "cancel" ] \
+            || [ "$exception_severity" != "0" ] \
+            || [ -n "$exception_note" ]
+        then
+            return 1
+        fi
+        return 0
+}
+
+# check database values (job did not run - w/ exception note)
+# arg1 - jobid
+# arg2 - database path
+db_check_values_no_run_exception() {
+        db_check_values_no_run $1 $2
+        if [ $? -ne 0 ]; then
+            return 1
+        fi
+        if [ "$exception_occurred" != "1" ] \
+            || [ -z "$exception_type" ] \
+            || [ "$exception_severity" != "0" ] \
+            || [ -z "$exception_note" ]
+        then
+            return 1
+        fi
+        return 0
+}
+
 test_expect_success 'job-archive2: load module without specifying period, should fail' '
         test_must_fail flux module load job-archive2
 '
@@ -229,7 +309,7 @@ test_expect_success 'job-archive2: stores inactive job info (job good)' '
         wait_jobid_state $jobid inactive &&
         wait_db $jobid ${ARCHIVE2DB} &&
         db_check_entries $jobid ${ARCHIVE2DB} &&
-        db_check_values_run $jobid ${ARCHIVE2DB}
+        db_check_values_run_success $jobid ${ARCHIVE2DB}
 '
 
 test_expect_success 'job-archive2: stores inactive job info (job fail)' '
@@ -238,7 +318,7 @@ test_expect_success 'job-archive2: stores inactive job info (job fail)' '
         wait_jobid_state $jobid inactive &&
         wait_db $jobid ${ARCHIVE2DB} &&
         db_check_entries $jobid ${ARCHIVE2DB} &&
-        db_check_values_run $jobid ${ARCHIVE2DB}
+        db_check_values_run_fail $jobid ${ARCHIVE2DB}
 '
 
 # to ensure job canceled before we run, we submit a job to eat up all
@@ -255,7 +335,7 @@ test_expect_success 'job-archive2: stores inactive job info (job cancel)' '
         wait_jobid_state $jobid2 inactive &&
         wait_db $jobid2 ${ARCHIVE2DB} &&
         db_check_entries $jobid2 ${ARCHIVE2DB} &&
-        db_check_values_no_run $jobid2 ${ARCHIVE2DB}
+        db_check_values_no_run_canceled $jobid2 ${ARCHIVE2DB}
 '
 
 test_expect_success 'job-archive2: stores inactive job info (resources)' '
@@ -264,7 +344,7 @@ test_expect_success 'job-archive2: stores inactive job info (resources)' '
         wait_jobid_state $jobid inactive &&
         wait_db $jobid ${ARCHIVE2DB} &&
         db_check_entries $jobid ${ARCHIVE2DB} &&
-        db_check_values_no_run $jobid ${ARCHIVE2DB}
+        db_check_values_no_run_exception $jobid ${ARCHIVE2DB}
 '
 
 test_expect_success 'job-archive2: all jobs stored' '
