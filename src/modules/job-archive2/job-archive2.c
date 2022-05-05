@@ -684,12 +684,7 @@ void job_archive2_cb (flux_reactor_t *r,
                       void *arg)
 {
     struct job_archive2_ctx *ctx = arg;
-    char *attrs = "[\"userid\", \"urgency\", \"priority\", \"state\", " \
-                   "\"states_mask\", \"ranks\", \"nnodes\", \"nodelist\", \"ntasks\", \"name\"," \
-                   "\"waitstatus\", \"success\", \"result\", \"expiration\"," \
-                   "\"annotations\", \"dependencies\"," \
-                   "\"exception_occurred\", \"exception_type\", \"exception_severity\", \"exception_note\"," \
-                   "\"t_submit\", \"t_run\", \"t_cleanup\", \"t_inactive\"]";
+    char *attrs = "[\"all\"]";
     flux_future_t *f;
 
     if (!(f = flux_job_list_inactive (ctx->h, 0, ctx->since, attrs))) {
