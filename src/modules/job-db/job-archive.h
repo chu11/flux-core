@@ -18,16 +18,6 @@
 
 #include "job_state.h"
 
-struct job_archive_ctx {
-    flux_t *h;
-    char *dbpath;
-    unsigned int busy_timeout;
-    sqlite3 *db;
-    sqlite3_stmt *store_stmt;
-    double since;
-    int kvs_lookup_count;
-};
-
 struct job_archive_ctx *job_archive_setup (flux_t *h, int ac, char **av);
 
 void job_archive_ctx_destroy (struct job_archive_ctx *ctx);

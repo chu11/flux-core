@@ -21,6 +21,7 @@ struct list_ctx {
     flux_t *h;
     flux_msg_handler_t **handlers;
     struct job_state_ctx *jsctx;
+    struct job_archive_ctx *actx;
     zlistx_t *idsync_lookups;
     zhashx_t *idsync_waits;
 };
