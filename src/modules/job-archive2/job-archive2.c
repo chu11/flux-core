@@ -37,6 +37,7 @@
 
 const char *sql_create_table = "CREATE TABLE if not exists jobs("
                                "  id CHAR(16) PRIMARY KEY,"
+                               "  t_inactive REAL,"
                                "  jobdata JSON,"
                                "  eventlog TEXT,"
                                "  jobspec JSON,"
@@ -46,13 +47,13 @@ const char *sql_create_table = "CREATE TABLE if not exists jobs("
 const char *sql_store =    \
     "INSERT INTO jobs"     \
     "("                    \
-    "  id,jobdata,"        \
+    "  id,t_inactive,jobdata," \
     "  eventlog,jobspec,R" \
     ") values ("           \
-    "  ?1, ?2, ?3, ?4, ?5" \
+    "  ?1, ?2, ?3, ?4, ?5, ?6" \
     ")";
 
-const char *sql_since = "SELECT MAX(json_extract(jobs.jobdata, '$.t_inactive')) FROM jobs;";
+const char *sql_since = "SELECT MAX(t_inactive) FROM jobs;";
 
 struct job_archive2_ctx {
     flux_t *h;
@@ -292,12 +293,18 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
         log_sqlite_error (ctx, "store: binding id");
         goto out;
     }
+    if (sqlite3_bind_double (ctx->store_stmt,
+                             2,
+                             t_inactive) != SQLITE_OK) {
+        log_sqlite_error (ctx, "store: binding t_inactive");
+        goto out;
+    }
     if (!(job_str = json_dumps (job, JSON_COMPACT))) {
         errno = ENOMEM;
         goto out;
     }
     if (sqlite3_bind_text (ctx->store_stmt,
-                           2,
+                           3,
                            job_str,
                            strlen (job_str),
                            SQLITE_STATIC) != SQLITE_OK) {
@@ -305,7 +312,7 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
         goto out;
     }
     if (sqlite3_bind_text (ctx->store_stmt,
-                           3,
+                           4,
                            eventlog,
                            strlen (eventlog),
                            SQLITE_STATIC) != SQLITE_OK) {
@@ -313,7 +320,7 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
         goto out;
     }
     if (sqlite3_bind_text (ctx->store_stmt,
-                           4,
+                           5,
                            jobspec,
                            strlen (jobspec),
                            SQLITE_STATIC) != SQLITE_OK) {
@@ -321,7 +328,7 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
         goto out;
     }
     if (sqlite3_bind_text (ctx->store_stmt,
-                           5,
+                           6,
                            R ? R: "",
                            R ? strlen (R) : 0,
                            SQLITE_STATIC) != SQLITE_OK) {
