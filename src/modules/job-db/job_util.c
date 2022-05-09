@@ -249,6 +249,31 @@ json_t *job_to_json (struct job *job, json_t *attrs, job_list_error_t *errp)
     return NULL;
 }
 
+json_t *job_to_json_all (struct job *job, job_list_error_t *errp)
+{
+    json_t *val = NULL;
+    json_t *o;
+
+    memset (errp, 0, sizeof (*errp));
+
+    if (!(o = json_object ()))
+        goto error_nomem;
+    if (!(val = json_integer (job->id)))
+        goto error_nomem;
+    if (json_object_set_new (o, "id", val) < 0) {
+        json_decref (val);
+        goto error_nomem;
+    }
+    if (store_all_attr (job, o, errp) < 0)
+        goto error;
+    return o;
+ error_nomem:
+    errno = ENOMEM;
+ error:
+    ERRNO_SAFE_WRAP (json_decref, o);
+    return NULL;
+}
+
 /*
  * vi:tabstop=4 shiftwidth=4 expandtab
  */

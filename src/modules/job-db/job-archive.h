@@ -20,10 +20,8 @@
 
 struct job_archive_ctx {
     flux_t *h;
-    double period;
     char *dbpath;
     unsigned int busy_timeout;
-    flux_watcher_t *w;
     sqlite3 *db;
     sqlite3_stmt *store_stmt;
     double since;
@@ -33,6 +31,8 @@ struct job_archive_ctx {
 struct job_archive_ctx *job_archive_setup (flux_t *h, int ac, char **av);
 
 void job_archive_ctx_destroy (struct job_archive_ctx *ctx);
+
+int job_archive_store (struct job_archive_ctx *ctx, struct job *job);
 
 #endif /* _FLUX_JOB_ARCHIVE_H */
 

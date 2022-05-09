@@ -31,6 +31,8 @@
 #include "src/common/libutil/fsd.h"
 
 #include "job-archive.h"
+#include "job_state.h"
+#include "job_util.h"
 
 #define BUSY_TIMEOUT_DEFAULT 50
 #define BUFSIZE              1024
@@ -52,8 +54,6 @@ const char *sql_store =    \
     ") values ("           \
     "  ?1, ?2, ?3, ?4, ?5, ?6" \
     ")";
-
-const char *sql_since = "SELECT MAX(t_inactive) FROM jobs;";
 
 static void log_sqlite_error (struct job_archive_ctx *ctx, const char *fmt, ...)
 {
@@ -81,7 +81,6 @@ void job_archive_ctx_destroy (struct job_archive_ctx *ctx)
 {
     if (ctx) {
         free (ctx->dbpath);
-        flux_watcher_destroy (ctx->w);
         if (ctx->store_stmt) {
             if (sqlite3_finalize (ctx->store_stmt) != SQLITE_OK)
                 log_sqlite_error (ctx, "sqlite_finalize store_stmt");
@@ -104,50 +103,12 @@ static struct job_archive_ctx * job_archive_ctx_create (flux_t *h)
     }
 
     ctx->h = h;
-    ctx->period = 0.0;
     ctx->busy_timeout = BUSY_TIMEOUT_DEFAULT;
 
     return ctx;
  error:
     job_archive_ctx_destroy (ctx);
     return (NULL);
-}
-
-int since_cb (void *arg, int argc, char **argv, char **colname)
-{
-    struct job_archive_ctx *ctx = arg;
-    char *endptr;
-    double tmp;
-
-    if (argv[0] == NULL)
-        return 0;
-
-    errno = 0;
-    tmp = strtod (argv[0], &endptr);
-    if (errno || *endptr != '\0') {
-        flux_log_error (ctx->h, "%s: invalid t_inactive", __FUNCTION__);
-        return -1;
-    }
-    if (tmp > ctx->since)
-        ctx->since = tmp;
-    return 0;
-}
-
-int job_archive_since_init (struct job_archive_ctx *ctx)
-{
-    char *errmsg = NULL;
-
-    if (sqlite3_exec (ctx->db,
-                      sql_since,
-                      since_cb,
-                      ctx,
-                      &errmsg) != SQLITE_OK) {
-        log_sqlite_error (ctx, "%s: getting max since value: %s",
-                          __FUNCTION__, errmsg);
-        return -1;
-    }
-
-    return 0;
 }
 
 int job_archive_init (struct job_archive_ctx *ctx)
@@ -204,71 +165,22 @@ int job_archive_init (struct job_archive_ctx *ctx)
         goto error;
     }
 
-    if (job_archive_since_init (ctx) < 0)
-        goto error;
-
     rc = 0;
 error:
     return rc;
 }
 
-int append_key (struct job_archive_ctx *ctx, json_t *keys, const char *key)
+int job_archive_store (struct job_archive_ctx *ctx, struct job *job)
 {
-    json_t *s = NULL;
-    int rc = -1;
-
-    if (!(s = json_string (key))) {
-        flux_log_error (ctx->h, "%s: json_string", __FUNCTION__);
-        goto error;
-    }
-    if (json_array_append_new (keys, s) < 0) {
-        flux_log_error (ctx->h, "%s: json_array_append_new", __FUNCTION__);
-        goto error;
-    }
-    return 0;
-error:
-    json_decref (s);
-    return rc;
-}
-
-void json_decref_wrapper (void *arg)
-{
-    json_decref ((json_t *)arg);
-}
-
-void job_info_lookup_continuation (flux_future_t *f, void *arg)
-{
-    struct job_archive_ctx *ctx = arg;
-    json_t *job;
+    json_t *o = NULL;
+    job_list_error_t err;
     char *job_str = NULL;
-    flux_jobid_t id;
-    double t_inactive = 0.0;
-    const char *eventlog = NULL;
-    const char *jobspec = NULL;
-    const char *R = NULL;
+    char *jobspec = NULL;
+    char *R = NULL;
     char idbuf[64];
+    int rv = -1;
 
-    if (flux_rpc_get_unpack (f, "{s:s s:s s?:s}",
-                             "eventlog", &eventlog,
-                             "jobspec", &jobspec,
-                             "R", &R) < 0) {
-        flux_log_error (ctx->h, "%s: flux_rpc_get_unpack", __FUNCTION__);
-        goto out;
-    }
-
-    if (!(job = flux_future_aux_get (f, "job"))) {
-        flux_log_error (ctx->h, "%s: flux_future_aux_get", __FUNCTION__);
-        goto out;
-    }
-
-    if (json_unpack (job, "{s:I s:f}",
-                     "id", &id,
-                     "t_inactive", &t_inactive) < 0) {
-        flux_log (ctx->h, LOG_ERR, "%s: parse job id", __FUNCTION__);
-        goto out;
-    }
-
-    snprintf (idbuf, 64, "%llu", (unsigned long long)id);
+    snprintf (idbuf, 64, "%llu", (unsigned long long)job->id);
     if (sqlite3_bind_text (ctx->store_stmt,
                            1,
                            idbuf,
@@ -279,11 +191,13 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
     }
     if (sqlite3_bind_double (ctx->store_stmt,
                              2,
-                             t_inactive) != SQLITE_OK) {
+                             job->t_inactive) != SQLITE_OK) {
         log_sqlite_error (ctx, "store: binding t_inactive");
         goto out;
     }
-    if (!(job_str = json_dumps (job, JSON_COMPACT))) {
+    if (!(o = job_to_json_all (job, &err)))
+        goto out;
+    if (!(job_str = json_dumps (o, JSON_COMPACT))) {
         errno = ENOMEM;
         goto out;
     }
@@ -297,10 +211,14 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
     }
     if (sqlite3_bind_text (ctx->store_stmt,
                            4,
-                           eventlog,
-                           strlen (eventlog),
+                           job->eventlog,
+                           strlen (job->eventlog),
                            SQLITE_STATIC) != SQLITE_OK) {
         log_sqlite_error (ctx, "store: binding eventlog");
+        goto out;
+    }
+    if (!(jobspec = json_dumps (job->jobspec, 0))) {
+        flux_log_error (ctx->h, "json_dumps jobspec");
         goto out;
     }
     if (sqlite3_bind_text (ctx->store_stmt,
@@ -310,6 +228,12 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
                            SQLITE_STATIC) != SQLITE_OK) {
         log_sqlite_error (ctx, "store: binding jobspec");
         goto out;
+    }
+    if (job->R) {
+        if (!(R = json_dumps (job->R, 0))) {
+            flux_log_error (ctx->h, "json_dumps R");
+            goto out;
+        }
     }
     if (sqlite3_bind_text (ctx->store_stmt,
                            6,
@@ -341,133 +265,26 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
         }
     }
 
-    if (t_inactive > ctx->since)
-        ctx->since = t_inactive;
-
+    rv = 0;
 out:
     sqlite3_reset (ctx->store_stmt);
-    flux_future_destroy (f);
+    json_decref (o);
     free (job_str);
-    if (ctx->kvs_lookup_count
-        && (--(ctx->kvs_lookup_count)) == 0) {
-        flux_timer_watcher_reset (ctx->w, ctx->period, 0.);
-        flux_watcher_start (ctx->w);
-    }
-}
-
-int job_info_lookup (struct job_archive_ctx *ctx, json_t *job)
-{
-    const char *topic = "job-info.lookup";
-    flux_future_t *f = NULL;
-    flux_jobid_t id;
-    json_t *keys = NULL;
-    double t_run = 0.0;
-
-    if (json_unpack (job, "{s:I s?:f}", "id", &id, "t_run", &t_run) < 0) {
-        flux_log (ctx->h, LOG_ERR, "%s: parse t_run", __FUNCTION__);
-        goto error;
-    }
-
-    if (!(keys = json_array ())) {
-        flux_log_error (ctx->h, "%s: json_array", __FUNCTION__);
-        goto error;
-    }
-    if (append_key (ctx, keys, "eventlog") < 0)
-        goto error;
-    if (append_key (ctx, keys, "jobspec") < 0)
-        goto error;
-    if (t_run > 0.0) {
-        if (append_key (ctx, keys, "R") < 0)
-            goto error;
-    }
-
-    if (!(f = flux_rpc_pack (ctx->h, topic, FLUX_NODEID_ANY, 0,
-                             "{s:I s:O s:i}",
-                             "id", id,
-                             "keys", keys,
-                             "flags", 0))) {
-        flux_log_error (ctx->h, "%s: flux_rpc_pack", __FUNCTION__);
-        goto error;
-    }
-    if (flux_future_then (f,
-                          -1.,
-                          job_info_lookup_continuation,
-                          ctx) < 0) {
-        flux_log_error (ctx->h, "%s: flux_future_then", __FUNCTION__);
-        goto error;
-    }
-    if (flux_future_aux_set (f,
-                             "job",
-                             json_incref (job),
-                             json_decref_wrapper) < 0) {
-        flux_log_error (ctx->h, "%s: flux_future_aux_set", __FUNCTION__);
-        goto error;
-    }
-
-    json_decref (keys);
-    ctx->kvs_lookup_count++;
-    return 0;
-
-error:
-    flux_future_destroy (f);
-    json_decref (keys);
-    return -1;
-}
-
-void job_list_inactive_continuation (flux_future_t *f, void *arg)
-{
-    struct job_archive_ctx *ctx = arg;
-    json_t *jobs;
-    size_t index;
-    json_t *value;
-
-    if (flux_rpc_get_unpack (f, "{s:o}", "jobs", &jobs) < 0) {
-        flux_log_error (ctx->h, "%s: flux_rpc_get_unpack", __FUNCTION__);
-        return;
-    }
-    json_array_foreach (jobs, index, value) {
-        if (job_info_lookup (ctx, value) < 0)
-            break;
-    }
-    /* If no new inactive jobs, still need to reset timer */
-    if (!ctx->kvs_lookup_count) {
-        flux_timer_watcher_reset (ctx->w, ctx->period, 0.);
-        flux_watcher_start (ctx->w);
-    }
-    flux_future_destroy (f);
-}
-
-void job_archive_cb (flux_reactor_t *r,
-                      flux_watcher_t *w,
-                      int revents,
-                      void *arg)
-{
-    struct job_archive_ctx *ctx = arg;
-    char *attrs = "[\"all\"]";
-    flux_future_t *f;
-
-    if (!(f = flux_job_list_inactive (ctx->h, 0, ctx->since, attrs))) {
-        flux_log_error (ctx->h, "%s: flux_job_list_inactive", __FUNCTION__);
-        return;
-    }
-    if (flux_future_then (f, -1, job_list_inactive_continuation, ctx) < 0) {
-        flux_log_error (ctx->h, "%s: flux_future_then", __FUNCTION__);
-        return;
-    }
+    free (jobspec);
+    free (R);
+    return rv;
 }
 
 static int process_config (struct job_archive_ctx *ctx)
 {
     flux_error_t err;
-    const char *period = NULL;
     const char *dbpath = NULL;
     const char *busytimeout = NULL;
 
     if (flux_conf_unpack (flux_get_conf (ctx->h),
                           &err,
-                          "{s?{s?s s?s s?s}}",
+                          "{s?{s?s s?s}}",
                           "archive",
-                            "period", &period,
                             "dbpath", &dbpath,
                             "busytimeout", &busytimeout) < 0) {
         flux_log (ctx->h, LOG_ERR,
@@ -476,10 +293,6 @@ static int process_config (struct job_archive_ctx *ctx)
         return -1;
     }
 
-    if (period) {
-        if (fsd_parse_duration (period, &ctx->period) < 0)
-            flux_log_error (ctx->h, "period not configured");
-    }
     if (dbpath) {
         if (!(ctx->dbpath = strdup (dbpath)))
             flux_log_error (ctx->h, "dbpath not configured");
@@ -504,11 +317,6 @@ static int process_config (struct job_archive_ctx *ctx)
             ctx->busy_timeout = (int)(1000 * tmp);
     }
 
-    /* period is required to be set */
-    if (ctx->period == 0.0) {
-        flux_log_error (ctx->h, "period not set");
-        return -1;
-    }
     return 0;
 }
 
@@ -524,17 +332,6 @@ struct job_archive_ctx * job_archive_setup (flux_t *h, int ac, char **av)
 
     if (job_archive_init (ctx) < 0)
         goto done;
-
-    if ((ctx->w = flux_timer_watcher_create (flux_get_reactor (h),
-                                             ctx->period,
-                                             0.,
-                                             job_archive_cb,
-                                             ctx)) < 0) {
-        flux_log_error (h, "flux_timer_watcher_create");
-        goto done;
-    }
-
-    flux_watcher_start (ctx->w);
 
     return ctx;
 

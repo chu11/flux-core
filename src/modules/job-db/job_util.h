@@ -24,6 +24,8 @@ seterror (job_list_error_t *errp, const char *fmt, ...);
 
 json_t *job_to_json (struct job *job, json_t *attrs, job_list_error_t *errp);
 
+json_t *job_to_json_all (struct job *job, job_list_error_t *errp);
+
 #endif /* ! _FLUX_JOB_LIST_JOB_UTIL_H */
 
 /*
