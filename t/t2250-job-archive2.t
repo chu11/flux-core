@@ -75,7 +75,6 @@ db_check_entries() {
         query="select * from jobs where id=$id;"
         ${QUERYCMD} -t 10000 ${dbpath} "${query}" > query.out
         if grep -q "^id = " query.out \
-            && grep -q "t_inactive = " query.out \
             && grep -q "jobdata = " query.out \
             && grep -q "eventlog = " query.out \
             && grep -q "jobspec = " query.out \
