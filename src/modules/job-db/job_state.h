@@ -13,11 +13,22 @@
 
 #include <flux/core.h>
 #include <jansson.h>
+#include <sqlite3.h>
 
 #include "job-list.h"
 #include "stats.h"
 #include "src/common/libutil/grudgeset.h"
 #include "src/common/libczmqcontainers/czmq_containers.h"
+
+struct job_archive_ctx {
+    flux_t *h;
+    char *dbpath;
+    unsigned int busy_timeout;
+    sqlite3 *db;
+    sqlite3_stmt *store_stmt;
+    double since;
+    int kvs_lookup_count;
+};
 
 /* To handle the common case of user queries on job state, we will
  * store jobs in three different lists.
@@ -41,6 +52,7 @@
 struct job_state_ctx {
     flux_t *h;
     struct list_ctx *ctx;
+    struct job_archive_ctx *actx;
     zhashx_t *index;
     zlistx_t *pending;
     zlistx_t *running;

@@ -207,6 +207,8 @@ int mod_main (flux_t *h, int argc, char **argv)
         flux_log_error (h, "initialization error");
         goto done;
     }
+    ctx->actx = actx;
+    ctx->jsctx->actx = actx;
     if (!(f = flux_service_register (h, "job-list"))) {
         flux_log_error (h, "flux_service_register");
         goto done;
