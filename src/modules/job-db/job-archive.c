@@ -29,8 +29,6 @@
 
 #include "src/common/libutil/log.h"
 #include "src/common/libutil/fsd.h"
-#include "src/common/libutil/tstat.h"
-#include "src/common/libutil/monotime.h"
 
 #include "job-archive.h"
 
@@ -249,9 +247,6 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
     const char *jobspec = NULL;
     const char *R = NULL;
     char idbuf[64];
-    struct timespec t0;
-
-    monotime (&t0);
 
     if (flux_rpc_get_unpack (f, "{s:s s:s s?:s}",
                              "eventlog", &eventlog,
@@ -348,8 +343,6 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
 
     if (t_inactive > ctx->since)
         ctx->since = t_inactive;
-
-    tstat_push (&ctx->sqlstore, monotime_since (t0));
 
 out:
     sqlite3_reset (ctx->store_stmt);
@@ -463,36 +456,6 @@ void job_archive_cb (flux_reactor_t *r,
     }
 }
 
-static unsigned long long get_file_size (const char *path)
-{
-    struct stat sb;
-
-    if (stat (path, &sb) < 0)
-        return 0;
-    return sb.st_size;
-}
-
-void stats_get_cb (flux_t *h,
-                   flux_msg_handler_t *mh,
-                   const flux_msg_t *msg,
-                   void *arg)
-{
-    struct job_archive_ctx *ctx = arg;
-
-    if (flux_respond_pack (h,
-                           msg,
-                           "{s:I s:{s:i s:f s:f s:f s:f}}",
-                           "dbfile_size", get_file_size (ctx->dbpath),
-                           "store",
-                             "count", tstat_count (&ctx->sqlstore),
-                             "min", tstat_min (&ctx->sqlstore),
-                             "max", tstat_max (&ctx->sqlstore),
-                             "mean", tstat_mean (&ctx->sqlstore),
-                             "stddev", tstat_stddev (&ctx->sqlstore)) < 0)
-        flux_log_error (h, "error responding to stats.get request");
-    return;
-}
-
 static int process_config (struct job_archive_ctx *ctx)
 {
     flux_error_t err;
@@ -549,15 +512,9 @@ static int process_config (struct job_archive_ctx *ctx)
     return 0;
 }
 
-static const struct flux_msg_handler_spec htab[] = {
-    { FLUX_MSGTYPE_REQUEST, "job-archive.stats.get", stats_get_cb, 0 },
-    FLUX_MSGHANDLER_TABLE_END,
-};
-
 struct job_archive_ctx * job_archive_setup (flux_t *h, int ac, char **av)
 {
     struct job_archive_ctx *ctx = job_archive_ctx_create (h);
-    flux_msg_handler_t **handlers = NULL;
 
     if (!ctx)
         return NULL;
@@ -579,15 +536,9 @@ struct job_archive_ctx * job_archive_setup (flux_t *h, int ac, char **av)
 
     flux_watcher_start (ctx->w);
 
-    if (flux_msg_handler_addvec (h, htab, ctx, &handlers) < 0) {
-        flux_log_error (h, "flux_msg_handler_addvec");
-        goto done;
-    }
-
     return ctx;
 
 done:
-    flux_msg_handler_delvec (handlers);
     job_archive_ctx_destroy (ctx);
     return NULL;
 }
