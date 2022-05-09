@@ -32,6 +32,8 @@
 #include "src/common/libutil/tstat.h"
 #include "src/common/libutil/monotime.h"
 
+#include "job-archive.h"
+
 #define BUSY_TIMEOUT_DEFAULT 50
 #define BUFSIZE              1024
 
@@ -53,19 +55,6 @@ const char *sql_store =    \
     ")";
 
 const char *sql_since = "SELECT MAX(json_extract(jobs.jobdata, '$.t_inactive')) FROM jobs;"
-
-struct job_archive_ctx {
-    flux_t *h;
-    double period;
-    char *dbpath;
-    unsigned int busy_timeout;
-    flux_watcher_t *w;
-    sqlite3 *db;
-    sqlite3_stmt *store_stmt;
-    double since;
-    int kvs_lookup_count;
-    tstat_t sqlstore;
-};
 
 static void log_sqlite_error (struct job_archive_ctx *ctx, const char *fmt, ...)
 {
@@ -89,7 +78,7 @@ static void log_sqlite_error (struct job_archive_ctx *ctx, const char *fmt, ...)
         flux_log (ctx->h, LOG_ERR, "%s: unknown error, no sqlite3 handle", buf);
 }
 
-static void job_archive_ctx_destroy (struct job_archive_ctx *ctx)
+void job_archive_ctx_destroy (struct job_archive_ctx *ctx)
 {
     if (ctx) {
         free (ctx->dbpath);
@@ -558,14 +547,13 @@ static const struct flux_msg_handler_spec htab[] = {
     FLUX_MSGHANDLER_TABLE_END,
 };
 
-int mod_main (flux_t *h, int ac, char **av)
+struct job_archive_ctx * job_archive_setup (flux_t *h, int ac, char **av)
 {
     struct job_archive_ctx *ctx = job_archive_ctx_create (h);
     flux_msg_handler_t **handlers = NULL;
-    int rc = -1;
 
     if (!ctx)
-        return -1;
+        return NULL;
 
     if (process_config (ctx) < 0)
         goto done;
@@ -589,16 +577,13 @@ int mod_main (flux_t *h, int ac, char **av)
         goto done;
     }
 
-    if ((rc = flux_reactor_run (flux_get_reactor (h), 0)) < 0)
-        flux_log_error (h, "flux_reactor_run");
+    return ctx;
 
 done:
     flux_msg_handler_delvec (handlers);
     job_archive_ctx_destroy (ctx);
-    return rc;
+    return NULL;
 }
-
-MOD_NAME ("job-archive");
 
 /*
  * vi:tabstop=4 shiftwidth=4 expandtab
