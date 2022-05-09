@@ -875,6 +875,12 @@ static void process_next_state (struct list_ctx *ctx, struct job *job)
                                         __FUNCTION__);
                 }
 
+                if (zlistx_detach (jsctx->inactive, job->list_handle) < 0)
+                    flux_log_error (jsctx->h, "%s: zlistx_detach",
+                                        __FUNCTION__);
+                job->list_handle = NULL;
+                zhashx_delete (jsctx->index, &job->id);
+
                 break;
             }
         }
