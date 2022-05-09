@@ -311,12 +311,12 @@ EOF
 	flux config reload
 '
 
-test_expect_success 'job-archive: launch flux with statedir set' '
-        flux start -o,--setattr=statedir=$(pwd) /bin/true
-'
+# test_expect_success 'job-archive: launch flux with statedir set' '
+#         flux start -o,--setattr=statedir=$(pwd) /bin/true
+# '
 
-test_expect_success 'job-archive: job-archive setup in statedir' '
-        ls $(pwd)/job-archive.sqlite
-'
+# test_expect_success 'job-archive: job-archive setup in statedir' '
+#         ls $(pwd)/job-archive.sqlite
+# '
 
 test_done
