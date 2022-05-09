@@ -15,7 +15,6 @@
 #include <sqlite3.h>
 
 #include "src/common/libczmqcontainers/czmq_containers.h"
-#include "src/common/libutil/tstat.h"
 
 #include "job_state.h"
 
@@ -29,7 +28,6 @@ struct job_archive_ctx {
     sqlite3_stmt *store_stmt;
     double since;
     int kvs_lookup_count;
-    tstat_t sqlstore;
 };
 
 struct job_archive_ctx *job_archive_setup (flux_t *h, int ac, char **av);
