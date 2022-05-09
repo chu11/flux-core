@@ -292,14 +292,19 @@ static int process_config (struct job_archive_ctx *ctx)
     }
     else {
         const char *dbdir;
-        if (!(dbdir = flux_attr_get (ctx->h, "statedir"))) {
-            flux_log_error (ctx->h, "statedir not set");
-            return -1;
-        }
+        dbdir = flux_attr_get (ctx->h, "statedir");
 
-        if (asprintf (&ctx->dbpath, "%s/job-db.sqlite", dbdir) < 0) {
-            flux_log_error (ctx->h, "asprintf");
-            return -1;
+        if (dbdir) {
+            if (asprintf (&ctx->dbpath, "%s/job-db.sqlite", dbdir) < 0) {
+                flux_log_error (ctx->h, "asprintf");
+                return -1;
+            }
+        }
+        else {
+            if (asprintf (&ctx->dbpath, ":memory:") < 0) {
+                flux_log_error (ctx->h, "asprintf");
+                return -1;
+            }
         }
     }
     if (busytimeout) {
