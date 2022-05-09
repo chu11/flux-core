@@ -16,6 +16,7 @@
 #include "src/common/libczmqcontainers/czmq_containers.h"
 
 #include "job-list.h"
+#include "job-archive.h"
 #include "job_state.h"
 #include "list.h"
 #include "idsync.h"
@@ -194,9 +195,14 @@ error:
 int mod_main (flux_t *h, int argc, char **argv)
 {
     struct list_ctx *ctx = NULL;
+    struct job_archive_ctx *actx = NULL;
     flux_future_t *f = NULL;
     int rc = -1;
 
+    if (!(actx = job_archive_setup (h, argc, argv))) {
+        flux_log_error (h, "archive initialization error");
+        goto done;
+    }
     if (!(ctx = list_ctx_create (h))) {
         flux_log_error (h, "initialization error");
         goto done;
@@ -215,6 +221,7 @@ int mod_main (flux_t *h, int argc, char **argv)
         goto done;
     rc = 0;
 done:
+    job_archive_ctx_destroy (actx);
     list_ctx_destroy (ctx);
     flux_future_destroy (f);
     return rc;
