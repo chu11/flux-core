@@ -8,7 +8,7 @@
  * SPDX-License-Identifier: LGPL-3.0
 \************************************************************/
 
-/* job-archive2: archive2 job data service for flux */
+/* job-archive: archive job data service for flux */
 
 #if HAVE_CONFIG_H
 #include "config.h"
@@ -55,7 +55,7 @@ const char *sql_store =    \
 
 const char *sql_since = "SELECT MAX(t_inactive) FROM jobs;";
 
-struct job_archive2_ctx {
+struct job_archive_ctx {
     flux_t *h;
     double period;
     char *dbpath;
@@ -68,7 +68,7 @@ struct job_archive2_ctx {
     tstat_t sqlstore;
 };
 
-static void log_sqlite_error (struct job_archive2_ctx *ctx, const char *fmt, ...)
+static void log_sqlite_error (struct job_archive_ctx *ctx, const char *fmt, ...)
 {
     char buf[128];
     va_list ap;
@@ -90,7 +90,7 @@ static void log_sqlite_error (struct job_archive2_ctx *ctx, const char *fmt, ...
         flux_log (ctx->h, LOG_ERR, "%s: unknown error, no sqlite3 handle", buf);
 }
 
-static void job_archive2_ctx_destroy (struct job_archive2_ctx *ctx)
+static void job_archive_ctx_destroy (struct job_archive_ctx *ctx)
 {
     if (ctx) {
         free (ctx->dbpath);
@@ -107,12 +107,12 @@ static void job_archive2_ctx_destroy (struct job_archive2_ctx *ctx)
     }
 }
 
-static struct job_archive2_ctx * job_archive2_ctx_create (flux_t *h)
+static struct job_archive_ctx * job_archive_ctx_create (flux_t *h)
 {
-    struct job_archive2_ctx *ctx = calloc (1, sizeof (*ctx));
+    struct job_archive_ctx *ctx = calloc (1, sizeof (*ctx));
 
     if (!ctx) {
-        flux_log_error (h, "job_archive2_ctx_create");
+        flux_log_error (h, "job_archive_ctx_create");
         goto error;
     }
 
@@ -122,13 +122,13 @@ static struct job_archive2_ctx * job_archive2_ctx_create (flux_t *h)
 
     return ctx;
  error:
-    job_archive2_ctx_destroy (ctx);
+    job_archive_ctx_destroy (ctx);
     return (NULL);
 }
 
 int since_cb (void *arg, int argc, char **argv, char **colname)
 {
-    struct job_archive2_ctx *ctx = arg;
+    struct job_archive_ctx *ctx = arg;
     char *endptr;
     double tmp;
 
@@ -146,7 +146,7 @@ int since_cb (void *arg, int argc, char **argv, char **colname)
     return 0;
 }
 
-int job_archive2_since_init (struct job_archive2_ctx *ctx)
+int job_archive_since_init (struct job_archive_ctx *ctx)
 {
     char *errmsg = NULL;
 
@@ -163,7 +163,7 @@ int job_archive2_since_init (struct job_archive2_ctx *ctx)
     return 0;
 }
 
-int job_archive2_init (struct job_archive2_ctx *ctx)
+int job_archive_init (struct job_archive_ctx *ctx)
 {
     int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
     char buf[1024];
@@ -217,7 +217,7 @@ int job_archive2_init (struct job_archive2_ctx *ctx)
         goto error;
     }
 
-    if (job_archive2_since_init (ctx) < 0)
+    if (job_archive_since_init (ctx) < 0)
         goto error;
 
     rc = 0;
@@ -225,7 +225,7 @@ error:
     return rc;
 }
 
-int append_key (struct job_archive2_ctx *ctx, json_t *keys, const char *key)
+int append_key (struct job_archive_ctx *ctx, json_t *keys, const char *key)
 {
     json_t *s = NULL;
     int rc = -1;
@@ -251,7 +251,7 @@ void json_decref_wrapper (void *arg)
 
 void job_info_lookup_continuation (flux_future_t *f, void *arg)
 {
-    struct job_archive2_ctx *ctx = arg;
+    struct job_archive_ctx *ctx = arg;
     json_t *job;
     char *job_str = NULL;
     flux_jobid_t id;
@@ -373,7 +373,7 @@ out:
     }
 }
 
-int job_info_lookup (struct job_archive2_ctx *ctx, json_t *job)
+int job_info_lookup (struct job_archive_ctx *ctx, json_t *job)
 {
     const char *topic = "job-info.lookup";
     flux_future_t *f = NULL;
@@ -434,7 +434,7 @@ error:
 
 void job_list_inactive_continuation (flux_future_t *f, void *arg)
 {
-    struct job_archive2_ctx *ctx = arg;
+    struct job_archive_ctx *ctx = arg;
     json_t *jobs;
     size_t index;
     json_t *value;
@@ -455,12 +455,12 @@ void job_list_inactive_continuation (flux_future_t *f, void *arg)
     flux_future_destroy (f);
 }
 
-void job_archive2_cb (flux_reactor_t *r,
+void job_archive_cb (flux_reactor_t *r,
                       flux_watcher_t *w,
                       int revents,
                       void *arg)
 {
-    struct job_archive2_ctx *ctx = arg;
+    struct job_archive_ctx *ctx = arg;
     char *attrs = "[\"all\"]";
     flux_future_t *f;
 
@@ -488,7 +488,7 @@ void stats_get_cb (flux_t *h,
                    const flux_msg_t *msg,
                    void *arg)
 {
-    struct job_archive2_ctx *ctx = arg;
+    struct job_archive_ctx *ctx = arg;
 
     if (flux_respond_pack (h,
                            msg,
@@ -504,7 +504,7 @@ void stats_get_cb (flux_t *h,
     return;
 }
 
-static int process_config (struct job_archive2_ctx *ctx)
+static int process_config (struct job_archive_ctx *ctx)
 {
     flux_error_t err;
     const char *period = NULL;
@@ -514,12 +514,12 @@ static int process_config (struct job_archive2_ctx *ctx)
     if (flux_conf_unpack (flux_get_conf (ctx->h),
                           &err,
                           "{s?{s?s s?s s?s}}",
-                          "archive2",
+                          "archive",
                             "period", &period,
                             "dbpath", &dbpath,
                             "busytimeout", &busytimeout) < 0) {
         flux_log (ctx->h, LOG_ERR,
-                  "error reading archive2 config: %s",
+                  "error reading archive config: %s",
                   err.text);
         return -1;
     }
@@ -539,7 +539,7 @@ static int process_config (struct job_archive2_ctx *ctx)
             return -1;
         }
 
-        if (asprintf (&ctx->dbpath, "%s/job-archive2.sqlite", dbdir) < 0) {
+        if (asprintf (&ctx->dbpath, "%s/job-archive.sqlite", dbdir) < 0) {
             flux_log_error (ctx->h, "asprintf");
             return -1;
         }
@@ -561,13 +561,13 @@ static int process_config (struct job_archive2_ctx *ctx)
 }
 
 static const struct flux_msg_handler_spec htab[] = {
-    { FLUX_MSGTYPE_REQUEST, "job-archive2.stats.get", stats_get_cb, 0 },
+    { FLUX_MSGTYPE_REQUEST, "job-archive.stats.get", stats_get_cb, 0 },
     FLUX_MSGHANDLER_TABLE_END,
 };
 
 int mod_main (flux_t *h, int ac, char **av)
 {
-    struct job_archive2_ctx *ctx = job_archive2_ctx_create (h);
+    struct job_archive_ctx *ctx = job_archive_ctx_create (h);
     flux_msg_handler_t **handlers = NULL;
     int rc = -1;
 
@@ -577,13 +577,13 @@ int mod_main (flux_t *h, int ac, char **av)
     if (process_config (ctx) < 0)
         goto done;
 
-    if (job_archive2_init (ctx) < 0)
+    if (job_archive_init (ctx) < 0)
         goto done;
 
     if ((ctx->w = flux_timer_watcher_create (flux_get_reactor (h),
                                              ctx->period,
                                              0.,
-                                             job_archive2_cb,
+                                             job_archive_cb,
                                              ctx)) < 0) {
         flux_log_error (h, "flux_timer_watcher_create");
         goto done;
@@ -601,11 +601,11 @@ int mod_main (flux_t *h, int ac, char **av)
 
 done:
     flux_msg_handler_delvec (handlers);
-    job_archive2_ctx_destroy (ctx);
+    job_archive_ctx_destroy (ctx);
     return rc;
 }
 
-MOD_NAME ("job-archive2");
+MOD_NAME ("job-archive");
 
 /*
  * vi:tabstop=4 shiftwidth=4 expandtab
