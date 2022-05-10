@@ -187,6 +187,7 @@ int get_jobs_from_sqlite (struct list_ctx *ctx,
     char *sql = "SELECT * FROM jobs ORDER BY t_inactive DESC;";
     char *sqllimit = "SELECT * FROM jobs ORDER BY t_inactive DESC LIMIT ?";
     sqlite3_stmt *res = NULL;
+    int rv = -1;
 
     if (max_entries) {
         if (sqlite3_prepare_v2 (ctx->actx->db,
@@ -195,11 +196,11 @@ int get_jobs_from_sqlite (struct list_ctx *ctx,
                                 &res,
                                 0) != SQLITE_OK) {
             flux_log_error (ctx->h, "sqlite3_prepare_v2");
-            return -1;
+            goto out;
         }
         if (sqlite3_bind_int (res, 1, max_entries) != SQLITE_OK) {
             flux_log_error (ctx->h, "sqlite3_bind_int");
-            return -1;          /* leak res */
+            goto out;
         }
     }
     else {
@@ -209,7 +210,7 @@ int get_jobs_from_sqlite (struct list_ctx *ctx,
                                 &res,
                                 0) != SQLITE_OK) {
             flux_log_error (ctx->h, "sqlite3_prepare_v2");
-            return -1;
+            goto out;
         }
     }
 
@@ -217,31 +218,34 @@ int get_jobs_from_sqlite (struct list_ctx *ctx,
         struct job *job;
         if (!(job = sqliterow_2_job (ctx, res))) {
             flux_log_error (ctx->h, "sqliterow_2_job");
-            return -1;          /* leak job & res */
+            goto out;
         }
         if (job_filter (job, userid, states, results)) {
             json_t *o;
             if (!(o = job_to_json (job, attrs, errp))) {
                 job_destroy (job);
-                return -1;
+                goto out;
             }
             if (json_array_append_new (jobs, o) < 0) {
                 json_decref (o);
                 job_destroy (job);
                 errno = ENOMEM;
-                return -1;
+                goto out;
             }
             if (json_array_size (jobs) == max_entries) {
                 job_destroy (job);
-                return 1;
+                rv = 1;
+                goto out;
             }
         }
 
         job_destroy (job);
     }
 
+    rv = 0;
+out:
     sqlite3_finalize (res);
-    return 0;
+    return rv;
 }
 
 /* Create a JSON array of 'job' objects.  'max_entries' determines the
