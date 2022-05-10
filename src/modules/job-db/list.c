@@ -96,6 +96,7 @@ struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
     int exception_occurred;
     const char *ranks = NULL;
     const char *nodelist = NULL;
+    json_t *annotations = NULL;
 
     if (!(job = job_create_init ()))
         return NULL;
@@ -141,7 +142,7 @@ struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
                      "success", &success,
                      "result", &job->result,
                      "expiration", &job->expiration,
-                     "annotations", &job->annotations,
+                     "annotations", &annotations,
                      "dependencies", &job->dependencies_json,
                      "exception_occurred", &exception_occurred,
                      "exception_type", &job->exception_type,
@@ -168,6 +169,9 @@ struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
         job->nodelist = strdup (nodelist);
         assert (job->nodelist);
     }
+
+    if (annotations)
+        job->annotations = json_incref (annotations);
 
     return job;
 }
