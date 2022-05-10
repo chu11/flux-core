@@ -115,7 +115,7 @@ static int job_inactive_cmp (const void *a1, const void *a2)
     return NUMCMP (j2->t_inactive, j1->t_inactive);
 }
 
-static void job_destroy (void *data)
+void job_destroy (void *data)
 {
     struct job *job = data;
     if (job) {
@@ -140,14 +140,9 @@ static void job_destroy_wrapper (void **data)
     job_destroy (*job);
 }
 
-static struct job *job_create (struct list_ctx *ctx, flux_jobid_t id)
+void job_init (struct job *job)
 {
-    struct job *job = NULL;
-
-    if (!(job = calloc (1, sizeof (*job))))
-        return NULL;
-    job->ctx = ctx;
-    job->id = id;
+    assert (job);
     job->state = FLUX_JOB_STATE_NEW;
     job->userid = FLUX_USERID_UNKNOWN;
     job->urgency = -1;
@@ -157,6 +152,19 @@ static struct job *job_create (struct list_ctx *ctx, flux_jobid_t id)
     job->priority = FLUX_JOB_PRIORITY_MIN;
     job->result = FLUX_JOB_RESULT_FAILED;
     job->eventlog_seq = -1;
+    job->states_mask = FLUX_JOB_STATE_NEW;
+    job->states_events_mask = FLUX_JOB_STATE_NEW;
+}
+
+static struct job *job_create (struct list_ctx *ctx, flux_jobid_t id)
+{
+    struct job *job = NULL;
+
+    if (!(job = calloc (1, sizeof (*job))))
+        return NULL;
+    job->ctx = ctx;
+    job->id = id;
+    job_init (job);
 
     if (!(job->next_states = zlist_new ())) {
         errno = ENOMEM;
@@ -164,9 +172,16 @@ static struct job *job_create (struct list_ctx *ctx, flux_jobid_t id)
         return NULL;
     }
 
-    job->states_mask = FLUX_JOB_STATE_NEW;
-    job->states_events_mask = FLUX_JOB_STATE_NEW;
+    return job;
+}
 
+struct job *job_create_init (void)
+{
+    struct job *job = NULL;
+
+    if (!(job = calloc (1, sizeof (*job))))
+        return NULL;
+    job_init (job);
     return job;
 }
 
