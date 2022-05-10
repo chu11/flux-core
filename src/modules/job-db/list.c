@@ -92,7 +92,6 @@ struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
 {
     struct job *job = NULL;
     const char *s;
-    char *endptr;
     int success;
     int exception_occurred;
     const char *ranks = NULL;
@@ -101,10 +100,8 @@ struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
     if (!(job = job_create_init ()))
         return NULL;
 
-    s = (const char *)sqlite3_column_text (res, 0);
-    assert (s);
-    job->id = (flux_jobid_t)strtoul (s, &endptr, 0);
-    flux_log (ctx->h, LOG_DEBUG, "loading job id %ju", (uintmax_t)job->id);
+    /* index 0 - id - will be taken care of below */
+    /* index 1 - t_inactive - will be taken care of below */
 
     s = (const char *)sqlite3_column_text (res, 2);
     assert (s);
