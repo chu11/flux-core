@@ -532,7 +532,7 @@ static int process_config (struct job_archive_ctx *ctx)
             return -1;
         }
 
-        if (asprintf (&ctx->dbpath, "%s/job-archive.sqlite", dbdir) < 0) {
+        if (asprintf (&ctx->dbpath, "%s/job-db.sqlite", dbdir) < 0) {
             flux_log_error (ctx->h, "asprintf");
             return -1;
         }
