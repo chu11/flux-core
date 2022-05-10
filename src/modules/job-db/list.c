@@ -123,8 +123,10 @@ struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
 
     s = (const char *)sqlite3_column_text (res, 5);
     assert (s);
-    job->R = json_loads (s, 0, NULL);
-    assert (job->R);
+    if (strlen (s) > 0) {
+        job->R = json_loads (s, 0, NULL);
+        assert (job->R);
+    }
 
     if (json_unpack (job->job_blob, "{s:I s:i s:i s:I s:i s:i s?:s s?:i s?:s s:i s:s s?:i s:b s:i s?:f s?:o s?:o s:b s?:s s?:i s?:s s:f s?:f s?:f s:f}",
                      "id", &job->id,
@@ -159,10 +161,16 @@ struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
     job->success = success;
     job->exception_occurred = exception_occurred;
 
-    job->ranks = strdup (ranks);
-    assert (job->ranks);
-    job->nodelist = strdup (nodelist);
-    assert (job->nodelist);
+    if (job->name && !strlen (job->name))
+        job->name = NULL;
+    if (ranks && strlen (ranks) > 0) {
+        job->ranks = strdup (ranks);
+        assert (job->ranks);
+    }
+    if (nodelist && strlen (nodelist) > 0) {
+        job->nodelist = strdup (nodelist);
+        assert (job->nodelist);
+    }
 
     return job;
 }
