@@ -142,6 +142,10 @@ struct job {
     double t_inactive;
 };
 
+struct job *job_create_init (void);
+
+void job_destroy (void *data);
+
 struct job_state_ctx *job_state_create (struct list_ctx *ctx);
 
 void job_state_destroy (void *data);
