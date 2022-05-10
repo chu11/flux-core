@@ -1146,7 +1146,8 @@ static int depthfirst_map_one (struct list_ctx *ctx, const char *key,
         flux_log_error (ctx->h, "%s: zhashx_insert", __FUNCTION__);
         goto done;
     }
-    job_insert_list (ctx->jsctx, job, job->state);
+    if (job->state != FLUX_JOB_STATE_INACTIVE)
+        job_insert_list (ctx->jsctx, job, job->state);
 
     rc = 1;
 done:
