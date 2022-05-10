@@ -111,17 +111,17 @@ struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
     job->job_blob = json_loads (s, 0, NULL);
     assert (job->job_blob);
 
-    s = (const char *)sqlite3_column_text (res, 7);
+    s = (const char *)sqlite3_column_text (res, 3);
     assert (s);
     job->eventlog = strdup (s);
     assert (job->eventlog);
 
-    s = (const char *)sqlite3_column_text (res, 8);
+    s = (const char *)sqlite3_column_text (res, 4);
     assert (s);
     job->jobspec = json_loads (s, 0, NULL);
     assert (job->jobspec);
 
-    s = (const char *)sqlite3_column_text (res, 9);
+    s = (const char *)sqlite3_column_text (res, 5);
     assert (s);
     job->R = json_loads (s, 0, NULL);
     assert (job->R);
