@@ -96,7 +96,6 @@ struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
     int exception_occurred;
     const char *ranks = NULL;
     const char *nodelist = NULL;
-    json_t *annotations = NULL;
 
     if (!(job = job_create_init ()))
         return NULL;
@@ -126,7 +125,7 @@ struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
         assert (job->R);
     }
 
-    if (json_unpack (job->job_blob, "{s:I s:i s:i s:I s:i s:i s?:s s?:i s?:s s:i s:s s?:i s:b s:i s?:f s?:o s?:o s:b s?:s s?:i s?:s s:f s?:f s?:f s:f}",
+    if (json_unpack (job->job_blob, "{s:I s:i s:i s:I s:i s:i s?:s s?:i s?:s s:i s:s s?:i s:b s:i s?:f s?:O s?:O s:b s?:s s?:i s?:s s:f s?:f s?:f s:f}",
                      "id", &job->id,
                      "userid", &job->userid,
                      "urgency", &job->urgency,
@@ -169,9 +168,6 @@ struct job *sqliterow_2_job (struct list_ctx *ctx, sqlite3_stmt *res)
         job->nodelist = strdup (nodelist);
         assert (job->nodelist);
     }
-
-    if (annotations)
-        job->annotations = json_incref (annotations);
 
     return job;
 }
