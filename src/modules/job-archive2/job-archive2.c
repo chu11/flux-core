@@ -37,25 +37,20 @@
 
 const char *sql_create_table = "CREATE TABLE if not exists jobs("
                                "  id CHAR(16) PRIMARY KEY,"
-                               "  userid INT,"
-                               "  ranks TEXT,"
-                               "  t_submit REAL,"
-                               "  t_run REAL,"
-                               "  t_cleanup REAL,"
                                "  t_inactive REAL,"
+                               "  jobdata JSON,"
                                "  eventlog TEXT,"
-                               "  jobspec TEXT,"
-                               "  R TEXT"
+                               "  jobspec JSON,"
+                               "  R JSON"
     ");";
 
-const char *sql_store =                               \
-    "INSERT INTO jobs"                                \
-    "("                                               \
-    "  id,userid,ranks,"                              \
-    "  t_submit,t_run,t_cleanup,t_inactive,"          \
-    "  eventlog,jobspec,R"                            \
-    ") values ("                                      \
-    "  ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10"       \
+const char *sql_store =    \
+    "INSERT INTO jobs"     \
+    "("                    \
+    "  id,t_inactive,jobdata," \
+    "  eventlog,jobspec,R" \
+    ") values ("           \
+    "  ?1, ?2, ?3, ?4, ?5, ?6" \
     ")";
 
 const char *sql_since = "SELECT MAX(t_inactive) FROM jobs;";
@@ -258,12 +253,8 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
 {
     struct job_archive2_ctx *ctx = arg;
     json_t *job;
+    char *job_str = NULL;
     flux_jobid_t id;
-    uint32_t userid;
-    const char *ranks = NULL;
-    double t_submit = 0.0;
-    double t_run = 0.0;
-    double t_cleanup = 0.0;
     double t_inactive = 0.0;
     const char *eventlog = NULL;
     const char *jobspec = NULL;
@@ -286,15 +277,10 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
         goto out;
     }
 
-    if (json_unpack (job, "{s:I s:i s?:s s:f s?:f s?:f s:f}",
+    if (json_unpack (job, "{s:I s:f}",
                      "id", &id,
-                     "userid", &userid,
-                     "ranks", &ranks,
-                     "t_submit", &t_submit,
-                     "t_run", &t_run,
-                     "t_cleanup", &t_cleanup,
                      "t_inactive", &t_inactive) < 0) {
-        flux_log (ctx->h, LOG_ERR, "%s: parse job", __FUNCTION__);
+        flux_log (ctx->h, LOG_ERR, "%s: parse job id", __FUNCTION__);
         goto out;
     }
 
@@ -307,46 +293,26 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
         log_sqlite_error (ctx, "store: binding id");
         goto out;
     }
-    if (sqlite3_bind_int (ctx->store_stmt,
-                          2,
-                          userid) != SQLITE_OK) {
-        log_sqlite_error (ctx, "store: binding userid");
-        goto out;
-    }
-    if (sqlite3_bind_text (ctx->store_stmt,
-                           3,
-                           ranks ? ranks: "",
-                           ranks ? strlen (ranks) : 0,
-                           SQLITE_STATIC) != SQLITE_OK) {
-        log_sqlite_error (ctx, "store: binding ranks");
-        goto out;
-    }
     if (sqlite3_bind_double (ctx->store_stmt,
-                             4,
-                             t_submit) != SQLITE_OK) {
-        log_sqlite_error (ctx, "store: binding t_submit");
-        goto out;
-    }
-    if (sqlite3_bind_double (ctx->store_stmt,
-                             5,
-                             t_run) != SQLITE_OK) {
-        log_sqlite_error (ctx, "store: binding t_run");
-        goto out;
-    }
-    if (sqlite3_bind_double (ctx->store_stmt,
-                             6,
-                             t_cleanup) != SQLITE_OK) {
-        log_sqlite_error (ctx, "store: binding t_cleanup");
-        goto out;
-    }
-    if (sqlite3_bind_double (ctx->store_stmt,
-                             7,
+                             2,
                              t_inactive) != SQLITE_OK) {
         log_sqlite_error (ctx, "store: binding t_inactive");
         goto out;
     }
+    if (!(job_str = json_dumps (job, JSON_COMPACT))) {
+        errno = ENOMEM;
+        goto out;
+    }
     if (sqlite3_bind_text (ctx->store_stmt,
-                           8,
+                           3,
+                           job_str,
+                           strlen (job_str),
+                           SQLITE_STATIC) != SQLITE_OK) {
+        log_sqlite_error (ctx, "store: binding jobdata");
+        goto out;
+    }
+    if (sqlite3_bind_text (ctx->store_stmt,
+                           4,
                            eventlog,
                            strlen (eventlog),
                            SQLITE_STATIC) != SQLITE_OK) {
@@ -354,7 +320,7 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
         goto out;
     }
     if (sqlite3_bind_text (ctx->store_stmt,
-                           9,
+                           5,
                            jobspec,
                            strlen (jobspec),
                            SQLITE_STATIC) != SQLITE_OK) {
@@ -362,7 +328,7 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
         goto out;
     }
     if (sqlite3_bind_text (ctx->store_stmt,
-                           10,
+                           6,
                            R ? R: "",
                            R ? strlen (R) : 0,
                            SQLITE_STATIC) != SQLITE_OK) {
@@ -399,6 +365,7 @@ void job_info_lookup_continuation (flux_future_t *f, void *arg)
 out:
     sqlite3_reset (ctx->store_stmt);
     flux_future_destroy (f);
+    free (job_str);
     if (ctx->kvs_lookup_count
         && (--(ctx->kvs_lookup_count)) == 0) {
         flux_timer_watcher_reset (ctx->w, ctx->period, 0.);
@@ -494,8 +461,7 @@ void job_archive2_cb (flux_reactor_t *r,
                       void *arg)
 {
     struct job_archive2_ctx *ctx = arg;
-    char *attrs = "[\"userid\", \"ranks\", \"t_submit\", " \
-                   "\"t_run\", \"t_cleanup\", \"t_inactive\"]";
+    char *attrs = "[\"all\"]";
     flux_future_t *f;
 
     if (!(f = flux_job_list_inactive (ctx->h, 0, ctx->since, attrs))) {
