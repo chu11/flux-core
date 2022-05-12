@@ -75,12 +75,8 @@ db_check_entries() {
         query="select * from jobs where id=$id;"
         ${QUERYCMD} -t 10000 ${dbpath} "${query}" > query.out
         if grep -q "^id = " query.out \
-            && grep -q "userid = " query.out \
-            && grep -q "ranks = " query.out \
-            && grep -q "t_submit = " query.out \
-            && grep -q "t_run = " query.out \
-            && grep -q "t_cleanup = " query.out \
             && grep -q "t_inactive = " query.out \
+            && grep -q "jobdata = " query.out \
             && grep -q "eventlog = " query.out \
             && grep -q "jobspec = " query.out \
             && grep -q "R = " query.out
@@ -98,15 +94,34 @@ get_db_values() {
         local dbpath=$2
         query="select * from jobs where id=$id;"
         ${QUERYCMD} -t 10000 ${dbpath} "${query}" > query.out
-        userid=`grep "userid = " query.out | awk '{print \$3}'`
-        ranks=`grep "ranks = " query.out | awk '{print \$3}'`
-        t_submit=`grep "t_submit = " query.out | awk '{print \$3}'`
-        t_run=`grep "t_run = " query.out | awk '{print \$3}'`
-        t_cleanup=`grep "t_cleanup = " query.out | awk '{print \$3}'`
-        t_inactive=`grep "t_inactive = " query.out | awk '{print \$3}'`
+        jobdata=`grep "jobdata = " query.out | cut -f3- -d' '`
         eventlog=`grep "eventlog = " query.out | awk '{print \$3}'`
         jobspec=`grep "jobspec = " query.out | awk '{print \$3}'`
         R=`grep "R = " query.out | awk '{print \$3}'`
+        userid=`echo ${jobdata} | jq ".userid"`
+        urgency=`echo ${jobdata} | jq ".urgency"`
+        priority=`echo ${jobdata} | jq ".priority // empty"`
+        state=`echo ${jobdata} | jq ".state"`
+        states_mask=`echo ${jobdata} | jq ".states_mask"`
+        ranks=`echo ${jobdata} | jq ".ranks // empty"`
+        nnodes=`echo ${jobdata} | jq ".nnodes // empty"`
+        nodelist=`echo ${jobdata} | jq -r ".nodelist // empty"`
+        ntasks=`echo ${jobdata} | jq ".ntasks // empty"`
+        name=`echo ${jobdata} | jq -r ".name // empty"`
+        waitstatus=`echo ${jobdata} | jq ".waitstatus // empty"`
+        success=`echo ${jobdata} | jq ".success"`
+        result=`echo ${jobdata} | jq ".result"`
+        expiration=`echo ${jobdata} | jq ".expiration // empty"`
+        annotations=`echo ${jobdata} | jq ".annotations // empty"`
+        dependencies=`echo ${jobdata} | jq ".dependencies // empty"`
+        exception_occurred=`echo ${jobdata} | jq ".exception_occurred"`
+        exception_type=`echo ${jobdata} | jq -r ".exception_type // empty"`
+        exception_severity=`echo ${jobdata} | jq ".exception_severity // empty"`
+        exception_note=`echo ${jobdata} | jq -r ".exception_note // empty"`
+        t_submit=`echo ${jobdata} | jq ".t_submit"`
+        t_run=`echo ${jobdata} | jq ".t_run // empty"`
+        t_cleanup=`echo ${jobdata} | jq ".t_cleanup"`
+        t_inactive=`echo ${jobdata} | jq ".t_inactive"`
 }
 
 # check database values (job ran)
@@ -117,14 +132,62 @@ db_check_values_run() {
         local dbpath=$2
         get_db_values $id $dbpath
         if [ -z "$userid" ] \
+            || [ -z "$urgency" ] \
+            || [ -z "$priority" ] \
+            || [ -z "$state" ] \
+            || [ -z "$states_mask" ] \
             || [ -z "$ranks" ] \
-            || [ "$t_submit" == "0.0" ] \
-            || [ "$t_run" == "0.0" ] \
-            || [ "$t_cleanup" == "0.0" ] \
-            || [ "$t_inactive" == "0.0" ] \
+            || [ -z "$nnodes" ] \
+            || [ -z "$nodelist" ] \
+            || [ -z "$ntasks" ] \
+            || [ -z "$name" ] \
+            || [ -z "$waitstatus" ] \
+            || [ -z "$success" ] \
+            || [ -z "$result" ] \
+            || [ -z "$expiration" ] \
+            || [ -z "$t_submit" ] \
+            || [ -z "$t_run" ] \
+            || [ -z "$t_cleanup" ] \
+            || [ -z "$t_inactive" ] \
             || [ -z "$eventlog" ] \
             || [ -z "$jobspec" ] \
             || [ -z "$R" ]
+        then
+            return 1
+        fi
+        return 0
+}
+
+# check database values (job ran good)
+# arg1 - jobid
+# arg2 - database path
+db_check_values_run_success() {
+        db_check_values_run $1 $2
+        if [ $? -ne 0 ]; then
+            return 1
+        fi
+        if [ "$exception_occurred" != "false" ] \
+            || [ -n "$exception_type" ] \
+            || [ -n "$exception_severity" ] \
+            || [ -n "$exception_note" ]
+        then
+            return 1
+        fi
+        return 0
+}
+
+# check database values (job ran fail)
+# arg1 - jobid
+# arg2 - database path
+db_check_values_run_fail() {
+        db_check_values_run $1 $2
+        if [ $? -ne 0 ]; then
+            return 1
+        fi
+        if [ "$exception_occurred" != "true" ] \
+            || [ -z "$exception_type" ] \
+            || [ -z "$exception_severity" ] \
+            || [ -z "$exception_note" ]
         then
             return 1
         fi
@@ -139,14 +202,62 @@ db_check_values_no_run() {
         local dbpath=$2
         get_db_values $id $dbpath
         if [ -z "$userid" ] \
+            || [ -z "$urgency" ] \
+            || [ -z "$priority" ] \
+            || [ -z "$state" ] \
+            || [ -z "$states_mask" ] \
             || [ -n "$ranks" ] \
-            || [ "$t_submit" == "0.0" ] \
-            || [ "$t_run" != "0.0" ] \
-            || [ "$t_cleanup" == "0.0" ] \
-            || [ "$t_inactive" == "0.0" ] \
+            || [ -n "$nnodes" ] \
+            || [ -n "$nodelist" ] \
+            || [ -z "$ntasks" ] \
+            || [ -z "$name" ] \
+            || [ -n "$waitstatus" ] \
+            || [ "$success" != "false" ] \
+            || [ -z "$result" ] \
+            || [ -n "$expiration" ] \
+            || [ -z "$t_submit" ] \
+            || [ -n "$t_run" ] \
+            || [ -z "$t_cleanup" ] \
+            || [ -z "$t_inactive" ] \
             || [ -z "$eventlog" ] \
             || [ -z "$jobspec" ] \
             || [ -n "$R" ]
+        then
+            return 1
+        fi
+        return 0
+}
+
+# check database values (job did not run - canceled)
+# arg1 - jobid
+# arg2 - database path
+db_check_values_no_run_canceled() {
+        db_check_values_no_run $1 $2
+        if [ $? -ne 0 ]; then
+            return 1
+        fi
+        if [ "$exception_occurred" != "true" ] \
+            || [ "$exception_type" != "cancel" ] \
+            || [ "$exception_severity" != "0" ] \
+            || [ -n "$exception_note" ]
+        then
+            return 1
+        fi
+        return 0
+}
+
+# check database values (job did not run - w/ exception note)
+# arg1 - jobid
+# arg2 - database path
+db_check_values_no_run_exception() {
+        db_check_values_no_run $1 $2
+        if [ $? -ne 0 ]; then
+            return 1
+        fi
+        if [ "$exception_occurred" != "true" ] \
+            || [ -z "$exception_type" ] \
+            || [ "$exception_severity" != "0" ] \
+            || [ -z "$exception_note" ]
         then
             return 1
         fi
@@ -177,7 +288,7 @@ test_expect_success 'job-archive2: stores inactive job info (job good)' '
         wait_jobid_state $jobid inactive &&
         wait_db $jobid ${ARCHIVE2DB} &&
         db_check_entries $jobid ${ARCHIVE2DB} &&
-        db_check_values_run $jobid ${ARCHIVE2DB}
+        db_check_values_run_success $jobid ${ARCHIVE2DB}
 '
 
 test_expect_success 'job-archive2: stores inactive job info (job fail)' '
@@ -186,7 +297,7 @@ test_expect_success 'job-archive2: stores inactive job info (job fail)' '
         wait_jobid_state $jobid inactive &&
         wait_db $jobid ${ARCHIVE2DB} &&
         db_check_entries $jobid ${ARCHIVE2DB} &&
-        db_check_values_run $jobid ${ARCHIVE2DB}
+        db_check_values_run_fail $jobid ${ARCHIVE2DB}
 '
 
 # to ensure job canceled before we run, we submit a job to eat up all
@@ -203,7 +314,7 @@ test_expect_success 'job-archive2: stores inactive job info (job cancel)' '
         wait_jobid_state $jobid2 inactive &&
         wait_db $jobid2 ${ARCHIVE2DB} &&
         db_check_entries $jobid2 ${ARCHIVE2DB} &&
-        db_check_values_no_run $jobid2 ${ARCHIVE2DB}
+        db_check_values_no_run_canceled $jobid2 ${ARCHIVE2DB}
 '
 
 test_expect_success 'job-archive2: stores inactive job info (resources)' '
@@ -212,7 +323,7 @@ test_expect_success 'job-archive2: stores inactive job info (resources)' '
         wait_jobid_state $jobid inactive &&
         wait_db $jobid ${ARCHIVE2DB} &&
         db_check_entries $jobid ${ARCHIVE2DB} &&
-        db_check_values_no_run $jobid ${ARCHIVE2DB}
+        db_check_values_no_run_exception $jobid ${ARCHIVE2DB}
 '
 
 test_expect_success 'job-archive2: all jobs stored' '
