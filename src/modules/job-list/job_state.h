@@ -106,6 +106,8 @@ struct job {
     json_t *jobspec_job;
     json_t *jobspec_cmd;
     json_t *R;
+    char *eventlog;
+    size_t eventlog_len;
     json_t *exception_context;
 
     /* Track which states we have seen and have completed transition
