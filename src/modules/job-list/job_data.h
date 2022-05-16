@@ -58,7 +58,11 @@ struct job {
     const char *exception_note;
     flux_job_result_t result;
     json_t *annotations;
+    /* dependencies - built up
+     * dependencies_archive - recovered from archive
+     */
     struct grudgeset *dependencies;
+    json_t *dependencies_archive;
 
     /* cache of job information */
     json_t *jobspec;
@@ -68,6 +72,9 @@ struct job {
     char *eventlog;
     size_t eventlog_len;
     json_t *exception_context;
+
+    /* all job data from archive */
+    json_t *job_archive;
 
     /* Track which states we have seen and have completed transition
      * to.  We do not immediately update to the new state and place

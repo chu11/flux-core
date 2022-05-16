@@ -28,6 +28,7 @@ void job_destroy (void *data)
         free (job->nodelist);
         json_decref (job->annotations);
         grudgeset_destroy (job->dependencies);
+        json_decref (job->dependencies_archive);
         json_decref (job->jobspec);
         json_decref (job->jobspec_job);
         json_decref (job->jobspec_cmd);
@@ -35,6 +36,7 @@ void job_destroy (void *data)
         free (job->eventlog);
         json_decref (job->exception_context);
         zlist_destroy (&job->next_states);
+        json_decref (job->job_archive);
         free (job);
     }
 }
