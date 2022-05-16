@@ -102,6 +102,7 @@ struct job {
     struct grudgeset *dependencies;
 
     /* cache of job information */
+    json_t *jobspec;
     json_t *jobspec_job;
     json_t *jobspec_cmd;
     json_t *R;
