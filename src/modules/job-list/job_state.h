@@ -14,6 +14,7 @@
 #include <flux/core.h>
 #include <jansson.h>
 
+#include "job_db.h"
 #include "idsync.h"
 #include "stats.h"
 
@@ -38,6 +39,7 @@
 
 struct job_state_ctx {
     flux_t *h;
+    struct job_db_ctx *dbctx;
     struct idsync_ctx *isctx;
 
     zhashx_t *index;
@@ -58,7 +60,8 @@ struct job_state_ctx {
     flux_future_t *events;
 };
 
-struct job_state_ctx *job_state_create (struct idsync_ctx *isctx);
+struct job_state_ctx *job_state_create (struct job_db_ctx *dbctx,
+                                        struct idsync_ctx *isctx);
 
 void job_state_destroy (void *data);
 
