@@ -29,6 +29,7 @@
 
 #include "job_state.h"
 #include "job_data.h"
+#include "job_db.h"
 #include "idsync.h"
 #include "job_util.h"
 
@@ -807,12 +808,26 @@ static void process_next_state (struct list_ctx *ctx, struct job *job)
             /* FLUX_JOB_STATE_SCHED */
             /* FLUX_JOB_STATE_CLEANUP */
             /* FLUX_JOB_STATE_INACTIVE */
+            bool inactive = false;
 
-            if (st->state == FLUX_JOB_STATE_INACTIVE)
+            if (st->state == FLUX_JOB_STATE_INACTIVE) {
                 eventlog_inactive_complete (ctx, job);
+                inactive = true;
+            }
 
             update_job_state_and_list (ctx, job, st->state, st->timestamp);
             zlist_remove (job->next_states, st);
+
+            if (inactive) {
+                assert (job->state == FLUX_JOB_STATE_INACTIVE);
+
+                /* if no eventlog, assume from restart */
+                if (job->eventlog && jsctx->ctx->dbctx) {
+                    if (job_db_store (jsctx->ctx->dbctx, job) < 0)
+                        flux_log_error (jsctx->h, "%s: job_db_store",
+                                        __FUNCTION__);
+                }
+            }
         }
     }
 }

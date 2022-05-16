@@ -165,6 +165,8 @@ static void list_ctx_destroy (struct list_ctx *ctx)
         flux_msg_handler_delvec (ctx->handlers);
         if (ctx->jsctx)
             job_state_destroy (ctx->jsctx);
+        if (ctx->dbctx)
+            job_db_ctx_destroy (ctx->dbctx);
         if (ctx->idsync_lookups)
             idsync_cleanup (ctx);
         free (ctx);
@@ -172,7 +174,7 @@ static void list_ctx_destroy (struct list_ctx *ctx)
     }
 }
 
-static struct list_ctx *list_ctx_create (flux_t *h)
+static struct list_ctx *list_ctx_create (flux_t *h, int argc, char **argv)
 {
     struct list_ctx *ctx = calloc (1, sizeof (*ctx));
     if (!ctx)
@@ -184,6 +186,10 @@ static struct list_ctx *list_ctx_create (flux_t *h)
         goto error;
     if (!(ctx->jsctx = job_state_create (ctx)))
         goto error;
+    if (!(ctx->dbctx = job_db_setup (h, argc, argv))) {
+        if (errno != ENOTBLK)
+            goto error;
+    }
     if (idsync_setup (ctx) < 0)
         goto error;
     return ctx;
@@ -197,7 +203,7 @@ int mod_main (flux_t *h, int argc, char **argv)
     struct list_ctx *ctx;
     int rc = -1;
 
-    if (!(ctx = list_ctx_create (h))) {
+    if (!(ctx = list_ctx_create (h, argc, argv))) {
         flux_log_error (h, "initialization error");
         goto done;
     }
