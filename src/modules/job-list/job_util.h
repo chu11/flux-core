@@ -17,6 +17,10 @@
 
 json_t *job_to_json (struct job *job, json_t *attrs, flux_error_t *errp);
 
+/* similar to job_to_json(), but all data to be stored in db.
+ */
+json_t *job_to_json_dbdata (struct job *job, job_list_error_t *errp);
+
 #endif /* ! _FLUX_JOB_LIST_JOB_UTIL_H */
 
 /*
