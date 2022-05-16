@@ -8,30 +8,18 @@
  * SPDX-License-Identifier: LGPL-3.0
 \************************************************************/
 
-#ifndef _FLUX_JOB_LIST_H
-#define _FLUX_JOB_LIST_H
+#ifndef _FLUX_JOB_LIST_UTIL_H
+#define _FLUX_JOB_LIST_UTIL_H
 
-#include <flux/core.h>
+#include <stdarg.h>
 
-#include "src/common/libczmqcontainers/czmq_containers.h"
+#include "job_data.h"
 
-#include "job_state.h"
-#include "job_db.h"
+void __attribute__((format (printf, 2, 3)))
+log_sqlite_error (struct job_db_ctx *ctx, const char *fmt, ...);
 
-struct list_ctx {
-    flux_t *h;
-    flux_msg_handler_t **handlers;
-    struct job_state_ctx *jsctx;
-    struct job_db_ctx *dbctx;
-    zlistx_t *idsync_lookups;
-    zhashx_t *idsync_waits;
-};
-
-const char **job_attrs (void);
-
-#endif /* _FLUX_JOB_LIST_H */
+#endif /* ! _FLUX_JOB_LIST_UTIL_H */
 
 /*
  * vi:tabstop=4 shiftwidth=4 expandtab
  */
-

@@ -10,7 +10,8 @@ AM_CPPFLAGS = \
 	-I$(top_srcdir)/src/include \
 	-I$(top_builddir)/src/common/libflux \
 	$(FLUX_SECURITY_CFLAGS) \
-	$(JANSSON_CFLAGS)
+	$(JANSSON_CFLAGS) \
+	$(SQLITE_CFLAGS)
 
 fluxmod_LTLIBRARIES = job-list.la
 
@@ -21,6 +22,8 @@ job_list_la_SOURCES = \
 	job_state.c \
 	job_data.h \
 	job_data.c \
+	job_db.h \
+	job_db.c \
 	list.h \
 	list.c \
 	job_util.h \
@@ -28,7 +31,9 @@ job_list_la_SOURCES = \
 	idsync.h \
 	idsync.c \
 	stats.h \
-	stats.c
+	stats.c \
+	util.h \
+	util.c
 
 job_list_la_LDFLAGS = $(fluxmod_ldflags) -module
 job_list_la_LIBADD = \
@@ -38,4 +43,5 @@ job_list_la_LIBADD = \
 	$(top_builddir)/src/common/libflux-optparse.la \
 	$(top_builddir)/src/common/librlist/librlist.la \
 	$(JANSSON_LIBS) \
-	$(HWLOC_LIBS)
+	$(HWLOC_LIBS) \
+	$(SQLITE_LIBS)
