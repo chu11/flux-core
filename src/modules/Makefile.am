@@ -164,6 +164,7 @@ job_list_la_LIBADD = \
 	$(top_builddir)/src/common/libflux-core.la \
 	$(top_builddir)/src/common/libflux-optparse.la \
 	$(top_builddir)/src/common/librlist/librlist.la \
+	$(top_builddir)/src/common/libsqlite3/libsqlite3.la \
 	$(JANSSON_LIBS)
 job_list_la_LDFLAGS = $(fluxmod_ldflags) -module
 
