@@ -24,10 +24,20 @@ extern "C" {
  * operations will be illegal to compact and result in an error.  Most
  * notably, if a key has data appended to it, then is overwritten in
  * the same transaction, a compaction of appends is not possible.
+ *
+ * FLUX_KVS_SYNC will ensure all data flushed to the backing store and
+ * the root reference is checkpointed.  It effectively performs a:
+ *
+ * flux_kvs_commit_get_rootref() on the commit response
+ * perform a content.flush on rank 0
+ * checkpoint on the root reference from step 1
+ *
+ * after the commit is done.
  */
 enum kvs_commit_flags {
     FLUX_KVS_NO_MERGE = 1, /* disallow commits to be mergeable with others */
     FLUX_KVS_TXN_COMPACT = 2, /* try to combine ops on same key within txn */
+    FLUX_KVS_SYNC = 4, /* flush and checkpoint after commit is done */
 };
 
 flux_future_t *flux_kvs_commit (flux_t *h, const char *ns, int flags,
