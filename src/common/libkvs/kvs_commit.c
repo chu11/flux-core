@@ -96,6 +96,30 @@ error:
     return NULL;
 }
 
+static void commit_continuation (flux_future_t *f, void *arg)
+{
+    flux_future_t *f2 = arg;
+    flux_future_fulfill_with (f2, f);
+    flux_future_destroy (f);
+}
+
+static flux_future_t *commit_sync (flux_t *h, flux_future_t *f)
+{
+    flux_future_t *f2 = flux_future_create (NULL, NULL);
+
+    if (!f2)
+        return NULL;
+
+    flux_future_set_flux (f2, h);
+
+    if (flux_future_then (f, -1., commit_continuation, f2) < 0) {
+        flux_future_destroy (f2);
+        return NULL;
+    }
+
+    return f2;
+}
+
 flux_future_t *flux_kvs_commit (flux_t *h, const char *ns, int flags,
                                 flux_kvs_txn_t *txn)
 {
@@ -136,6 +160,14 @@ flux_future_t *flux_kvs_commit (flux_t *h, const char *ns, int flags,
 
     if (flux_future_aux_set (f, auxkey, ctx, (flux_free_f)free_ctx) < 0)
         goto error_future;
+
+    if (flags & FLUX_KVS_SYNC) {
+        flux_future_t *f2;
+        if (!(f2 = commit_sync (h, f)))
+            goto error_future;
+        flags &= ~FLUX_KVS_SYNC;
+        f = f2;
+    }
 
     return f;
 
