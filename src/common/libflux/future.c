@@ -15,6 +15,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <float.h>
 #include <assert.h>
 
 #include "src/common/libczmqcontainers/czmq_containers.h"
@@ -108,20 +109,19 @@ static int now_context_set_timeout (struct now_context *now,
                                     double timeout, void *arg)
 {
     if (now) {
-        if (timeout < 0.)       // disable
-            flux_watcher_stop (now->timer);
-        else {
-            if (!now->timer) {  // set
-                now->timer = flux_timer_watcher_create (now->r, timeout, 0.,
-                                                        now_timer_cb, arg);
-                if (!now->timer)
-                    return -1;
-            }
-            else {              // reset
-                flux_timer_watcher_reset (now->timer, timeout, 0.);
-            }
-            flux_watcher_start (now->timer);
+        if (timeout < 0.)
+            timeout = DBL_MAX;
+
+        if (!now->timer) {  // set
+            now->timer = flux_timer_watcher_create (now->r, timeout, 0.,
+                                                    now_timer_cb, arg);
+            if (!now->timer)
+                return -1;
         }
+        else {              // reset
+            flux_timer_watcher_reset (now->timer, timeout, 0.);
+        }
+        flux_watcher_start (now->timer);
     }
     return 0;
 }
@@ -182,16 +182,15 @@ static int then_context_set_timeout (struct then_context *then,
     if (then) {
         then->timeout = timeout;
         if (timeout < 0.)
-            flux_watcher_stop (then->timer);
-        else {
-            if (!then->timer) {
-                then->timer = flux_timer_watcher_create (then->r, 0., timeout,
-                                                         then_timer_cb, arg);
-                if (!then->timer)
-                    return -1;
-            }
-            flux_timer_watcher_again (then->timer);
+            timeout = DBL_MAX;
+
+        if (!then->timer) {
+            then->timer = flux_timer_watcher_create (then->r, 0., timeout,
+                                                     then_timer_cb, arg);
+            if (!then->timer)
+                return -1;
         }
+        flux_timer_watcher_again (then->timer);
     }
     return 0;
 }
