@@ -402,6 +402,9 @@ void verify_ready_kvstxn (kvstxn_mgr_t *ktm,
     ok (kvstxn_get_flags (kt) == flags,
         "flags do not match");
 
+    ok (kvstxn_is_sync (kt) == false,
+        "is not a sync transaction");
+
     ok (kvstxn_get_newroot_ref (kt) == NULL,
         "kvstxn_get_newroot returns NULL on non-processed transaction");
 
@@ -686,6 +689,16 @@ void kvstxn_corner_case_tests (void)
         && kvstxn_get_errnum (kt) == EINVAL,
         "kvstxn_sync_checkpoint returns EINVAL on FLUX_KVS_SYNC "
         "with non-default namespace");
+
+    kvstxn_mgr_remove_transaction (ktm, kt, false);
+
+    /* Prepending a sync transaction twice does nothing */
+
+    ok (kvstxn_mgr_prepend_sync (ktm, 1) == 0,
+        "kvstxn_mgr_prepend_sync works");
+
+    ok (kvstxn_mgr_prepend_sync (ktm, 2) == 0,
+        "kvstxn_mgr_prepend_sync works second time");
 
     kvstxn_mgr_destroy (ktm);
     cache_destroy (cache);

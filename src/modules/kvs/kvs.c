@@ -29,11 +29,13 @@
 #include "src/common/libutil/monotime.h"
 #include "src/common/libutil/tstat.h"
 #include "src/common/libutil/timestamp.h"
+#include "src/common/libutil/errprintf.h"
 #include "src/common/libkvs/treeobj.h"
 #include "src/common/libkvs/kvs_checkpoint.h"
 #include "src/common/libkvs/kvs_txn_private.h"
 #include "src/common/libkvs/kvs_util_private.h"
 #include "src/common/libcontent/content.h"
+#include "src/common/libutil/fsd.h"
 
 #include "waitqueue.h"
 #include "cache.h"
@@ -73,6 +75,11 @@ struct kvs_ctx {
     bool events_init;            /* flag */
     const char *hash_name;
     unsigned int seq;           /* for commit transactions */
+    double sync;                /* in seconds */
+    flux_watcher_t *sync_w;
+    bool sync_timer_started;
+    bool sync_txn_submitted;
+    bool primary_commit_since_last_sync;
     struct list_head work_queue;
 };
 
@@ -103,6 +110,7 @@ static void kvs_ctx_destroy (struct kvs_ctx *ctx)
         flux_watcher_destroy (ctx->prep_w);
         flux_watcher_destroy (ctx->check_w);
         flux_watcher_destroy (ctx->idle_w);
+        flux_watcher_destroy (ctx->sync_w);
         free (ctx);
         errno = saved_errno;
     }
@@ -903,6 +911,24 @@ static void kvstxn_apply_cb (flux_future_t *f, void *arg)
     kvstxn_apply (kt);
 }
 
+static void start_sync_timer (struct kvs_ctx *ctx)
+{
+    flux_timer_watcher_reset (ctx->sync_w, ctx->sync, 0.);
+    flux_watcher_start (ctx->sync_w);
+    ctx->sync_timer_started = true;
+}
+
+static void start_sync_timer_if_needed (struct kvs_ctx *ctx,
+                                        struct kvsroot *root)
+{
+    if (ctx->rank == 0
+        && ctx->sync > 0.0
+        && root->is_primary
+        && !ctx->sync_timer_started
+        && !ctx->sync_txn_submitted)
+        start_sync_timer (ctx);
+}
+
 /* Write all the ops for a particular commit/fence request (rank 0
  * only).  The setroot event will cause responses to be sent to the
  * transaction requests and clean up the treq_t state.  This
@@ -1051,8 +1077,21 @@ done:
             flux_log (ctx->h, LOG_DEBUG, "aggregated %d transactions (%d ops)",
                       count, opcount);
         }
-        setroot (ctx, root, kvstxn_get_newroot_ref (kt), root->seq + 1);
-        setroot_event_send (ctx, root, names, kvstxn_get_keys (kt));
+        /* If this transaction is the special internal sync
+         * transaction, no need to setroot or send event, we just
+         * checkpointed, so do nothing else */
+        if (kvstxn_is_sync (kt)) {
+            ctx->sync_txn_submitted = false;
+            if (root->is_primary)
+                ctx->primary_commit_since_last_sync = false;
+        }
+        else {
+            setroot (ctx, root, kvstxn_get_newroot_ref (kt), root->seq + 1);
+            setroot_event_send (ctx, root, names, kvstxn_get_keys (kt));
+            if (root->is_primary)
+                ctx->primary_commit_since_last_sync = true;
+            start_sync_timer_if_needed (ctx, root);
+        }
     } else {
         fallback = kvstxn_fallback_mergeable (kt);
 
@@ -1221,6 +1260,32 @@ static int heartbeat_root_cb (struct kvsroot *root, void *arg)
         (void)cache_lookup (ctx->cache, root->ref);
 
     return 0;
+}
+
+static void sync_cb (flux_reactor_t *r,
+                     flux_watcher_t *w,
+                     int revents,
+                     void *arg)
+{
+    struct kvs_ctx *ctx = arg;
+    struct kvsroot *root;
+
+    assert (ctx->sync_timer_started == true);
+    assert (ctx->sync_txn_submitted == false);
+
+    ctx->sync_timer_started = false;
+
+    /* on rank 0, primary namespace has to be here */
+    root = kvsroot_mgr_lookup_root (ctx->krm, KVS_PRIMARY_NAMESPACE);
+    assert (root);
+
+    if (kvstxn_mgr_prepend_sync (root->ktm, ctx->seq++) < 0) {
+        flux_log_error (ctx->h, "kvstxn_mgr_prepend_sync");
+        return;
+    }
+
+    ctx->sync_txn_submitted = true;
+    work_queue_check_append (ctx, root);
 }
 
 static void heartbeat_sync_cb (flux_future_t *f, void *arg)
@@ -2689,6 +2754,110 @@ error:
         flux_log_error (h, "%s: flux_respond_error", __FUNCTION__);
 }
 
+static int sync_config_parse (struct kvs_ctx *ctx,
+                              const flux_conf_t *conf,
+                              double *sync,
+                              flux_error_t *errp)
+{
+    flux_error_t error;
+    const char *syncstr = NULL;
+
+    if (flux_conf_unpack (conf,
+                          &error,
+                          "{s?{s?s}}",
+                          "kvs",
+                          "sync", &syncstr) < 0) {
+        errprintf (errp,
+                   "error reading config for kvs: %s",
+                   error.text);
+        return -1;
+    }
+
+    if (syncstr) {
+        if (fsd_parse_duration (syncstr, sync) < 0) {
+            errprintf (errp,
+                       "invalid sync config: %s",
+                       syncstr);
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+static int sync_config (struct kvs_ctx *ctx,
+                        const flux_conf_t *conf,
+                        flux_error_t *errp)
+{
+    double sync = ctx->sync;
+
+    if (sync_config_parse (ctx, conf, &sync, errp) < 0)
+        return -1;
+
+    if (ctx->rank == 0 && sync != ctx->sync) {
+        /* Potential sync timer adjustments
+         *
+         * If sync txn already submitted, let it process and new sync
+         * timer will take place next time (or not take place if sync
+         * disabled).
+         *
+         * If a timer is currently running, we take a simple approach.
+         * We stop the timer and restart it with the new time (or
+         * disable it if the timer is disabled).
+         *
+         * If no timer running, we'll just wait for next time a kvs
+         * transaction completes and let start_sync_timer_if_needed()
+         * handle it.
+         *
+         * However, we make one minor exception, if the sync was
+         * disabled before and atleast one commit has occurred, we'll
+         * start the sync timer.
+         */
+        ctx->sync = sync;
+        if (!ctx->sync_txn_submitted) {
+            if (ctx->sync_timer_started) {
+                flux_watcher_stop (ctx->sync_w);
+                if (ctx->sync > 0.0) {
+                    flux_timer_watcher_reset (ctx->sync_w, ctx->sync, 0.);
+                    flux_watcher_start (ctx->sync_w);
+                }
+                else /* ctx->sync == 0.0 */
+                    ctx->sync_timer_started = false;
+            }
+            else {
+                if (ctx->primary_commit_since_last_sync)
+                    start_sync_timer (ctx);
+            }
+        }
+    }
+
+    return 0;
+}
+
+static void reload_cb (flux_t *h,
+                       flux_msg_handler_t *mh,
+                       const flux_msg_t *msg,
+                       void *arg)
+{
+    struct kvs_ctx *ctx = arg;
+    const flux_conf_t *conf;
+    const char *errstr = NULL;
+    flux_error_t error;
+
+    if (flux_conf_reload_decode (msg, &conf) < 0)
+        goto error;
+    if (sync_config (ctx, conf, &error) < 0) {
+        errstr = error.text;
+        goto error;
+    }
+    if (flux_respond (h, msg, NULL) < 0)
+        flux_log_error (h, "error responding to config-reload request");
+    return;
+error:
+    if (flux_respond_error (h, msg, errno, errstr) < 0)
+        flux_log_error (h, "error responding to config-reload request");
+}
+
 /* see comments above in event_subscribe() regarding event
  * subscriptions to kvs.namespace */
 static const struct flux_msg_handler_spec htab[] = {
@@ -2726,8 +2895,21 @@ static const struct flux_msg_handler_spec htab[] = {
                             setroot_pause_request_cb, FLUX_ROLE_USER },
     { FLUX_MSGTYPE_REQUEST, "kvs.setroot-unpause",
                             setroot_unpause_request_cb, FLUX_ROLE_USER },
+    { FLUX_MSGTYPE_REQUEST, "kvs.config-reload", reload_cb, 0 },
     FLUX_MSGHANDLER_TABLE_END,
 };
+
+static int process_config (struct kvs_ctx *ctx)
+{
+    flux_error_t error;
+    if (sync_config (ctx,
+                     flux_get_conf (ctx->h),
+                     &error) < 0) {
+        flux_log (ctx->h, LOG_ERR, "%s", error.text);
+        return -1;
+    }
+    return 0;
+}
 
 static void process_args (struct kvs_ctx *ctx, int ac, char **av)
 {
@@ -2882,6 +3064,8 @@ int mod_main (flux_t *h, int argc, char **argv)
         flux_log_error (h, "error creating KVS context");
         goto done;
     }
+    if (process_config (ctx) < 0)
+        goto done;
     process_args (ctx, argc, argv);
     if (ctx->rank == 0) {
         struct kvsroot *root;
@@ -2936,6 +3120,15 @@ int mod_main (flux_t *h, int argc, char **argv)
                                  heartbeat_sync_cb,
                                  ctx) < 0) {
         flux_log_error (h, "error starting heartbeat synchronization");
+        goto done;
+    }
+    /* create regardless of sync value, in case user reconfigures later */
+    if (!(ctx->sync_w = flux_timer_watcher_create (flux_get_reactor (h),
+                                                   ctx->sync,
+                                                   0.0,
+                                                   sync_cb,
+                                                   ctx))) {
+        flux_log_error (h, "error creating sync timer");
         goto done;
     }
     if (flux_reactor_run (flux_get_reactor (h), 0) < 0) {

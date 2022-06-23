@@ -37,6 +37,7 @@
 #define KVSTXN_PROCESSING      0x01
 #define KVSTXN_MERGED          0x02 /* kvstxn is a merger of transactions */
 #define KVSTXN_MERGE_COMPONENT 0x04 /* kvstxn is member of a merger */
+#define KVSTXN_SYNC_ONLY       0x08 /* is special kvstxn sync w/ no ops */
 
 struct kvstxn_mgr {
     struct cache *cache;
@@ -44,6 +45,7 @@ struct kvstxn_mgr {
     const char *hash_name;
     int noop_stores;            /* for kvs.stats.get, etc.*/
     zlist_t *ready;
+    kvstxn_t *sync_kt;
     flux_t *h;
     void *aux;
 };
@@ -201,6 +203,11 @@ json_t *kvstxn_get_names (kvstxn_t *kt)
 int kvstxn_get_flags (kvstxn_t *kt)
 {
     return kt->flags;
+}
+
+bool kvstxn_is_sync (kvstxn_t *kt)
+{
+    return (kt->internal_flags & KVSTXN_SYNC_ONLY);
 }
 
 const char *kvstxn_get_namespace (kvstxn_t *kt)
@@ -1236,6 +1243,7 @@ void kvstxn_mgr_destroy (kvstxn_mgr_t *ktm)
     if (ktm) {
         if (ktm->ready)
             zlist_destroy (&ktm->ready);
+        kvstxn_destroy (ktm->sync_kt);
         free (ktm);
     }
 }
@@ -1268,11 +1276,50 @@ int kvstxn_mgr_add_transaction (kvstxn_mgr_t *ktm,
     return 0;
 }
 
+int kvstxn_mgr_prepend_sync (kvstxn_mgr_t *ktm, unsigned int seq)
+{
+    kvstxn_t *kt = NULL;
+    char *name = NULL;
+    int save_errno;
+
+    /* N.B. we "fake" prepend to the ready list by storing the sync
+     * transaction in a variable in the kvstxn_mgr_t.  If we really
+     * prepended it, that could mess up an in progress transaction or
+     * fallbacks.
+     */
+
+    /* one already active, no need for another */
+    if (ktm->sync_kt)
+        return 0;
+
+    if (asprintf (&name, "sync.%u", seq) < 0)
+        goto error;
+
+    if (!(kt = kvstxn_create (ktm,
+                              name,
+                              NULL, /* no ops for a sync */
+                              FLUX_KVS_SYNC)))
+        goto error;
+    kt->internal_flags |= KVSTXN_SYNC_ONLY;
+    ktm->sync_kt = kt;
+    free (name);
+    return 0;
+
+error:
+    save_errno = errno;
+    kvstxn_destroy (kt);
+    free (name);
+    errno = save_errno;
+    return -1;
+}
+
 bool kvstxn_mgr_transaction_ready (kvstxn_mgr_t *ktm)
 {
-    kvstxn_t *kt;
+    kvstxn_t *kt = zlist_first (ktm->ready);
 
-    if ((kt = zlist_first (ktm->ready)) && !kt->blocked)
+    if (kt && kt->blocked)
+        return false;
+    if (ktm->sync_kt || (kt && !kt->blocked))
         return true;
     return false;
 }
@@ -1280,7 +1327,11 @@ bool kvstxn_mgr_transaction_ready (kvstxn_mgr_t *ktm)
 kvstxn_t *kvstxn_mgr_get_ready_transaction (kvstxn_mgr_t *ktm)
 {
     if (kvstxn_mgr_transaction_ready (ktm)) {
-        kvstxn_t *kt = zlist_first (ktm->ready);
+        kvstxn_t *kt;
+        if (ktm->sync_kt)
+            kt = ktm->sync_kt;
+        else
+            kt = zlist_first (ktm->ready);
         kt->internal_flags |= KVSTXN_PROCESSING;
         return kt;
     }
@@ -1290,6 +1341,12 @@ kvstxn_t *kvstxn_mgr_get_ready_transaction (kvstxn_mgr_t *ktm)
 void kvstxn_mgr_remove_transaction (kvstxn_mgr_t *ktm, kvstxn_t *kt,
                                     bool fallback)
 {
+    if (kt->internal_flags & KVSTXN_SYNC_ONLY) {
+        assert (ktm->sync_kt == kt);
+        kvstxn_destroy (ktm->sync_kt);
+        ktm->sync_kt = NULL;
+        return;
+    }
     if (kt->internal_flags & KVSTXN_PROCESSING) {
         bool kvstxn_is_merged = false;
 
@@ -1399,6 +1456,10 @@ int kvstxn_mgr_merge_ready_transactions (kvstxn_mgr_t *ktm)
     kvstxn_t *first, *second, *new;
     kvstxn_t *nextkt;
     int count = 0;
+
+    /* don't merge anything if sync is ready to go */
+    if (ktm->sync_kt)
+        return 0;
 
     /* transaction must still be in state where merged in ops can be
      * applied. */

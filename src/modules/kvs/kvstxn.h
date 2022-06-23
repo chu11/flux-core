@@ -61,6 +61,10 @@ json_t *kvstxn_get_ops (kvstxn_t *kt);
 json_t *kvstxn_get_names (kvstxn_t *kt);
 int kvstxn_get_flags (kvstxn_t *kt);
 
+/* is special kvstxn sync transaction, see
+ * kvstxn_mgr_prepend_sync() */
+bool kvstxn_is_sync (kvstxn_t *kt);
+
 /* returns namespace passed into kvstxn_mgr_create() */
 const char *kvstxn_get_namespace (kvstxn_t *kt);
 
@@ -156,6 +160,13 @@ int kvstxn_mgr_add_transaction (kvstxn_mgr_t *ktm,
                                 const char *name,
                                 json_t *ops,
                                 int flags);
+
+/* kvstxn_mgr_prepend_sync() is similar to
+ * kvstxn_mgr_add_transaction(), but it creates a special sync
+ * transaction (setting the FLUX_KVS_SYNC flag) that will be
+ * pre-pended to the transaction queue.
+ */
+int kvstxn_mgr_prepend_sync (kvstxn_mgr_t *ktm, unsigned int seq);
 
 /* returns true if there is a transaction ready for processing and is
  * not blocked, false if not.
