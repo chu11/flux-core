@@ -606,6 +606,133 @@ error:
         flux_log_error (h, "content store: flux_respond_error");
 }
 
+static void checkpoint_get_continuation (flux_future_t *f, void *arg)
+{
+    struct content_cache *cache = arg;
+    const flux_msg_t *msg = flux_future_aux_get (f, "msg");
+    const char *s;
+
+    assert (msg);
+
+    if (flux_rpc_get (f, &s) < 0)
+        goto error;
+
+    if (flux_respond (cache->h, msg, s) < 0) {
+        flux_log_error (cache->h, "%s: flux_respond", __FUNCTION__);
+        goto error;
+    }
+
+    flux_future_destroy (f);
+    return;
+
+error:
+    if (flux_respond_error (cache->h, msg, errno, NULL) < 0)
+        flux_log_error (cache->h, "flux_respond_error");
+    flux_future_destroy (f);
+}
+
+/* flux_free_f type */
+static void flux_msg_decref_wrapper (void *arg)
+{
+    const flux_msg_t *msg = arg;
+    flux_msg_decref (msg);
+}
+
+void content_checkpoint_get_request (flux_t *h, flux_msg_handler_t *mh,
+                                     const flux_msg_t *msg, void *arg)
+{
+    struct content_cache *cache = arg;
+    const char *topic = "content-backing.checkpoint-get";
+    const char *s = NULL;
+    flux_future_t *f = NULL;
+
+    /* Temporarily maintain ENOSYS behavior */
+    if (!cache->backing) {
+        errno = ENOSYS;
+        goto error;
+    }
+
+    if (flux_request_decode (msg, NULL, &s) < 0)
+        goto error;
+
+    if (!(f = flux_rpc (h, topic, s, 0, 0))
+        || flux_future_aux_set (f,
+                                "msg",
+                                (void *)flux_msg_incref (msg),
+                                flux_msg_decref_wrapper) < 0
+        || flux_future_then (f, -1, checkpoint_get_continuation, cache) < 0) {
+        flux_log_error (h, "%s: checkpoint backing get", __FUNCTION__);
+        goto error;
+    }
+
+    return;
+
+error:
+    if (flux_respond_error (h, msg, errno, NULL) < 0)
+        flux_log_error (h, "flux_respond_error");
+    flux_future_destroy (f);
+}
+
+static void checkpoint_put_continuation (flux_future_t *f, void *arg)
+{
+    struct content_cache *cache = arg;
+    const flux_msg_t *msg = flux_future_aux_get (f, "msg");
+    const char *s;
+
+    assert (msg);
+
+    if (flux_rpc_get (f, &s) < 0)
+        goto error;
+
+    if (flux_respond (cache->h, msg, s) < 0) {
+        flux_log_error (cache->h, "%s: flux_respond", __FUNCTION__);
+        goto error;
+    }
+
+    flux_future_destroy (f);
+    return;
+
+error:
+    if (flux_respond_error (cache->h, msg, errno, NULL) < 0)
+        flux_log_error (cache->h, "flux_respond_error");
+    flux_future_destroy (f);
+}
+
+void content_checkpoint_put_request (flux_t *h, flux_msg_handler_t *mh,
+                                     const flux_msg_t *msg, void *arg)
+{
+    struct content_cache *cache = arg;
+    const char *topic = "content-backing.checkpoint-put";
+    const char *s = NULL;
+    flux_future_t *f = NULL;
+
+    /* Temporarily maintain ENOSYS behavior */
+    if (!cache->backing) {
+        errno = ENOSYS;
+        goto error;
+    }
+
+    if (flux_request_decode (msg, NULL, &s) < 0)
+        goto error;
+
+    if (!(f = flux_rpc (h, topic, s, 0, 0))
+        || flux_future_aux_set (f,
+                             "msg",
+                             (void *)flux_msg_incref (msg),
+                             flux_msg_decref_wrapper) < 0
+        || flux_future_then (f, -1, checkpoint_put_continuation, cache) < 0) {
+        flux_log_error (h, "%s: checkpoint backing put", __FUNCTION__);
+        goto error;
+    }
+
+    return;
+
+error:
+    if (flux_respond_error (h, msg, errno, NULL) < 0)
+        flux_log_error (h, "flux_respond_error");
+    flux_future_destroy (f);
+}
+
 /* Backing store is enabled/disabled by modules that provide the
  * 'content.backing' service.  At module load time, the backing module
  * informs the content service of its availability, and entries are
@@ -873,6 +1000,18 @@ static const struct flux_msg_handler_spec htab[] = {
         FLUX_MSGTYPE_REQUEST,
         "content.store",
         content_store_request,
+        0
+    },
+    {
+        FLUX_MSGTYPE_REQUEST,
+        "content.checkpoint-get",
+        content_checkpoint_get_request,
+        0
+    },
+    {
+        FLUX_MSGTYPE_REQUEST,
+        "content.checkpoint-put",
+        content_checkpoint_put_request,
         0
     },
     {
