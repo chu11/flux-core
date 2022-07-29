@@ -15,6 +15,7 @@
 #endif
 #include <inttypes.h>
 #include <assert.h>
+#include <jansson.h>
 #include <flux/core.h>
 
 #include "src/common/libczmqcontainers/czmq_containers.h"
@@ -99,6 +100,17 @@ struct content_cache {
     uint64_t acct_size;             // total size of all cache entries
     uint32_t acct_valid;            // count of valid cache entries
     uint32_t acct_dirty;            // count of dirty cache entries
+
+    zhashx_t *checkpoints;
+    unsigned int checkpoints_dirty;
+};
+
+struct checkpoint_data {
+    struct content_cache *cache;
+    json_t *value;
+    uint8_t dirty:1;
+    bool in_progress;
+    int refcount;
 };
 
 static void flush_respond (struct content_cache *cache);
@@ -220,6 +232,62 @@ static struct cache_entry *cache_entry_create (const void *hash)
     memcpy (e->hash, hash, content_hash_size);
     list_node_init (&e->list);
     return e;
+}
+
+static struct checkpoint_data *
+    checkpoint_data_incref (struct checkpoint_data *data)
+{
+    if (data)
+        data->refcount++;
+    return data;
+}
+
+static void checkpoint_data_decref (struct checkpoint_data *data)
+{
+    if (data && --data->refcount == 0) {
+        if (data->dirty)
+            data->cache->checkpoints_dirty--;
+        json_decref (data->value);
+        free (data);
+    }
+}
+
+/* zhashx_destructor_fn */
+static void checkpoint_data_decref_wrapper (void **arg)
+{
+    if (arg) {
+        struct checkpoint_data *data = *arg;
+        checkpoint_data_decref (data);
+    }
+}
+
+static struct checkpoint_data *
+    checkpoint_data_create (struct content_cache *cache,
+                            json_t *value)
+{
+    struct checkpoint_data *data = NULL;
+
+    if (!(data = calloc (1, sizeof (*data))))
+        return NULL;
+    data->cache = cache;
+    data->value = json_incref (value);
+    data->refcount = 1;
+    return data;
+}
+
+static int checkpoint_data_update (struct content_cache *cache,
+                                   const char *key,
+                                   json_t *value)
+{
+    struct checkpoint_data *data = NULL;
+
+    if (!(data = checkpoint_data_create (cache, value)))
+        return -1;
+
+    zhashx_update (cache->checkpoints, key, data);
+    data->dirty = 1;
+    cache->checkpoints_dirty++;
+    return 0;
 }
 
 /* Make an invalid cache entry valid, filling in its data.
@@ -610,15 +678,20 @@ static void checkpoint_get_continuation (flux_future_t *f, void *arg)
 {
     struct content_cache *cache = arg;
     const flux_msg_t *msg = flux_future_aux_get (f, "msg");
-    const char *s;
+    const char *key = flux_future_aux_get (f, "key");
+    json_t *value = NULL;
 
     assert (msg);
+    assert (key);
 
-    if (flux_rpc_get (f, &s) < 0)
+    if (flux_rpc_get_unpack (f, "{s:o}", "value", &value) < 0)
         goto error;
 
-    if (flux_respond (cache->h, msg, s) < 0) {
-        flux_log_error (cache->h, "%s: flux_respond", __FUNCTION__);
+    if (checkpoint_data_update (cache, key, value) < 0)
+        goto error;
+
+    if (flux_respond_pack (cache->h, msg, "{s:O}", "value", value) < 0) {
+        flux_log_error (cache->h, "%s: flux_respond_pack", __FUNCTION__);
         goto error;
     }
 
@@ -643,23 +716,35 @@ void content_checkpoint_get_request (flux_t *h, flux_msg_handler_t *mh,
 {
     struct content_cache *cache = arg;
     const char *topic = "content-backing.checkpoint-get";
-    const char *s = NULL;
+    const char *key;
     flux_future_t *f = NULL;
+    const char *errstr = NULL;
 
-    /* Temporarily maintain ENOSYS behavior */
-    if (!cache->backing) {
-        errno = ENOSYS;
+    if (flux_request_unpack (msg, NULL, "{s:s}", "key", &key) < 0)
         goto error;
+
+    if (!cache->backing) {
+        struct checkpoint_data *data = zhashx_lookup (cache->checkpoints, key);
+        if (!data) {
+            errstr = "checkpoint key unavailable";
+            errno = ENOENT;
+            goto error;
+        }
+        if (flux_respond_pack (cache->h, msg,
+                               "{s:O}",
+                               "value", data->value) < 0) {
+            flux_log_error (cache->h, "%s: flux_respond_pack", __FUNCTION__);
+            goto error;
+        }
+        return;
     }
 
-    if (flux_request_decode (msg, NULL, &s) < 0)
-        goto error;
-
-    if (!(f = flux_rpc (h, topic, s, 0, 0))
+    if (!(f = flux_rpc_pack (h, topic, 0, 0, "{s:s}", "key", key))
         || flux_future_aux_set (f,
                                 "msg",
                                 (void *)flux_msg_incref (msg),
                                 flux_msg_decref_wrapper) < 0
+        || flux_future_aux_set (f, "key", (void *)key, NULL) < 0
         || flux_future_then (f, -1, checkpoint_get_continuation, cache) < 0) {
         flux_log_error (h, "%s: checkpoint backing get", __FUNCTION__);
         goto error;
@@ -668,7 +753,7 @@ void content_checkpoint_get_request (flux_t *h, flux_msg_handler_t *mh,
     return;
 
 error:
-    if (flux_respond_error (h, msg, errno, NULL) < 0)
+    if (flux_respond_error (h, msg, errno, errstr) < 0)
         flux_log_error (h, "flux_respond_error");
     flux_future_destroy (f);
 }
@@ -703,23 +788,38 @@ void content_checkpoint_put_request (flux_t *h, flux_msg_handler_t *mh,
 {
     struct content_cache *cache = arg;
     const char *topic = "content-backing.checkpoint-put";
-    const char *s = NULL;
+    const char *key;
+    json_t *value;
     flux_future_t *f = NULL;
 
-    /* Temporarily maintain ENOSYS behavior */
-    if (!cache->backing) {
-        errno = ENOSYS;
+    if (flux_request_unpack (msg,
+                             NULL,
+                             "{s:s s:o}",
+                             "key",
+                             &key,
+                             "value",
+                             &value) < 0)
         goto error;
+
+    if (checkpoint_data_update (cache, key, value) < 0)
+        goto error;
+
+    if (!cache->backing) {
+        if (flux_respond (h, msg, NULL) < 0) {
+            flux_log_error (cache->h, "%s: flux_respond", __FUNCTION__);
+            goto error;
+        }
+        return;
     }
 
-    if (flux_request_decode (msg, NULL, &s) < 0)
-        goto error;
-
-    if (!(f = flux_rpc (h, topic, s, 0, 0))
+    if (!(f = flux_rpc_pack (h, topic, 0, 0,
+                             "{s:s s:O}",
+                             "key", key,
+                             "value", value))
         || flux_future_aux_set (f,
-                             "msg",
-                             (void *)flux_msg_incref (msg),
-                             flux_msg_decref_wrapper) < 0
+                                "msg",
+                                (void *)flux_msg_incref (msg),
+                                flux_msg_decref_wrapper) < 0
         || flux_future_then (f, -1, checkpoint_put_continuation, cache) < 0) {
         flux_log_error (h, "%s: checkpoint backing put", __FUNCTION__);
         goto error;
@@ -759,6 +859,72 @@ static int cache_flush (struct content_cache *cache)
                 break;
         }
         (void)list_pop (&cache->flush, struct cache_entry, list);
+    }
+    if (rc < 0)
+        errno = last_errno;
+    return rc;
+}
+
+static void checkpoint_flush_continuation (flux_future_t *f, void *arg)
+{
+    struct checkpoint_data *data = arg;
+    int rv;
+
+    assert (data);
+    if ((rv = flux_rpc_get (f, NULL)) < 0)
+        flux_log_error (data->cache->h, "checkpoint flush rpc");
+    if (!rv) {
+        data->dirty = 0;
+        data->cache->checkpoints_dirty--;
+    }
+    data->in_progress = false;
+    checkpoint_data_decref (data);
+    flux_future_destroy (f);
+}
+
+static int checkpoint_flush (struct content_cache *cache,
+                             struct checkpoint_data *data)
+{
+    if (data->dirty && !data->in_progress) {
+        const char *key = zhashx_cursor (cache->checkpoints);
+        const char *topic = "content-backing.checkpoint-put";
+        flux_future_t *f;
+        if (!(f = flux_rpc_pack (cache->h, topic, 0, 0,
+                                 "{s:s s:O}",
+                                 "key", key,
+                                 "value", data->value))
+            || flux_future_then (f,
+                                 -1,
+                                 checkpoint_flush_continuation,
+                                 (void *)checkpoint_data_incref (data)) < 0) {
+            flux_log_error (cache->h, "%s: checkpoint flush", __FUNCTION__);
+            flux_future_destroy (f);
+            return -1;
+        }
+        data->in_progress = true;
+    }
+    return 0;
+ }
+
+static int checkpoints_flush (struct content_cache *cache)
+{
+    int last_errno = 0;
+    int rc = 0;
+
+    if (cache->checkpoints_dirty > 0) {
+        struct checkpoint_data *data = zhashx_first (cache->checkpoints);
+        while (data) {
+            if (checkpoint_flush (cache, data) < 0) {
+                last_errno = errno;
+                rc = -1;
+                /* A few errors we will consider "unrecoverable", so
+                 * break out */
+                if (errno == ENOSYS
+                    || errno == ENOMEM)
+                    break;
+            }
+            data = zhashx_next (cache->checkpoints);
+        }
     }
     if (rc < 0)
         errno = last_errno;
@@ -805,6 +971,7 @@ static void content_register_backing_request (flux_t *h,
     if (flux_respond (h, msg, NULL) < 0)
         flux_log_error (h, "error responding to register-backing request");
     (void)cache_flush (cache);
+    (void)checkpoints_flush (cache);
     return;
 error:
     if (flux_respond_error (h, msg, errno, errstr) < 0)
@@ -1144,6 +1311,11 @@ struct content_cache *content_cache_create (flux_t *h, attr_t *attrs)
     zhashx_set_key_comparator (cache->entries, cache_entry_comparator);
     zhashx_set_key_destructor (cache->entries, NULL); // key is part of entry
     zhashx_set_key_duplicator (cache->entries, NULL); // key is part of entry
+
+    if (!(cache->checkpoints = zhashx_new ()))
+        goto nomem;
+
+    zhashx_set_destructor (cache->checkpoints, checkpoint_data_decref_wrapper);
 
     cache->rank = FLUX_NODEID_ANY;
     cache->blob_size_limit = default_blob_size_limit;
