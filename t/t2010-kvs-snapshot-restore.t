@@ -16,8 +16,10 @@ CHANGECHECKPOINT=${FLUX_SOURCE_DIR}/t/kvs/change-checkpoint.py
 #
 
 test_expect_success 'run instance with statedir set (sqlite)' '
-	flux start -o,--setattr=statedir=$(pwd) \
-	           flux kvs put testkey=42
+	flux start \
+		-o,--setattr=statedir=$(pwd) \
+		-o,--setattr=content.backing-module=content-sqlite \
+	        flux kvs put testkey=42
 '
 
 test_expect_success 'content.sqlite file exists after instance exited' '
@@ -26,8 +28,10 @@ test_expect_success 'content.sqlite file exists after instance exited' '
 '
 
 test_expect_success 're-run instance with statedir set (sqlite)' '
-	flux start -o,--setattr=statedir=$(pwd) \
-	           flux kvs get testkey >getsqlite.out
+	flux start \
+		-o,--setattr=statedir=$(pwd) \
+		-o,--setattr=content.backing-module=content-sqlite \
+	        flux kvs get testkey >getsqlite.out
 '
 
 test_expect_success 'content from previous instance survived (sqlite)' '
@@ -36,8 +40,10 @@ test_expect_success 'content from previous instance survived (sqlite)' '
 '
 
 test_expect_success 're-run instance, verify checkpoint date saved (sqlite)' '
-	flux start -o,--setattr=statedir=$(pwd) \
-	           flux dmesg >dmesgsqlite1.out
+	flux start \
+		-o,--setattr=statedir=$(pwd) \
+		-o,--setattr=content.backing-module=content-sqlite \
+	         flux dmesg >dmesgsqlite1.out
 '
 
 # just check for todays date, not time for obvious reasons
@@ -47,8 +53,10 @@ test_expect_success 'verify date in flux logs (sqlite)' '
 '
 
 test_expect_success 're-run instance, get rootref (sqlite)' '
-	flux start -o,--setattr=statedir=$(pwd) \
-	           flux kvs getroot -b > getrootsqlite.out
+	flux start \
+		-o,--setattr=statedir=$(pwd) \
+		-o,--setattr=content.backing-module=content-sqlite \
+	        flux kvs getroot -b > getrootsqlite.out
 '
 
 test_expect_success 'write rootref to checkpoint path, emulating original checkpoint (sqlite)' '
@@ -57,8 +65,10 @@ test_expect_success 'write rootref to checkpoint path, emulating original checkp
 '
 
 test_expect_success 're-run instance, verify checkpoint correctly loaded (sqlite)' '
-	flux start -o,--setattr=statedir=$(pwd) \
-	           flux dmesg >dmesgsqlite2.out
+	flux start \
+		-o,--setattr=statedir=$(pwd) \
+		-o,--setattr=content.backing-module=content-sqlite \
+	        flux dmesg >dmesgsqlite2.out
 '
 
 test_expect_success 'verify checkpoint loaded with no date (sqlite)' '
