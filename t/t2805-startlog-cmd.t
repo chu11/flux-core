@@ -4,7 +4,7 @@ test_description='Test flux startlog command'
 
 . $(dirname $0)/sharness.sh
 
-test_under_flux 2
+test_under_flux 2 full -o,-Scontent.backing-module=content-sqlite
 
 test_expect_success 'flux-startlog works on rank 0' '
 	flux startlog >startlog.out
