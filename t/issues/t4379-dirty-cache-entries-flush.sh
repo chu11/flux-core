@@ -1,5 +1,7 @@
 #!/bin/bash -e
 
+flux module load content-sqlite
+
 flux content flush
 
 count=`flux module stats --parse dirty content`
@@ -38,3 +40,5 @@ then
     echo "dirty entries not 0"
     return 1
 fi
+
+flux module remove content-sqlite

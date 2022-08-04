@@ -550,6 +550,8 @@ error:
  */
 static void cache_resume_flush (struct content_cache *cache)
 {
+    printf ("resume acct_dirty %u is empty %s\n", cache->acct_dirty,
+            list_empty (&cache->flush) ? "yes" : "no");
     if (cache->acct_dirty == 0 || (cache->rank == 0 && !cache->backing))
         flush_respond (cache);
     else
@@ -666,6 +668,16 @@ static void content_store_request (flux_t *h, flux_msg_handler_t *mh,
         if (cache->rank == 0 && !cache->backing)
             list_add_tail (&cache->flush, &e->list);
     }
+
+    printf ("cache store acct dirty = %u\n", cache->acct_dirty);
+    {
+        unsigned int len = 0;
+        struct cache_entry *e;
+        list_for_each (&cache->flush, e, list)
+            len++;
+        printf ("len flush list %u\n", len);
+    }
+
     if (flux_respond_raw (h, msg, hash, hash_size) < 0)
         flux_log_error (h, "content store: flux_respond_raw");
     return;
@@ -846,6 +858,14 @@ static int cache_flush (struct content_cache *cache)
     int last_errno = 0;
     int rc = 0;
 
+    printf ("cache flush acct dirty = %u\n", cache->acct_dirty);
+    {
+        unsigned int len = 0;
+        struct cache_entry *e;
+        list_for_each (&cache->flush, e, list)
+            len++;
+        printf ("len flush list %u\n", len);
+    }
     while (cache->flush_batch_count < cache->flush_batch_limit) {
         if (!(e = list_top (&cache->flush, struct cache_entry, list)))
             break;
@@ -859,6 +879,7 @@ static int cache_flush (struct content_cache *cache)
                 break;
         }
         (void)list_pop (&cache->flush, struct cache_entry, list);
+        printf ("tried to flush an entry acct_dirty = %u\n", cache->acct_dirty);
     }
     if (rc < 0)
         errno = last_errno;
@@ -1093,6 +1114,7 @@ static void content_flush_request (flux_t *h, flux_msg_handler_t *mh,
         errno = ENOSYS;
         goto error;
     }
+    printf ("acct dirty = %u\n", cache->acct_dirty);
     if (cache->acct_dirty > 0) {
         if (cache_flush (cache) < 0)
             goto error;

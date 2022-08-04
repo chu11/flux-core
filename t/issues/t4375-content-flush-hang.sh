@@ -1,5 +1,7 @@
 #!/bin/bash -e
 
+flux module load content-sqlite
+
 flux content flush
 
 flux module remove content-sqlite
@@ -9,5 +11,3 @@ flux module remove content-sqlite
 flux kvs put issue4375=issue4375
 
 ! flux content flush
-
-flux module load content-sqlite

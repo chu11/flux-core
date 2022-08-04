@@ -1,5 +1,7 @@
 #!/bin/bash -e
 
+flux module load content-sqlite
+
 flux content flush
 
 flux module remove content-sqlite
@@ -11,3 +13,5 @@ flux module load content-sqlite
 
 # Issue 4378 - without fix, this flux content flush would hang
 flux content flush
+
+flux module remove content-sqlite
