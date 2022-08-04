@@ -413,8 +413,7 @@ static void cache_entry_remove (struct content_cache *cache,
         cache->acct_size -= e->len;
         cache->acct_valid--;
     }
-    if (e->dirty)
-        cache->acct_dirty--;
+    assert (!e->dirty);
     zhashx_delete (cache->entries, e->hash);
 }
 
@@ -1050,6 +1049,7 @@ static void content_dropcache_request (flux_t *h, flux_msg_handler_t *mh,
     orig_size = zhashx_size (cache->entries);
 
     list_for_each_safe (&cache->lru, e, next, list) {
+        assert (!e->dirty);
         cache_entry_remove (cache, e);
     }
 
