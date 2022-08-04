@@ -14,21 +14,25 @@ fi
 
 test_expect_success 'run a job in persistent instance' '
 	flux start -o,--setattr=statedir=$(pwd) \
+		   -o,--setattr=content.backing-module=content-sqlite \
 	           flux mini submit /bin/true >id1.out
 '
 
 test_expect_success 'restart instance and run another job' '
 	flux start -o,--setattr=statedir=$(pwd) \
+		   -o,--setattr=content.backing-module=content-sqlite \
 	           flux mini submit /bin/true >id2.out
 '
 
 test_expect_success 'restart instance and run another job' '
 	flux start -o,--setattr=statedir=$(pwd) \
+		   -o,--setattr=content.backing-module=content-sqlite \
 	           flux mini submit /bin/true >id3.out
 '
 
 test_expect_success 'restart instance and list inactive jobs' '
 	flux start -o,--setattr=statedir=$(pwd) \
+		   -o,--setattr=content.backing-module=content-sqlite \
 	           flux jobs --suppress-header --format={id} \
 		   	--filter=INACTIVE >list.out
 '
@@ -46,6 +50,7 @@ test_expect_success 'job IDs were issued in ascending order' '
 
 test_expect_success 'restart instance and capture startlog' '
 	flux start -o,--setattr=statedir=$(pwd) \
+		   -o,--setattr=content.backing-module=content-sqlite \
 	           flux startlog >startlog.out
 '
 test_expect_success 'startlog shows 5 run periods' '
@@ -63,6 +68,7 @@ test_expect_success 'doctor startlog to look like a crash' '
 '
 test_expect_success 'check queue status' '
 	flux start -o,--setattr=statedir=$(pwd) \
+		-o,--setattr=content.backing-module=content-sqlite \
 		flux queue status >queue_status.out 2>&1
 '
 test_expect_success 'safe mode is entered' '
