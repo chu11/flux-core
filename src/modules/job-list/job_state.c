@@ -418,20 +418,11 @@ static int parse_per_resource (struct list_ctx *ctx,
 }
 
 static int jobspec_parse (struct list_ctx *ctx,
-                          struct job *job,
-                          const char *s)
+                          struct job *job)
 {
     json_error_t error;
     json_t *tasks, *resources, *command, *jobspec_job = NULL;
     struct res_level res[3];
-    int rc = -1;
-
-    if (!(job->jobspec = json_loads (s, 0, &error))) {
-        flux_log (ctx->h, LOG_ERR,
-                  "%s: job %ju invalid jobspec: %s",
-                  __FUNCTION__, (uintmax_t)job->id, error.text);
-        goto error;
-    }
 
     if (json_unpack_ex (job->jobspec, &error, 0,
                         "{s:{s:{s?:o}}}",
@@ -601,9 +592,23 @@ static int jobspec_parse (struct list_ctx *ctx,
     /* nonfatal error - jobspec illegal, but we'll continue on.  job
      * listing will return whatever data is available */
 nonfatal_error:
-    rc = 0;
-error:
-    return rc;
+    return 0;
+}
+
+static int jobspec_load_and_parse (struct list_ctx *ctx,
+                                   struct job *job,
+                                   const char *s)
+{
+    json_error_t error;
+
+    if (!(job->jobspec = json_loads (s, 0, &error))) {
+        flux_log (ctx->h, LOG_ERR,
+                  "%s: job %ju invalid jobspec: %s",
+                  __FUNCTION__, (uintmax_t)job->id, error.text);
+        return -1;
+    }
+
+    return jobspec_parse (ctx, job);
 }
 
 static void state_depend_lookup_continuation (flux_future_t *f, void *arg)
@@ -620,7 +625,7 @@ static void state_depend_lookup_continuation (flux_future_t *f, void *arg)
         goto out;
     }
 
-    if (jobspec_parse (ctx, job, s) < 0)
+    if (jobspec_load_and_parse (ctx, job, s) < 0)
         goto out;
 
     st = zlist_head (job->next_states);
@@ -1110,7 +1115,7 @@ static int depthfirst_map_one (struct list_ctx *ctx, const char *key,
     if (flux_kvs_lookup_get (f2, &jobspec) < 0)
         goto done;
 
-    if (jobspec_parse (ctx, job, jobspec) < 0)
+    if (jobspec_load_and_parse (ctx, job, jobspec) < 0)
         goto done;
 
     if (job->states_mask & FLUX_JOB_STATE_RUN) {
