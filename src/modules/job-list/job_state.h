@@ -102,6 +102,7 @@ struct job {
 
     /* cache of job information */
     json_t *jobspec;
+    json_t *jobspec_updates;    /* array */
     json_t *R;
     json_t *exception_context;
 

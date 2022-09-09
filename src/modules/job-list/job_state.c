@@ -124,6 +124,7 @@ static void job_destroy (void *data)
         json_decref (job->annotations);
         grudgeset_destroy (job->dependencies);
         json_decref (job->jobspec);
+        json_decref (job->jobspec_updates);
         json_decref (job->R);
         json_decref (job->exception_context);
         zlist_destroy (&job->next_states);
@@ -998,6 +999,10 @@ static struct job *eventlog_restart_parse (struct list_ctx *ctx,
             if (submit_context_parse (ctx->h, job, context) < 0)
                 goto error;
         }
+        else if (!strcmp (name, "jobspec-update")) {
+            if (jobspec_update_context_parse (ctx->h, job, context) < 0)
+                goto error;
+        }
         else if (!strcmp (name, "validate")) {
             update_job_state (ctx, job, FLUX_JOB_STATE_DEPEND, timestamp);
         }
@@ -1368,6 +1373,40 @@ static int journal_submit_event (struct job_state_ctx *jsctx,
     return 0;
 }
 
+static int jobspec_update_context_parse (flux_t *h,
+                                         struct job *job,
+                                         json_t *context)
+{
+    if (job->jobspec) {
+        const char *path;
+        json_t *val;
+        json_object_foreach (context, path, val) {
+            if (jpath_set (job->jobspec, path, val) < 0)
+                return -1;
+        }
+    }
+    else {
+        /* jobspec has not yet been loaded, save off update to be
+         * processed later */
+        if (!job->jobspec_updates) {
+            if (!(job->jobspec_updates = json_array ())) {
+                flux_log_error (jsctx->h, "%s: json_array", __FUNCTION__);
+                errno = ENOMEM;
+                return -1;
+            }
+        }
+        json_array_apend (job->jobspec_updates, json_incref (context));
+    }
+    return 0;
+}
+
+static int journal_jobspec_update_event (struct job_state_ctx *jsctx,
+                                        struct job *job,
+                                        json_t *context)
+{
+    return jobspec_update_context_parse (jsctx->h, job, context);
+}
+
 static int priority_context_parse (flux_t *h,
                                    struct job *job,
                                    json_t *context)
@@ -1724,6 +1763,12 @@ static int journal_process_event (struct job_state_ctx *jsctx, json_t *event)
                                   id,
                                   eventlog_seq,
                                   context) < 0)
+            return -1;
+    }
+    else if (!strcmp (name, "jobspec-update")) {
+        if (journal_jobspec_update_event (jsctx,
+                                          job,
+                                          context) < 0)
             return -1;
     }
     else if (!strcmp (name, "validate")) {
