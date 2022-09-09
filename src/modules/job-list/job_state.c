@@ -137,6 +137,13 @@ static void job_destroy_wrapper (void **data)
     job_destroy (*job);
 }
 
+static void initialize_jobspec_attrs (struct job *job)
+{
+    job->name = NULL;
+    job->ntasks = -1;
+    job->nnodes = -1;
+}
+
 static struct job *job_create (struct list_ctx *ctx, flux_jobid_t id)
 {
     struct job *job = NULL;
@@ -151,11 +158,10 @@ static struct job *job_create (struct list_ctx *ctx, flux_jobid_t id)
      * listed after those who do, so we set the job priority to MIN */
     job->priority = FLUX_JOB_PRIORITY_MIN;
     job->state = FLUX_JOB_STATE_NEW;
-    job->ntasks = -1;
-    job->nnodes = -1;
     job->expiration = -1.0;
     job->wait_status = -1;
     job->result = FLUX_JOB_RESULT_FAILED;
+    initialize_jobspec_attrs (job);
 
     if (!(job->next_states = zlist_new ())) {
         errno = ENOMEM;
@@ -423,6 +429,11 @@ static int jobspec_parse (struct list_ctx *ctx,
     json_error_t error;
     json_t *tasks, *resources, *command, *jobspec_job = NULL;
     struct res_level res[3];
+
+    /* There is no need to "cleanup" any jobspec associated data at
+     * the moment, but that could change if more data is retrieved
+     * from the jobspec in the future */
+    initialize_jobspec_attrs (job);
 
     if (json_unpack_ex (job->jobspec, &error, 0,
                         "{s:{s:{s?:o}}}",
