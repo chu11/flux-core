@@ -41,6 +41,7 @@ void job_destroy (void *data)
         grudgeset_destroy (job->dependencies);
         json_decref (job->jobspec);
         json_decref (job->R);
+        json_decref (job->eventlog);
         json_decref (job->exception_context);
         free (job);
         errno = save_errno;

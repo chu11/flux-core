@@ -409,6 +409,24 @@ error:
         flux_log_error (h, "error responding to unpause request");
 }
 
+static int store_eventlog_entry (struct job_state_ctx *jsctx,
+                                 struct job *job,
+                                 json_t *entry)
+{
+    if (!job->eventlog) {
+        if (!(job->eventlog = json_array ())) {
+            flux_log_error (jsctx->h, "json_array");
+            return -1;
+        }
+    }
+    if (json_array_append (job->eventlog, entry) < 0) {
+        /* job->eventlog cleaned up in "struct job" destructor */
+        flux_log_error (jsctx->h, "json_array_append");
+        return -1;
+    }
+    return 0;
+}
+
 static int job_transition_state (struct job_state_ctx *jsctx,
                                  struct job *job,
                                  flux_job_state_t newstate,
@@ -487,12 +505,17 @@ static int journal_submit_event (struct job_state_ctx *jsctx,
                                  struct job *job,
                                  flux_jobid_t id,
                                  double timestamp,
+                                 json_t *entry,
                                  json_t *context,
                                  json_t *jobspec)
 {
     if (!job) {
         if (!(job = job_create (jsctx->h, id)))
             return -1;
+        if (store_eventlog_entry (jsctx, job, entry) < 0) {
+            job_destroy (job);
+            return -1;
+        }
         if (jobspec)
             job->jobspec = json_incref (jobspec);
         if (zhashx_insert (jsctx->index, &job->id, job) < 0) {
@@ -895,11 +918,17 @@ static int journal_process_event (struct job_state_ctx *jsctx,
         return 0;
     }
 
+    if (job && job->eventlog) {
+        if (store_eventlog_entry (jsctx, job, event) < 0)
+            return -1;
+    }
+
     if (streq (name, "submit")) {
         if (journal_submit_event (jsctx,
                                   job,
                                   id,
                                   timestamp,
+                                  event,
                                   context,
                                   jobspec) < 0)
             return -1;
