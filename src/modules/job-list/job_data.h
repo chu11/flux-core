@@ -66,6 +66,8 @@ struct job {
     /* cache of job information */
     json_t *jobspec;
     json_t *R;
+    char *eventlog;
+    size_t eventlog_len;
     json_t *exception_context;
 
     /* All internal changes (most notably job state transitions) are
