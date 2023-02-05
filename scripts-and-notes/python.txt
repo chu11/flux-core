@@ -1,0 +1,36 @@
+hand testing python changes
+
+setenv PYTHONPATH /g/g0/achu/chaos/git/flux-framework/flux-core/src/bindings/python/:/g/g0/achu/chaos/git/flux-framework/flux-core/t/python:/g/g0/achu/chaos/git/flux-framework/flux-core/t/python/tap:/usr/lib/python3.6/site-packages
+
+run via
+
+python python/t0005-kvs.py
+
+or
+
+make check TESTS=python/t0000-foo.t
+
+or
+
+../src/cmd/flux ./python/t000-test.py
+
+
+py3 local setup
+
+#/usr/apps/python3/bin/virtualenv py3
+# or 
+#/usr/bin/python3 -m venv py3
+py3/bin/pip install cffi
+py3/bin/pip install pyyaml
+py3/bin/pip install jsonschema
+py3/bin/pip install sphinx
+py3/bin/pip install sphinx-rtd-theme
+py3/bin/pip install sphinxcontrib-spelling
+export PYTHON=/g/g0/achu/chaos/git/flux-framework/flux-core/py3/bin/python
+
+virtualenv -p python3 py3
+bash
+source py3/bin/activate
+py3/bin/pip install cffi pyyaml jsonschema sphinx sphinx-rtd-theme sphinxcontrib-spelling argparse docutils
+
+

@@ -1,0 +1,4 @@
+setenv PYTHONPATH /g/g0/achu/.local/lib/python2.7/site-packages/
+setenv PYTHONPATH /g/g0/achu/.local/lib/python3.6/site-packages/
+
+

@@ -1,0 +1,2 @@
+setenv LZ4_CFLAGS -I/g/g0/achu/code/lz4-1.7.5/lib
+setenv LZ4_LIBS "-L/g/g0/achu/code/lz4-1.7.5/lib -llz4"

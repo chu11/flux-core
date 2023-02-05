@@ -1,0 +1,2 @@
+perf record -g --call-graph=dwarf run something
+perf report

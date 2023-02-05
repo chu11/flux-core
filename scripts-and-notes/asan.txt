@@ -1,0 +1,21 @@
+catalyst
+
+default
+gcc -std=gnu99 -g -O2 -fsanitize=address -fno-omit-frame-pointer foo.c -pthread
+/usr/bin/ld: cannot find /usr/lib64/libasan.so.0.0.0
+collect2: error: ld returned 1 exit status
+
+catalyst159|/g/g0/achu 668>rpm -qa | grep libasan
+libasan4-7.3.1-5.13.el7.x86_64
+
+module load gnu/7.3.1
+
+
+
+module load gnu/8.2.1
+setenv LD_PRELOAD "/usr/lib64/libasan.so.5"
+setenv ASAN_OPTIONS "detect_leaks=0"
+or
+setenv ASAN_OPTIONS "detect_leaks=0,start_deactivated=true"
+
+./configure --enable-sanitizer=address

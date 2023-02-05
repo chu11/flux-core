@@ -1,0 +1,17 @@
+git clone https://github.com/LLNL/Caliper.git
+git checkout be6b488bedb75012e60d3062f8cd2749032985fe
+git checkout -b flux-core-sha
+mkdir build
+cd build
+module load cmake/3.5
+module load gnu/7.3.1
+
+cmake -DCMAKE_INSTALL_PREFIX=/g/g0/achu/chaos/git/flux-framework/local ..
+make -j2 PREFIX=/g/g0/achu/chaos/git/flux-framework/local
+make PREFIX=/g/g0/achu/chaos/git/flux-framework/local install
+
+flux-core
+
+export PKG_CONFIG_PATH=/g/g0/achu/chaos/git/flux-framework/local/share/pkgconfig:$PKG_CONFIG_PATH
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/g/g0/achu/chaos/git/flux-framework/local/lib/
+./configure --enable-caliper=yes

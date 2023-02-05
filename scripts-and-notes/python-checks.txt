@@ -1,0 +1,3 @@
+/usr/tce/packages/python/python-3.6.4/bin/python3 /g/g0/achu/.local/lib/python3.6/site-packages/black.py --diff --verbose src/bindings/python/flux/kvs.py
+
+.local/bin/black --diff --verbose chaos/git/flux-framework/flux-core/src/cmd/flux-jobs.py

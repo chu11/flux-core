@@ -1,0 +1,6 @@
+PKG_CONFIG_PATH=/tmp/achu/lib/pkconfig
+or
+JANSSON_LIBS="-L/tmp/achu/lib -ljansson" JANSSON_CFLAGS=-I/tmp/achu/include
+./configure
+make -j8
+

@@ -1,0 +1,5 @@
+verbose=t debug=t make check TESTS=t1013-qmanager-priority.t
+or
+flux start
+./t000-foo.t -v -d
+
