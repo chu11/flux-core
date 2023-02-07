@@ -25,6 +25,8 @@ First lets introduce `flux mini bulksubmit`, which can solve a bunch of the O(n)
 
 flux mini bulksubmit my_job_scripts/myjob{}.sh ::: $(seq 1 1000)
 
+flux mini submit --cc="1-1000" "my_job_scripts/myjob{cc}.sh"
+
 Is this alot faster?
 
 On a small single node instance I'm running I tried the above two examples on 1000 scripts that do nothing more than run `hostname`.
@@ -33,9 +35,11 @@ On a small single node instance I'm running I tried the above two examples on 10
 <snip, many job ids printed out>
 223.631u 60.027s 5:41.48 83.0%  0+0k 0+0io 0pf+0w
 
-> time ./bulksubmit.sh
+> time flux mini bulksubmit my_job_scripts/myjob{}.sh ::: $(seq 1 1000)
 <snip, many job ids printed out>
-1.396u 0.143s 0:03.11 49.1%     0+0k 0+0io 0pf+0w
+
+> time flux mini submit --cc="1-1000" "my_job_scripts/myjob{cc}.sh"
+
 
 We're looking at a wallclock speedup of about 99% here (5:41 vs 0:03)
 
@@ -58,16 +62,16 @@ Then we could split up the submission of our jobs into both schedulers.
 
 #!/bin/sh
 
-jobid1=`flux mini batch -n1 ./loop1to500.sh`
-jobid2=`flux mini batch -n1 ./loop501to1000.sh`
-flux job status ${jobid1} ${jobid2}
+batchid1=`flux mini batch -n1 ./loop_iter.sh 1 500
+batchid2=`flux mini batch -n1 ./loop_iter.sh 501 1000
+flux job status ${batchid1} ${batchid2}
 
->time ./subinstance.sh
+>time ./subinstance_2.sh
 0.480u 0.154s 4:03.86 0.2%                                         0+0k 0+0io 0pf+0w
 
-not surprsingly, we've cut our job submission time in about half (5:41 to 2:).
+>time ./subinstance_4.sh
+0.480u 0.154s 4:03.86 0.2%                                         0+0k 0+0io 0pf+0w
 
-
-
+not surprsingly, we've cut our job submission time down ... what if we had more sub-instances?
 
 
