@@ -1,77 +1,189 @@
-If you're reading this it's because you're wondering why Flux?  Why is it more special than so many other schedulers / resource managers?
+.. _fast-job-submission-tutorial:
 
-While there are many nice things about Flux, the biggest value adds for Flux are for those who are dealing with many many jobs.  Like minimally hundreds, but going into the thousands or hundreds of thousands.  If you are generally dealing with jobs and workflows numbering "a handful", this tutorial may not be that useful for you (but I hope you enjoy reading it anyways).
+===================
+Fast Job Submission
+===================
 
-This tutorial will try to go over some of the basics of these advanced features.
+One of the biggest value adds for Flux are for those who are dealing with many many jobs, minimally hundreds, but into millions of jobs.
 
-Lets assume you need to submit a number of scripts to run.  The way this might traditionally be done via a script like so:
+This tutorial will try to go over some of the basics of how to submit a large number of jobs.
 
-for myjob in `ls my_job_scripts/myjob*.sh`
-do
+--------------------
+Basic Job Submission
+--------------------
+
+Lets assume you need to submit a number of scripts to run.  The way this might traditionally be done via a script is like so:
+
+.. code-block:: sh
+
+    #!/bin/sh
+
+    for myjob in `ls my_job_scripts/myjob*.sh`
+    do
         flux mini submit ${myjob}
-done
+    done
 
-in other words, iterate through all the job scripts you have one by one, submit them via the job submission command (`flux mini submit` for Flux).
+    flux queue drain
+
+In this example, I have a directory (``my_job_scripts``) with a number a jobs prefixed with ``myjob``.  We iterate through all the job scripts in the directory one by one, submitting them via a job submission command (in this case ``flux mini submit``).  Then I wait for all the jobs to finish with ``flux queue drain``.
+
+Lets run this really quick under a local flux instance.  In my example directory, I have 1000 scripts suffixed with a number (i.e. ``myjob1.sh`` through ``myjob1000.sh``).  Each script just runs "sleep 0".  I also added some simple timings to get a read on how long job submissions take.
+
+.. code-block:: sh
+    start=`date +%s`
+    for myjob in `ls my_job_scripts/myjob*.sh`
+    do
+        flux mini submit ${myjob}
+    done
+    end=`date +%s`
+    runtime=$((end-start))
+    echo "Job submissions took $runtime seconds"
+
+    flux queue drain
+    end=`date +%s`
+    runtime=$((end-start))
+    echo "Job submissions and runtime took $runtime seconds"
+
+.. code-block:: sh
+
+    > ./job_submit_loop.sh
+    <snip, many job ids printed out>
+    Job submissions took 351 seconds
+    Job submission and runtime took 352 seconds
+
+As you can see, it took 351 seconds to submit all of these jobs.  The vast majority of the time was spent submitting the jobs vs running them.
 
 This can be slow for several reasons:
 
-- if you have a lot of job scripts, this can be a slow O(n) process.  Each call to `flux mini submit` will involve another round of messages being sent/received by Flux
+* If you have a lot of job scripts, this is a slow `O(n)` process.  Each call to ``flux mini submit`` will involve another round of messages being sent/received to/from Flux.
 
-- you are also competing with other users that are submitting other jobs and doing anything else with the Flux system scheduler
+* You are competing with other users that are also submitting jobs and doing other things with the Flux system instance.
 
-How can be tackle some of these problems.
+---------------------------
+Asynchronous Job Submission
+---------------------------
 
-First lets introduce `flux mini bulksubmit`, which can solve a bunch of the O(n) problem.  It will submit many jobs at once in a reduced number of RPCs to Flux.  There are several ways to submit scripts in bulk, but lets assume for the moment your scripts are simply suffixed with numerals from 1-1000.  The above loop can be solved with:
+Jobs can be asynchronously submitted via several mechanisms.  This will allow us to significantly reduce the slow iterative process of submitting jobs one by one.
 
-flux mini bulksubmit my_job_scripts/myjob{}.sh ::: $(seq 1 1000)
+The first mechanism is the ``--cc`` option in ``flux mini submit``.  It will allow the user to replicate every id specified in an IDSET.  Along with the ``{cc}`` substitution string, we can submit all 1000 scripts on the command line like so:
 
-flux mini submit --cc="1-1000" "my_job_scripts/myjob{cc}.sh"
+.. code-block:: sh
 
-Is this alot faster?
+    > flux mini submit --cc="1-1000" "my_job_scripts/myjob{cc}.sh"
 
-On a small single node instance I'm running I tried the above two examples on 1000 scripts that do nothing more than run `hostname`.
+This substitution is convenient, but the real benefit is what will go on behind the scenes.  Instead of iterating through job submissions one by one, internally job submissions will be sent asynchronously, so we no longer have our slow "wait for response" after every job submission.  This will allow job submissions to go a lot faster.  How much faster?
 
-> time ./loop.sh
-<snip, many job ids printed out>
-223.631u 60.027s 5:41.48 83.0%  0+0k 0+0io 0pf+0w
+.. code-block:: sh
 
-> time flux mini bulksubmit my_job_scripts/myjob{}.sh ::: $(seq 1 1000)
-<snip, many job ids printed out>
+    > time flux mini submit --cc="1-1000" "my_job_scripts/myjob{cc}.sh"
+    <snip, many job ids printed out>
+    real   0m3.281s
+    user   0m1.426s
+    sys    0m0.140s
 
-> time flux mini submit --cc="1-1000" "my_job_scripts/myjob{cc}.sh"
+We're looking at a wallclock speedup of about 99% here (351 seconds vs 3 seconds).  And just to show that the submission time is the bottleneck and not runtime, lets use the `--wait` option with ``flux mini submit``.  This will inform ``flux mini submit`` to return after all the jobs have completed.
+
+.. code-block:: sh
+
+    > time flux mini submit --wait --cc="1-1000" "my_job_scripts/myjob{cc}.sh"
+    <snip, many job ids printed out>
+    real       0m50.428s
+    user       0m3.235s
+    sys        0m0.384s
+
+Now that the job submission is so fast, the bottleneck becomes the actual running of the jobs, not the job submission time.
+
+Another way to submit jobs asynchronously is with ``flux mini bulksubmit``.  The interface may be familiar to those who know the `GNU parallel command<https://www.gnu.org/software/parallel/>`_.
+
+.. code-block:: sh
+
+    > time flux mini bulksubmit my_job_scripts/myjob{}.sh ::: $(seq 1 1000)
+    <snip, many job ids printed out>
+    real   0m3.133s
+    user   0m1.445s
+    sys    0m0.145s
+
+---------------------------
+Sub-instance Job Submission
+---------------------------
+
+To solve competition / business with other users, we can launch a sub-instance of Flux.
+
+What are we doing by launching a sub-instance?  We're basically launching another Flux instance as a job.  And once we do that, we have our own Flux resource manager and scheduler that is independent of other users.  We can launch a sub-instance of flux via `flux mini batch`.
+
+.. code-block:: sh
+
+    > flux mini batch -n1 ./job_submit_loop.sh
+
+Because I'm writing this tutorial against my own Flux isntance, and the node I'm on isn't that busy, this isn't really going to do much in terms of performance.
+
+But we can think about how this can be done if we scale it up.  We could divide up our resources and launch multiple Flux instances and divide up the job submissions amongst them.  Each sub-instance would be given a subset of the resources of our job.
+
+I'm going to go back to the looping iteration example from above because `--cc` or `bulksubmit` are so fast with 1000 jobs, that it's hard to see any difference with sub-instances.
+
+I'll also use a slightly altered loop script I call `job_submit_loop_range.sh`.  It will take two numbers on the command line and iterate only between those numbers.
+
+.. code-block:: sh
+    #!/bin/sh
+
+    for i in `seq $1 $2`
+    do
+        flux mini submit my_job_scripts/myjob${i}.sh
+    done
+
+Lets launch two sub-instances in the following script
+
+.. code-block:: sh
+    #!/bin/sh
+
+    start=`date +%s`
+    flux mini batch -n4 ./job_submit_loop_range.sh 1 500
+    flux mini batch -n4 ./job_submit_loop_range.sh 501 1000
+    flux queue drain
+    end=`date +%s`
+    runtime=$((end-start))
+    echo "Job submissions and runtime took $runtime seconds"
+
+Here, I'm assigning 4 cores to each of these sub-instances.  ``flux job status``, does the job of waiting for everything to complete before returning.  Note one subtle change in this script, because it is difficult to test ONLY job submissions amongst multiple sub-instances, I'm outputting the submission and runtime length.
+
+And lets run it with the following command line.
+
+.. code-block:: sh
+    > ./subinstance_2.sh
+    Job submissions and runtime took 186 seconds
+
+Note that I'm giving this job 8 cores, but I assign 4 cores to each of the sub instances, equally dividing the resources amongst them.
+
+The result is that it took a little over 4 minutes to run.  So we were able to reduce our runtime a bit.
+
+What if we launched 4 sub-instances instead of two?  Lets do the same experiment but give each sub-instance 2 cores.
+
+.. code-block:: sh
+    #!/bin/sh
+
+    start=`date +%s`
+    flux mini batch -n2 ./job_submit_loop_range.sh 1 250
+    flux mini batch -n2 ./job_submit_loop_range.sh 251 500
+    flux mini batch -n2 ./job_submit_loop_range.sh 501 750
+    flux mini batch -n2 ./job_submit_loop_range.sh 751 1000
+    flux queue drain
+    end=`date +%s`
+    runtime=$((end-start))
+    echo "Job submissions and runtime took $runtime seconds"
+
+.. code-block:: sh
+    > flux mini submit --wait -n8 ./subinstance_4.sh
+    Job submissions and runtime took 101 seconds
+
+Not surprsingly, we've cut our job submission and runtime time down from 352 seconds, to 186 seconds, to 101 seconds.
+
+Although I haven't gone into it within the example, one could also launch a sub-instance, within a sub-instance.  Some users have done that to great depths to get extreme job submissions scaling.
+
+-------------------------
+Combining Things Together
+-------------------------
 
 
-We're looking at a wallclock speedup of about 99% here (5:41 vs 0:03)
-
-Now how do we solve the fact that we're competing with other users doing things on the cluster.
-
-We can launch a sub-instance of flux instead.
-
-What are we doing by launching a sub-instance?  We're basically launching another Flux instance as a job.  And once we do that, we can submit jobs to it just like the primary system instance of Flux.
-
-flux mini batch -n1 ./loop.sh
 
 
-Because I'm writing this tutorial against my own Flux isntance, and the node I'm on isn't that busy, this isn't really going to do much.
-
-But we can think about how this can be done to do things at scale.
-
-What if we didn't launch just one sub-instance?  What if we launched two, splitting up the resources we have?
-
-Then we could split up the submission of our jobs into both schedulers.
-
-#!/bin/sh
-
-batchid1=`flux mini batch -n1 ./loop_iter.sh 1 500
-batchid2=`flux mini batch -n1 ./loop_iter.sh 501 1000
-flux job status ${batchid1} ${batchid2}
-
->time ./subinstance_2.sh
-0.480u 0.154s 4:03.86 0.2%                                         0+0k 0+0io 0pf+0w
-
->time ./subinstance_4.sh
-0.480u 0.154s 4:03.86 0.2%                                         0+0k 0+0io 0pf+0w
-
-not surprsingly, we've cut our job submission time down ... what if we had more sub-instances?
-
-
+Needless to say, this mini guide only used 1000 jobs as an example, but hopefully it illustrates some of the advanced features for job submission in Flux.  If you combine the creation of sub-instances and bulk job submission, it's not hard to see how something that might have taken hours or days before might now be accomplished in minutes.

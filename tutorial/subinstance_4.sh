@@ -1,7 +1,12 @@
 #!/bin/sh
 
-batchid1=`flux mini batch -n1 ./loop_iter.sh 1 250`
-batchid2=`flux mini batch -n1 ./loop_iter.sh 251 500`
-batchid3=`flux mini batch -n1 ./loop_iter.sh 501 750`
-batchid4=`flux mini batch -n1 ./loop_iter.sh 751 1000`
-flux job status ${batchid1} ${batchid2} ${batchid3} ${batchid4}
+start=`date +%s`
+flux mini batch -n2 ./job_submit_loop_range.sh 1 250
+flux mini batch -n2 ./job_submit_loop_range.sh 251 500
+flux mini batch -n2 ./job_submit_loop_range.sh 501 750
+flux mini batch -n2 ./job_submit_loop_range.sh 751 1000
+flux queue drain
+end=`date +%s`
+runtime=$((end-start))
+echo "Job submissions and runtime took $runtime seconds"
+
