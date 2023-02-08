@@ -31,6 +31,6 @@ export PYTHON=/g/g0/achu/chaos/git/flux-framework/flux-core/py3/bin/python
 virtualenv -p python3 py3
 bash
 source py3/bin/activate
-py3/bin/pip install cffi pyyaml jsonschema sphinx sphinx-rtd-theme sphinxcontrib-spelling sphinx_immaterial argparse docutils
+py3/bin/pip install cffi pyyaml jsonschema sphinx sphinx-rtd-theme sphinxcontrib-spelling sphinx_immaterial recommonmark argparse docutils
 
 
