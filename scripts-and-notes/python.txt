@@ -34,3 +34,7 @@ source py3/bin/activate
 py3/bin/pip install cffi pyyaml jsonschema sphinx sphinx-rtd-theme sphinxcontrib-spelling sphinx_immaterial recommonmark myst_parser sphinx_markdown_tables argparse docutils
 
 
+
+downgrade something
+
+pip install --force-reinstall -v "MySQL_python==1.2.2"
