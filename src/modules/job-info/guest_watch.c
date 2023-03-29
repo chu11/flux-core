@@ -22,6 +22,7 @@
 #include "src/common/libczmqcontainers/czmq_containers.h"
 #include "src/common/libjob/job.h"
 #include "src/common/libeventlog/eventlog.h"
+#include "src/common/libccan/ccan/str.h"
 
 #include "job-info.h"
 #include "watch.h"
@@ -74,6 +75,7 @@ struct guest_watch_ctx {
     char *path;
     int flags;
     bool cancel;
+    bool after_follow_offset;
 
     /* transition possibilities
      *
@@ -656,12 +658,42 @@ static void guest_namespace_watch_continuation (flux_future_t *f, void *arg)
         goto error;
     }
 
+    /* This flag assumes all events are in RFC24 format */
+    if ((gw->flags & FLUX_EVENT_WATCH_STDIO_FOLLOW)
+        && !gw->after_follow_offset) {
+        json_t *o = NULL;
+        const char *name = NULL;
+        int offset;
+        /* if follow_offset not specified, we send this, set flag for later */
+        if (flux_rpc_get_unpack (f, "{s:s}", "follow_offset", &offset) < 0) {
+            gw->after_follow_offset = true;
+            goto send_event;
+        }
+        if (!(o = eventlog_decode (event))) {
+            flux_log_error (ctx->h, "cannot decode eventlog entry");,
+            goto error_cancel;
+        }
+        if (eventlog_entry_parse (o, NULL, &name, NULL) < 0) {
+            flux_log_error (ctx->h, "cannot get eventlog entry name");
+            json_decref (o);
+            goto error_cancel;
+        }
+        /* we're not past the follow offset, so skip this data entry */
+        if (streq (name, "data") && gw->offset < offset) {
+            json_decref (o);
+            goto skip;
+        }
+        json_decref (o);
+    }
+
+send_event:
     if (flux_respond_pack (ctx->h, gw->msg, "{s:s}", "event", event) < 0) {
         flux_log_error (ctx->h, "%s: flux_respond_pack",
                         __FUNCTION__);
         goto error_cancel;
     }
 
+skip:
     gw->offset += strlen (event);
     flux_future_reset (f);
     return;
@@ -795,6 +827,34 @@ static void main_namespace_lookup_continuation (flux_future_t *f, void *arg)
                             __FUNCTION__);
             goto error;
         }
+    }
+
+    /* This flag assumes all events are in RFC24 format */
+    if ((gw->flags & FLUX_EVENT_WATCH_STDIO_FOLLOW)
+        && !gw->after_follow_offset) {
+        json_t *o = NULL;
+        const char *name = NULL;
+        int offset;
+        /* if follow_offset not specified, we send this, set flag for later */
+        if (flux_rpc_get_unpack (f, "{s:s}", "follow_offset", &offset) < 0) {
+            gw->after_follow_offset = true;
+            goto send_event;
+        }
+        if (!(o = eventlog_decode (event))) {
+            flux_log_error (ctx->h, "cannot decode eventlog entry");,
+            goto error_cancel;
+        }
+        if (eventlog_entry_parse (o, NULL, &name, NULL) < 0) {
+            flux_log_error (ctx->h, "cannot get eventlog entry name");
+            json_decref (o);
+            goto error_cancel;
+        }
+        /* we're not past the follow offset, so skip this data entry */
+        if (streq (name, "data") && gw->offset < offset) {
+            json_decref (o);
+            goto skip;
+        }
+        json_decref (o);
     }
 
     /* We've moved to the main KVS namespace, so we know there's no

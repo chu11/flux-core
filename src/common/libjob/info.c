@@ -20,10 +20,10 @@ flux_future_t *flux_job_event_watch (flux_t *h, flux_jobid_t id,
 {
     flux_future_t *f;
     const char *topic = "job-info.eventlog-watch";
+    int valid_flags = FLUX_EVENT_WATCH_STDIO_FOLLOW;
     int rpc_flags = FLUX_RPC_STREAMING;
 
-    /* No flags supported yet */
-    if (!h || !path || flags) {
+    if (!h || !path || (flags & ~valid_flags)) {
         errno = EINVAL;
         return NULL;
     }

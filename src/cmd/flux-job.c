@@ -270,6 +270,9 @@ static struct optparse_option attach_opts[] =  {
     { .name = "read-only", .key = 'r', .has_arg = 0,
       .usage = "Disable reading stdin and capturing signals",
     },
+    { .name = "follow", .key = 'f', .has_arg = 0,
+      .usage = "Output newly appended data, do not output older data",
+    },
     { .name = "unbuffered", .key = 'u', .has_arg = 0,
       .usage = "Disable buffering of stdin",
     },
@@ -1588,6 +1591,7 @@ struct attach_ctx {
     flux_jobid_t id;
     bool readonly;
     bool unbuffered;
+    bool follow;
     char *stdin_ranks;
     const char *jobid;
     const char *wait_event;
@@ -1954,10 +1958,11 @@ void attach_stdin_cb (flux_reactor_t *r, flux_watcher_t *w,
  */
 void attach_output_start (struct attach_ctx *ctx)
 {
+    int flags = ctx->follow ? FLUX_EVENT_WATCH_FOLLOW : 0;
     if (!(ctx->output_f = flux_job_event_watch (ctx->h,
                                                 ctx->id,
                                                 "guest.output",
-                                                0)))
+                                                flags)))
         log_err_exit ("flux_job_event_watch");
 
     if (flux_future_then (ctx->output_f, -1.,
@@ -2629,6 +2634,7 @@ int cmd_attach (optparse_t *p, int argc, char **argv)
     ctx.p = p;
     ctx.readonly = optparse_hasopt (p, "read-only");
     ctx.unbuffered = optparse_hasopt (p, "unbuffered");
+    ctx.follow = optparse_hasopt (p, "follow");
 
     if (optparse_hasopt (p, "stdin-ranks") && ctx.readonly)
         log_msg_exit ("Do not use --stdin-ranks with --read-only");

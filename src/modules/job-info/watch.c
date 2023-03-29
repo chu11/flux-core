@@ -37,6 +37,7 @@ struct watch_ctx {
     flux_future_t *watch_f;
     bool allow;
     bool cancel;
+    bool after_first_response;
 };
 
 static void watch_continuation (flux_future_t *f, void *arg);
@@ -243,6 +244,7 @@ static void watch_continuation (flux_future_t *f, void *arg)
     struct watch_ctx *w = arg;
     struct info_ctx *ctx = w->ctx;
     const char *s;
+    size_t s_len;
     const char *input;
     const char *tok;
     size_t toklen;
@@ -276,13 +278,34 @@ static void watch_continuation (flux_future_t *f, void *arg)
     }
 
     input = s;
+    if ((w->flags & FLUX_EVENT_WATCH_STDIO_FOLLOW)
+        && w->guest
+        && !w->after_first_read)
+        s_len = strlen (s)
     while (eventlog_parse_next (&input, &tok, &toklen)) {
-        if (flux_respond_pack (ctx->h, w->msg,
-                               "{s:s#}",
-                               "event", tok, toklen) < 0) {
-            flux_log_error (ctx->h, "%s: flux_respond_pack",
-                            __FUNCTION__);
-            goto error_cancel;
+        /* guest_watch needs length of initial read for
+         * FLUX_EVENT_WATCH_STDIO_FOLLOW
+         */
+        if ((w->flags & FLUX_EVENT_WATCH_STDIO_FOLLOW)
+            && w->guest
+            && !w->after_first_read) {
+            if (flux_respond_pack (ctx->h, w->msg,
+                                   "{s:s# s:i}",
+                                   "event", tok, toklen,
+                                   "follow_offset", s_len) < 0) {
+                flux_log_error (ctx->h, "%s: flux_respond_pack",
+                                __FUNCTION__);
+                goto error_cancel;
+            }
+        }
+        else {
+            if (flux_respond_pack (ctx->h, w->msg,
+                                   "{s:s#}",
+                                   "event", tok, toklen) < 0) {
+                flux_log_error (ctx->h, "%s: flux_respond_pack",
+                                __FUNCTION__);
+                goto error_cancel;
+            }
         }
 
         /* When watching the main job eventlog, we return ENODATA back
@@ -306,6 +329,7 @@ static void watch_continuation (flux_future_t *f, void *arg)
         }
     }
 
+    w->after_first_response = true;
     flux_future_reset (f);
     return;
 
@@ -400,6 +424,7 @@ void watch_cb (flux_t *h, flux_msg_handler_t *mh,
     flux_jobid_t id;
     int guest = 0;
     const char *path = NULL;
+    int valid_flags = FLUX_EVENT_WATCH_STDIO_FOLLOW;
     int flags;
     const char *errmsg = NULL;
 
@@ -413,6 +438,11 @@ void watch_cb (flux_t *h, flux_msg_handler_t *mh,
     if (!flux_msg_is_streaming (msg)) {
         errno = EPROTO;
         errmsg = "eventlog-watch request rejected without streaming RPC flag";
+        goto error;
+    }
+    if (flags & ~valid_flags) {
+        errno = EPROTO;
+        errmsg = "eventlog-watch invalid flag specified";
         goto error;
     }
     /* guest flag indicates to read path from guest namespace */

@@ -74,6 +74,12 @@ typedef enum {
     FLUX_JOB_RESULT_TIMEOUT = 8,
 } flux_job_result_t;
 
+/* Event watch flags
+ */
+enum {
+    FLUX_EVENT_WATCH_STDIO_FOLLOW = 1
+};
+
 typedef uint64_t flux_jobid_t;
 
 /*  Parse a jobid from NULL-teminated string 's' in any supported encoding.
