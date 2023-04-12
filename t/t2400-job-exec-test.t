@@ -185,11 +185,13 @@ test_expect_success 'job-exec: critical-ranks RPC handles unexpected input' '
 '
 grep 'release 7' /etc/centos-release >/dev/null 2>&1 \
 	|| test_set_prereq NOT_CENTOS7
+grep 'release 7' /etc/redhat-release >/dev/null 2>&1 \
+	|| test_set_prereq NOT_RHEL7
 
-# The following test does not work on CentOS 7 since exec errno does
+# The following test does not work on CentOS 7 / RHEL7 since exec errno does
 #  not work with job-exec (for as yet unknown reason). Skip the test on
-#  this distro:
-test_expect_success NOT_CENTOS7 'job-exec: path to shell is emitted on exec error' '
+#  these distros:
+test_expect_success NOT_CENTOS7,NOT_RHEL7 'job-exec: path to shell is emitted on exec error' '
 	test_expect_code 127 flux run \
 	  --setattr=exec.job_shell=/foo/flux-shell hostname 2>exec.err &&
 	test_debug "cat exec.err" &&
