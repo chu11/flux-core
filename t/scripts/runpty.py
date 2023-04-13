@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S flux python
 """
 Run command in a pty, logging the output one of a set of formats that
 is safe and useful for later processing.

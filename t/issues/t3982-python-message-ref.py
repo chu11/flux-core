@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S flux python
 #
 #  Test for issue #3982 - Ensure python handles message refcount properly
 #

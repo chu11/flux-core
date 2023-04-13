@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S flux python
 """
 flux: --nodes=4
 

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S flux python
 #
 #  Simple test for issue #3470: multiple threads calling reactor_run
 #   causes libev assertion failure.

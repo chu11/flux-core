@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S flux python
 #
 #  Test for issue #3429 - circular future reference occurs when
 #   an exception occurs in a Future continuation_callback. Then

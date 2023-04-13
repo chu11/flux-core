@@ -13,7 +13,7 @@ LPTEST=${FLUX_BUILD_DIR}/t/shell/lptest
 # ensure SEEK_DATA returns ENXIO on file that is 100% empty.
 havesparse() {
 	cat >lseek.py <<-EOT &&
-	#!/usr/bin/env python3
+	#!/usr/bin/env -S flux python
 	import sys, os, errno
 	fd = os.open("$1", os.O_RDONLY)
 	try:

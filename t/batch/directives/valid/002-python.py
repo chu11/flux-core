@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S flux python
 # Directives embedded in python docstring
 def main():
     """
