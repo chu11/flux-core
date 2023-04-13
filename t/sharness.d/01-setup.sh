@@ -44,11 +44,9 @@ fi
 #  Add path to flux(1) command to PATH
 #
 if test -n "$FLUX_TEST_INSTALLED_PATH"; then
-    PATH=$FLUX_TEST_INSTALLED_PATH:$PATH
-    fluxbin=$FLUX_TEST_INSTALLED_PATH/flux
+    fluxpath=$FLUX_TEST_INSTALLED_PATH
 else # normal case, use ${top_builddir}/src/cmd/flux
-    PATH=$FLUX_BUILD_DIR/src/cmd:$PATH
-    fluxbin=$FLUX_BUILD_DIR/src/cmd/flux
+    fluxpath=$FLUX_BUILD_DIR/src/cmd
 
     #  Ensure that the built libflux-*.so are found before any system
     #   installed versions. This is necessary because sometimes libtool
@@ -57,6 +55,9 @@ else # normal case, use ${top_builddir}/src/cmd/flux
     #
     export LD_LIBRARY_PATH="${FLUX_BUILD_DIR}/src/common/.libs:$LD_LIBRARY_PATH"
 fi
+fluxbin=${fluxpath}/flux
+fluxpythonpath=`${fluxbin} python -c 'import os,sys; print(os.path.dirname(sys.executable))'`
+PATH=${fluxpath}:${fluxpythonpath}:$PATH
 export PATH
 
 if ! test -x ${fluxbin}; then
