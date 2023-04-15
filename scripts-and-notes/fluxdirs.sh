@@ -21,6 +21,7 @@ FLUXDIRS="\
   planning \
   cheat-sheet \
   dyad \
+  capacitor \
   PerfFlowAspect \
   flux-restful-api \
   FluxRM.jl \
