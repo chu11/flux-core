@@ -13,19 +13,24 @@ FLUXDIRS="\
   flux-accounting \
   flux-k8s \
   flux-k8s-orchestrator \
+  kubeflux \
   flux-pmix \
   flux-pam \
   flux-coral2 \
   flux-operator \
-  flux-proposals \
   planning \
   cheat-sheet \
   dyad \
   PerfFlowAspect \
-  fractale \
   flux-restful-api \
   FluxRM.jl \
-  actions \
   flux-depend \
   flux-power-mgr \
+  flux-research-artifacts \
+  flux-rs \
+  fripp \
+  fliirm \
+  power-research \
+  flux-core-v0.11 \
+  flux-sched-v0.7 \
 "
