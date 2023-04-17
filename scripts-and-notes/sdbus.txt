@@ -1,0 +1,305 @@
+http://0pointer.net/blog/the-new-sd-bus-api-of-systemd.html
+https://github.com/tmux/tmux/issues/428
+
+// --remain-after-exit
+systemd-run --user --pipe --collect --property=CPUAccounting=1 --unit=unitnamefoo sleep 300
+
+su fluxuser
+systemd-run --user --pipe --collect --property=CPUAccounting=1 --unit=unitnamefoo sleep 300  &
+systemd-run --user --pipe --collect --property=CPUAccounting=1 --unit=unitnamefoo2 echo fadsfdsaf
+systemctl status --user
+systemctl status --user unitnamefoo
+
+--remain-after-exit for exit code to stay
+systemctl list-units --user to list all units
+
+systemctl stop --user unitnamefoo // if it passed
+
+systemctl reset-failed --user unitnamefoo // if it failed
+
+build/systemd-run --user --pipe --collect --property=CPUAccounting=1 --unit="test-$RANDOM" sleep 60
+
+- to determine exit code
+systemctl status --user unitnamefoo
+
+Messing around - systemd only caches failed, not successful - how to configure garbage collection?  see --collect option
+
+
+
+https://python-sdbus.readthedocs.io/en/latest/asyncio_api.html
+
+https://unix.stackexchange.com/questions/527283/watching-sd-bus-properties
+
+/* gcc main.c -lsystemd */
+
+#include <systemd/sd-bus.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+static inline const char *strna(const char *s) {
+        return s ?: "n/a";
+}
+
+int message_callback(sd_bus_message* m, void* userdata, sd_bus_error* ret_error) {
+        printf("callback: path=%s interface=%s member=%s\n", 
+                strna(sd_bus_message_get_path(m)), 
+                strna(sd_bus_message_get_interface(m)), 
+                strna(sd_bus_message_get_member(m))
+        );
+        return 0;
+}
+
+int main() {
+        sd_bus* bus = NULL;
+        sd_bus_error err = SD_BUS_ERROR_NULL;
+        char* msg = NULL;
+        void* userdata = NULL;
+
+        sd_bus_default_system(&bus);
+
+        sd_bus_match_signal(
+                bus,                                             /* bus */
+                NULL,                                            /* slot */
+                NULL,                                            /* sender */
+                "/org/freedesktop/systemd1/unit/foo_2eservice",  /* path */
+                "org.freedesktop.DBus.Properties",               /* interface */
+                "PropertiesChanged",                             /* member */
+                NULL /*message_callback*/ ,                      /* callback */
+                userdata
+        );
+
+        while( 1 ) { 
+                sd_bus_wait(bus, UINT64_MAX);
+                while ( sd_bus_process(bus, NULL) ) {  }
+
+                sd_bus_get_property_string(
+                        bus,                                             /* bus */
+                        "org.freedesktop.systemd1",                      /* destination */
+                        "/org/freedesktop/systemd1/unit/foo_2eservice", /* path */
+                        "org.freedesktop.systemd1.Unit",                 /* interface */
+                        "ActiveState",                                   /* member */
+                        &err, 
+                        &msg);
+
+                printf("New state: %s\n", msg);
+                free(msg);
+
+        }
+
+        sd_bus_error_free(&err);
+        sd_bus_message_unref(ret);
+        sd_bus_unref(bus);
+        return 0;
+}
+
+
+https://stackoverflow.com/questions/61940461/how-to-get-the-state-of-a-service-with-sd-bus
+
+void Systemctl::SubscribeToUnitChanges(const std::string& escaped_name)
+{
+    /* This function is an easier helper, but it as only introduced in systemd 237
+     * Stretch is on 232 while buster is on 241 .  Need re replace this as long as
+     * we still support stretch
+    sd_bus_match_signal(
+        m_bus,
+        nullptr, // slot
+        nullptr, // sender
+        std::string("/org/freedesktop/systemd1/unit/" + escaped_name).c_str(), // path
+        "org.freedesktop.DBus.Properties", // interface
+        "PropertiesChanged", // member
+        nullptr, // callback
+        nullptr // userdata
+    );
+    */
+    std::string match =  "type='signal'";
+        match += ",path='/org/freedesktop/systemd1/unit/" + escaped_name + "'" ;
+        match += ",interface='org.freedesktop.DBus.Properties'";
+        match += ",member='PropertiesChanged'";
+
+    sd_bus_add_match(
+        m_bus,
+        nullptr, // slot
+        match.c_str(),
+        nullptr, // callback
+        nullptr // userdata
+    );
+}
+
+https://www.freedesktop.org/software/systemd/man/org.freedesktop.systemd1.html
+
+
+
+
+
+Failed to connect to bus: No such file or directory
+
+    There must be a /lib/systemd/systemd --user process for the user you're running this for. Check with: ps aux | grep systemd. In my case the process didn't exist because I was trying to setup background services on another account, and that user wasn't logged in (the systemd --user process is normally launched at login). The solution was to run sudo loginctl enable-linger $otherUser, which keeps the systemd --user process running at all times.
+
+    XDG_RUNTIME_DIR must be set. In my case it wasn't, so my command had to be sudo -u $otherUser XDG_RUNTIME_DIR=/run/user/$(id -u $otherUser) systemctl --user.
+
+As per default configuration in /etc/pam.d/system-login, the pam_systemd module automatically launches a systemd --user instance when the user logs in for the first time. This process will survive as long as there is some session for that user, and will be killed as soon as the last session for the user is closed. When #Automatic start-up of systemd user instances is enabled, the instance is started on boot and will not be killed. The systemd user instance is responsible for managing user services, which can be used to run daemons or automated tasks, with all the benefits of systemd, such as socket activation, timers, dependency system or strict process control via cgroups. 
+
+
+  XDG_RUNTIME_DIR=/run/user/$UID \
+  DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$UID/bus \
+  
+setenv XDG_RUNTIME_DIR "/run/user/8556"
+setenv DBUS_SESSION_BUS_ADDRESS "unix:path=/run/user/8556/bus"
+
+/lib/systemd/systemd --user
+
+sudo systemctl start user@8556.service
+
+
+
+----
+
+get exit code from wait
+
+get exit code from wait if success / failed
+
+remain-after-exit job stays active if success
+remain-after-exit nothing if failed, systedm will keep around
+
+
+
+
+
+
+systemctl start user@UID.service
+
+
+
+# Ensure the user systemd instance for user 'flux' is started.
+#  The system instance will use this to run job shells as
+#  transient units.
+ExecStartPre=bash -c 'systemctl start user@$(id -u flux).service'
+
+We also need to ensure that the Flux instance will have access to the DBus connection. Again, since the flux userid can't be determined in the unit file, we have to set the requisite environment variables on the ExecStart command line:
+
+ExecStart=bash -c '\
+  XDG_RUNTIME_DIR=/run/user/$UID \
+  DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$UID/bus \
+  @X_BINDIR@/flux broker \
+  --config-path=@X_SYSCONFDIR@/flux/system/conf.d \
+  -Stbon.fanout=256 \
+  -Srundir=@X_RUNSTATEDIR@/flux \
+  -Slocal-uri=local://@X_RUNSTATEDIR@/flux/local \
+  -Slog-stderr-level=6 \
+  -Slog-stderr-mode=local \
+  -Scontent.backing-path=@X_LOCALSTATEDIR@/lib/flux/content.sqlite \
+  -Sbroker.rc2_none \
+  -Sbroker.quorum=0 \
+'
+
+
+in docker, may need to set
+
+as root
+
+systemctl start user@$UID.service
+
+as user
+
+XDG_RUNTIME_DIR=/run/user/$UID
+DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$UID/bus
+
+if things aren't setup
+
+
+for cut & paste
+
+----
+[Unit]
+Description=Flux message broker
+Wants=munge.service
+
+[Service]
+TimeoutStopSec=90
+KillMode=mixed
+ExecStart=bash -c '\
+  /usr/bin/flux broker \
+  XDG_RUNTIME_DIR=/run/user/$UID \
+  DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$UID/bus \
+  --config-path=/etc/flux/system/conf.d \
+  -Stbon.fanout=256 \
+  -Srundir=/run/flux \
+  -Slocal-uri=local:///run/flux/local \
+  -Slog-stderr-level=6 \
+  -Slog-stderr-mode=local \
+  -Scontent.backing-path=/var/lib/flux/content.sqlite \
+  -Sbroker.rc2_none \
+  -Sbroker.quorum=0 \
+'
+ExecReload=/usr/bin/flux config reload
+Restart=on-success
+RestartSec=5s
+User=flux
+Group=flux
+RuntimeDirectory=flux
+RuntimeDirectoryMode=0755
+PermissionsStartOnly=true
+ExecStartPre=-/bin/mkdir -p /var/lib/flux
+ExecStartPre=/bin/chown flux:flux /var/lib/flux
+ExecStartPre=/bin/chmod 0700 /var/lib/flux
+ExecStartPre=bash -c 'systemctl start user@$(id -u flux).service'
+#
+# Delegate cgroup control to user flux, so that systemd doesn't reset
+#  cgroups for flux initiated processes, and to allow (some) cgroup
+#  manipulation as user flux.
+#
+Delegate=yes
+
+[Install]
+WantedBy=multi-user.target
+----
+
+
+
+two other things to look at next: 1. In PR 4155 we added a file descriptor passed to the job shell by the exec system to implement barriers. I don't suppose there is any way to pass an fd with systemd-based exec? It isn't necessary for now because it is only required for size > 1.
+10:21
+2. As an enhancement to systemd based exec, we may want to to have the sdexec implementation read R and get the local resource set, and then use systemd to constrain the created cgroup to include only those resources, perhaps with a configured default for Memory at first.
+10:22
+we should research those two things and see if it is even possible
+
+
+
+
+
+grondo@eel:~$ systemctl show user@1000.service | grep -i delegate
+Delegate=yes
+DelegateControllers=memory pids
+
+Ok, I got it working by adding /usr/lib/systemd/system/user@.service.d/delegate.conf with:
+
+[Service]
+Delegate=cpu cpuset io memory pids
+
+on RHEL8 edit
+
+/usr/lib/systemd/system/user@.service
+
+
+
+
+< MemoryCurrent=[not set]
+---
+> MemoryCurrent=8118272
+
+< TasksCurrent=[not set]
+---
+> TasksCurrent=3
+
+
+
+[root@fluke11:user-8556.slice]# cat /etc/systemd/system/user-8556.slice
+[Unit]
+Before=systemd-logind.service
+
+[Slice]
+Slice=user.slice
+MemoryAccounting=yes
+TasksAccounting=yes
+
+[Install]
+WantedBy=multi-user.target
