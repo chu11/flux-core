@@ -16,6 +16,7 @@ FLUXDIRS="\
   kubeflux \
   flux-pmix \
   flux-pam \
+  flux-python \
   flux-coral2 \
   flux-operator \
   planning \
