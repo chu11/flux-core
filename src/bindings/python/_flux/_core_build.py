@@ -33,6 +33,9 @@ void free(void *ptr);
 
     """
 
+with open("_core_defines.h") as h:
+    cdefs = cdefs + h.read()
+
 with open("_core_preproc.h") as h:
     cdefs = cdefs + h.read()
 

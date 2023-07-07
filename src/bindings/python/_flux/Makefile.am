@@ -51,7 +51,7 @@ STDERR_DEVNULL = $(stderr_devnull_$(V))
 stderr_devnull_ =  $(stderr_devnull_$(AM_DEFAULT_VERBOSITY))
 stderr_devnull_0 = >/dev/null 2>&1
 
-_core.c: $(srcdir)/_core_build.py _core_preproc.h
+_core.c: $(srcdir)/_core_build.py _core_preproc.h _core_defines.h
 	$(AM_V_GEN)$(PYTHON) $< $(STDERR_DEVNULL)
 
 _core_clean.h: Makefile
@@ -67,6 +67,9 @@ _core_clean.h: Makefile
 _core_preproc.h: _core_clean.h
 	$(AM_V_GEN)$(CC) $(PREPROC_FLAGS) _core_clean.h \
 	  | sed -e '/^# [0-9]*.*/d' > $@
+
+_core_defines.h: _core_clean.h _core_defines.sh
+	_core_defines.sh > $@
 
 _hostlist.c: $(srcdir)/_hostlist_build.py _hostlist_preproc.h
 	$(AM_V_GEN)$(PYTHON) $^ $(STDERR_DEVNULL)
