@@ -13,6 +13,7 @@ FLUXDIRS="\
   flux-accounting \
   flux-k8s \
   flux-k8s-orchestrator \
+  flux-test-collective \
   kubeflux \
   flux-pmix \
   flux-pam \
