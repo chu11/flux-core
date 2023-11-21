@@ -442,12 +442,12 @@ void lsmod_print_header (FILE *f, bool longopt)
 }
 
 void lsmod_print_entry (FILE *f,
-                       const char *name,
-                       const char *path,
-                       int idle,
-                       int status,
-                       json_t *services,
-                       bool longopt)
+                        const char *name,
+                        const char *path,
+                        int idle,
+                        int status,
+                        json_t *services,
+                        bool longopt)
 {
     char idle_s[16];
     char state = lsmod_state_char (status);
