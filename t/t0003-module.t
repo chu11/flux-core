@@ -15,7 +15,9 @@ invalid_rank() {
 }
 
 testmod=${FLUX_BUILD_DIR}/t/module/.libs/testmod.so
+dependmod=${FLUX_BUILD_DIR}/t/module/.libs/dependmod.so
 legacy=${FLUX_BUILD_DIR}/t/module/.libs/legacy.so
+RPC=${FLUX_BUILD_DIR}/t/request/rpc
 
 module_status_bad_proto() {
 	flux python -c "import flux; print(flux.Flux().rpc(\"broker.module-status\").get())"
@@ -285,6 +287,50 @@ test_expect_success 'module: load without unload causes broker failure' '
 '
 test_expect_success 'module: module name is called out' '
 	grep ".content. was not properly shut down" nounload.err
+'
+
+test_expect_success 'module: load test module' '
+	flux module load $testmod
+'
+
+test_expect_success 'module: load depend module' '
+	flux module load $dependmod
+'
+
+test_expect_success 'module: module loaded and running' '
+	$RPC dependmod.test < /dev/null | jq -e ".dependmodtest = 1"
+'
+
+test_expect_success 'module: dependmod listed as a user of testmod' '
+	flux module list | grep testmod | grep dependmod
+'
+
+test_expect_success 'module: remove dependmod' '
+        flux module remove dependmod
+'
+
+test_expect_success 'module: remove testmod' '
+        flux module remove testmod
+'
+
+test_expect_success 'module: load test module' '
+	flux module load $testmod
+'
+
+test_expect_success 'module: load depend module' '
+	flux module load $dependmod
+'
+
+test_expect_success 'module: module loaded correctly' '
+	$RPC dependmod.test < /dev/null | jq -e ".dependmodtest = 1"
+'
+
+test_expect_success 'module: remove testmod' '
+	flux module remove testmod
+'
+# dependmod depends on testmod
+test_expect_success 'module: load depend module without dependency module' '
+	test_must_fail flux module load $dependmod
 '
 
 test_done

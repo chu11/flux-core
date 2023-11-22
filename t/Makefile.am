@@ -453,6 +453,7 @@ endif
 
 check_LTLIBRARIES = \
 	module/testmod.la \
+	module/dependmod.la \
 	module/running.la \
 	module/legacy.la \
 	request/req.la \
@@ -683,6 +684,11 @@ module_testmod_la_SOURCES = module/testmod.c
 module_testmod_la_CPPFLAGS = $(test_cppflags)
 module_testmod_la_LDFLAGS = $(fluxmod_ldflags) -module -rpath /nowher
 module_testmod_la_LIBADD = $(test_ldadd) $(LIBDL)
+
+module_dependmod_la_SOURCES = module/dependmod.c
+module_dependmod_la_CPPFLAGS = $(test_cppflags)
+module_dependmod_la_LDFLAGS = $(fluxmod_ldflags) -module -rpath /nowher
+module_dependmod_la_LIBADD = $(test_ldadd) $(LIBDL)
 
 module_running_la_SOURCES = module/running.c
 module_running_la_CPPFLAGS = $(test_cppflags)
