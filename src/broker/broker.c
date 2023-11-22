@@ -1249,6 +1249,9 @@ static int unload_module (broker_ctx_t *ctx, const char *name,
     }
     if (module_stop (p, ctx->h) < 0)
         return -1;
+    /* do this immediately after stop, before we shutdown */
+    if (module_notify (p) < 0)
+        return -1;
     if (module_push_rmmod (p, request) < 0)
         return -1;
     flux_log (ctx->h, LOG_DEBUG, "rmmod %s", name);

@@ -77,6 +77,9 @@ int module_start (module_t *p);
  */
 int module_stop (module_t *p, flux_t *h);
 
+/* Notify module dependencies that stop occurred */
+int module_notify (module_t *p);
+
 /*  Mute module. Do not send any more messages.
  */
 void module_mute (module_t *p);
@@ -90,6 +93,11 @@ int module_cancel (module_t *p, flux_error_t *error);
 int module_subscribe (module_t *p, const char *topic);
 int module_unsubscribe (module_t *p, const char *topic);
 int module_event_cast (module_t *p, const flux_msg_t *msg);
+
+/* Manage dependencies */
+int module_depend_append (module_t *p, const flux_msg_t *msg, const char *name);
+int module_depend_remove (module_t *p, const flux_msg_t *msg);
+json_t *module_get_depends (module_t *p);
 
 #endif /* !_BROKER_MODULE_H */
 

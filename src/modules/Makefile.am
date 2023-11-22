@@ -227,7 +227,7 @@ job_manager_la_LDFLAGS = \
 	$(fluxlib_ldflags) \
 	-avoid-version \
 	-export-symbols-regex \
-	'^(flux_jobtap.*|mod_main)$$' \
+	'^(flux_jobtap.*|mod_main|mod_flags)$$' \
 	-module
 
 kvs_la_SOURCES =

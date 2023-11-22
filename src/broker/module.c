@@ -55,6 +55,7 @@ struct broker_module {
     flux_conf_t *conf;
     pthread_t t;            /* module thread */
     mod_main_f *main;       /* dlopened mod_main() */
+    mod_flags_f *flags;       /* dlopened mod_flags() */
     char *name;
     char *path;             /* retain the full path as a key for lookup */
     void *dso;              /* reference on dlopened module */
@@ -73,6 +74,9 @@ struct broker_module {
 
     struct flux_msglist *rmmod_requests;
     struct flux_msglist *insmod_requests;
+
+    json_t *depend;            /* modules that depend on this module */
+    struct flux_msglist *depend_msglist;
 
     flux_t *h;               /* module's handle */
     struct subhash *sub;
@@ -158,6 +162,7 @@ static void *module_thread (void *arg)
     int mod_main_errno = 0;
     flux_msg_t *msg;
     flux_future_t *f;
+    int flags;
 
     setup_module_profiling (p);
 
@@ -177,7 +182,8 @@ static void *module_thread (void *arg)
         goto done;
     }
     p->conf = NULL; // flux_set_conf() transfers ownership to p->h
-    if (modservice_register (p->h, p) < 0) {
+    flags = p->flags ? p->flags () : 0;
+    if (modservice_register (p->h, p, flags) < 0) {
         log_err ("%s: modservice_register", p->name);
         goto done;
     }
@@ -288,6 +294,7 @@ module_t *module_create (flux_t *h,
     void *dso;
     const char **mod_namep;
     mod_main_f *mod_main;
+    mod_flags_f *mod_flags;
 
     dlerror ();
     if (!(dso = dlopen (path, RTLD_NOW | RTLD_GLOBAL | FLUX_DEEPBIND))) {
@@ -301,9 +308,11 @@ module_t *module_create (flux_t *h,
         errno = EINVAL;
         return NULL;
     }
+    mod_flags = dlsym (dso, "mod_flags");
     if (!(p = calloc (1, sizeof (*p))))
         goto nomem;
     p->main = mod_main;
+    p->flags = mod_flags;
     p->dso = dso;
     p->rank = rank;
     if (!(p->conf = flux_conf_copy (flux_get_conf (h))))
@@ -377,6 +386,13 @@ module_t *module_create (flux_t *h,
      */
     if (attr_cache_to_json (h, &p->attr_cache) < 0)
         goto nomem;
+
+    if (!(p->depend = json_array ()))
+        goto nomem;
+
+    if (!(p->depend_msglist = flux_msglist_create ()))
+        goto cleanup;
+
     return p;
 nomem:
     errprintf (error, "out of memory");
@@ -461,6 +477,9 @@ void module_destroy (module_t *p)
     if (!p)
         return;
 
+    if (p->depend_msglist)
+        flux_msglist_destroy (p->depend_msglist);
+
     if (p->t) {
         if ((e = pthread_join (p->t, &res)) != 0)
             log_errn_exit (e, "pthread_cancel");
@@ -495,6 +514,7 @@ void module_destroy (module_t *p)
     flux_msglist_destroy (p->rmmod_requests);
     flux_msglist_destroy (p->insmod_requests);
     subhash_destroy (p->sub);
+    json_decref (p->depend);
     free (p);
     errno = saved_errno;
 }
@@ -520,6 +540,19 @@ done:
     free (topic);
     flux_future_destroy (f);
     return rc;
+}
+
+int module_notify (module_t *p)
+{
+    if (p->depend_msglist) {
+        const flux_msg_t *msg = flux_msglist_first (p->depend_msglist);
+        while (msg) {
+            if (flux_respond_error (p->h, msg, ENODATA, NULL) < 0)
+                flux_log_error (p->h, "notify dependencies of unload");
+            msg = flux_msglist_next (p->depend_msglist);
+        }
+    }
+    return 0;
 }
 
 void module_mute (module_t *p)
@@ -633,6 +666,50 @@ int module_event_cast (module_t *p, const flux_msg_t *msg)
             return -1;
     }
     return 0;
+}
+
+int module_depend_append (module_t *p, const flux_msg_t *msg, const char *name)
+{
+    json_t *s = json_string (name);
+
+    if (!s)
+        goto nomem;
+
+    if (json_array_append_new (p->depend, s) < 0) {
+        json_decref (s);
+        goto nomem;
+    }
+
+    if (flux_msglist_append (p->depend_msglist, msg) < 0)
+        return -1;
+
+    return 0;
+
+nomem:
+    errno = ENOMEM;
+    return -1;
+}
+
+int module_depend_remove (module_t *p, const flux_msg_t *msg)
+{
+    const flux_msg_t *tmp;
+
+    tmp = flux_msglist_first (p->depend_msglist);
+    while (tmp) {
+        if (flux_disconnect_match (msg, tmp)) {
+            flux_msglist_delete (p->depend_msglist);
+            break;
+        }
+        tmp = flux_msglist_next (p->depend_msglist);
+    }
+    return 0;
+}
+
+json_t *module_get_depends (module_t *p)
+{
+    if (p)
+        return p->depend;
+    return NULL;
 }
 
 /*

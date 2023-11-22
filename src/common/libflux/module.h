@@ -29,10 +29,15 @@ enum {
     FLUX_MODSTATE_EXITED         = 3,
 };
 
+enum {
+    FLUX_MODFLAG_NO_SET_RUNNING  = 0x1,
+};
+
 /* Mandatory symbols for modules
  */
 #define MOD_NAME(x) const char *mod_name = x
 typedef int (mod_main_f)(flux_t *h, int argc, char *argv[]);
+typedef int (mod_flags_f)(void);
 
 /* Test and optionally clear module debug bit from within a module, as
  * described in RFC 5.  Return true if 'flag' bit is set.  If clear=true,

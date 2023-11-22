@@ -108,6 +108,44 @@ static void prepare_cb (flux_reactor_t *r, flux_watcher_t *w,
     ctx->w_prepare = NULL;
 }
 
+static void depend_cb (flux_t *h, flux_msg_handler_t *mh,
+                       const flux_msg_t *msg, void *arg)
+{
+    module_t *p = arg;
+    const char *name;
+
+    if (flux_request_unpack (msg, NULL, "{s:s}", "name", &name) < 0) {
+        flux_log_error (h, "error decoding groups.update request");
+        return;
+    }
+
+    if (!flux_msg_is_streaming (msg)) {
+        errno = EPROTO;
+        goto error;
+    }
+
+    if (module_depend_append (p, msg, name) < 0)
+        goto error;
+
+    if (flux_respond (h, msg, NULL) < 0)
+        flux_log_error (h, "%s: flux_respond", __FUNCTION__);
+
+    return;
+
+error:
+    if (flux_respond_error (h, msg, errno, NULL) < 0)
+        flux_log_error (h, "%s: flux_respond_error", __FUNCTION__);
+    return;
+}
+
+static void disconnect_cb (flux_t *h, flux_msg_handler_t *mh,
+                           const flux_msg_t *msg, void *arg)
+{
+    module_t *p = arg;
+    if (module_depend_remove (p, msg) < 0)
+        flux_log_error (h, "%s: module_depend_remove", __FUNCTION__);
+}
+
 static struct flux_msg_handler_spec htab[] = {
     { FLUX_MSGTYPE_REQUEST,
       "shutdown",
@@ -144,6 +182,16 @@ static struct flux_msg_handler_spec htab[] = {
       method_ping_cb,
       FLUX_ROLE_USER,
     },
+    { FLUX_MSGTYPE_REQUEST,
+      "depend",
+      depend_cb,
+      FLUX_ROLE_USER,
+    },
+    { FLUX_MSGTYPE_REQUEST,
+      "disconnect",
+      disconnect_cb,
+      FLUX_ROLE_USER,
+    },
     FLUX_MSGHANDLER_TABLE_END,
 };
 
@@ -160,7 +208,7 @@ static int mod_subscribe (flux_t *h, module_t *p, const char *method)
     return 0;
 }
 
-int modservice_register (flux_t *h, module_t *p)
+int modservice_register (flux_t *h, module_t *p, int flags)
 {
     modservice_ctx_t *ctx = getctx (h, p);
     flux_reactor_t *r = flux_get_reactor (h);
@@ -189,10 +237,11 @@ int modservice_register (flux_t *h, module_t *p)
     if (mod_subscribe (h, ctx->p, "stats-clear") < 0)
         return -1;
 
-    if (!(ctx->w_prepare = flux_prepare_watcher_create (r, prepare_cb, ctx)))
-        return -1;
-
-    flux_watcher_start (ctx->w_prepare);
+    if (!(flags & FLUX_MODFLAG_NO_SET_RUNNING)) {
+        if (!(ctx->w_prepare = flux_prepare_watcher_create (r, prepare_cb, ctx)))
+            return -1;
+        flux_watcher_start (ctx->w_prepare);
+    }
     return 0;
 }
 
