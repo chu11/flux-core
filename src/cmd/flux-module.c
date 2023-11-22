@@ -403,6 +403,27 @@ char *lsmod_services_string (json_t *services, const char *skip, int maxcol)
     return argz;
 }
 
+char *lsmod_users_string (json_t *users, int maxcol)
+{
+    size_t index;
+    json_t *value;
+    char *argz = NULL;
+    size_t argz_len = 0;
+
+    json_array_foreach (users, index, value) {
+        const char *name = json_string_value (value);
+        if (argz_add (&argz, &argz_len, name) != 0)
+            oom ();
+    }
+    if (argz)
+        argz_stringify (argz, argz_len, ',');
+    if (argz && maxcol > 0 && strlen (argz) > maxcol) {
+        argz[maxcol - 1] = '+';
+        argz[maxcol] = '\0';
+    }
+    return argz;
+}
+
 void lsmod_idle_string (int idle, char *buf, int bufsz)
 {
     if (idle <= max_idle)
@@ -431,13 +452,13 @@ void lsmod_print_header (FILE *f, bool longopt)
 {
     if (longopt) {
         fprintf (f,
-                 "%-24.24s %4s  %c %-8s %s\n",
-                 "Module", "Idle", 'S', "Service", "Path");
+                 "%-24.24s %4s  %c %-8s %-8s %s\n",
+                 "Module", "Idle", 'S', "Service", "Users", "Path");
     }
     else {
         fprintf (f,
-                 "%-24s %4s  %c %s\n",
-                 "Module", "Idle", 'S', "Service");
+                 "%-24s %4s  %c %-16s %s\n",
+                 "Module", "Idle", 'S', "Service", "Users");
     }
 }
 
@@ -447,6 +468,7 @@ void lsmod_print_entry (FILE *f,
                         int idle,
                         int status,
                         json_t *services,
+                        json_t *users,
                         bool longopt)
 {
     char idle_s[16];
@@ -456,22 +478,28 @@ void lsmod_print_entry (FILE *f,
 
     if (longopt) {
         char *s = lsmod_services_string (services, name, 8);
-        fprintf (f, "%-24.24s %4s  %c %-8s %s\n",
+        char *u = lsmod_users_string (users, 8);
+        fprintf (f, "%-24.24s %4s  %c %-8s %-8s %s\n",
                  name,
                  idle_s,
                  state,
                  s ? s : "",
+                 u ? u : "",
                  path);
         free (s);
+        free (u);
     }
     else {
-        char *s = lsmod_services_string (services, name, 0);
-        fprintf (f, "%-24.24s %4s  %c %s\n",
+        char *s = lsmod_services_string (services, name, 16);
+        char *u = lsmod_users_string (users, 0);
+        fprintf (f, "%-24.24s %4s  %c %-16.16s %s\n",
                  name,
                  idle_s,
                  state,
-                 s ? s : "");
+                 s ? s : "",
+                 u ? u : "");
         free (s);
+        free (u);
     }
 }
 
@@ -484,18 +512,22 @@ void lsmod_print_list (FILE *f, json_t *o, bool longopt)
     int idle;
     int status;
     json_t *services;
+    json_t *users = NULL;
 
     json_array_foreach (o, index, value) {
-        if (json_unpack (value, "{s:s s:s s:i s:i s:o}",
+        if (json_unpack (value, "{s:s s:s s:i s:i s:o s?o}",
                          "name", &name,
                          "path", &path,
                          "idle", &idle,
                          "status", &status,
-                         "services", &services) < 0)
+                         "services", &services,
+                         "users", &users) < 0)
             log_msg_exit ("Error parsing lsmod response");
         if (!json_is_array (services))
             log_msg_exit ("Error parsing lsmod services array");
-        lsmod_print_entry (f, name, path, idle, status, services, longopt);
+        if (users && !json_is_array (users))
+            log_msg_exit ("Error parsing lsmod users array");
+        lsmod_print_entry (f, name, path, idle, status, services, users, longopt);
     }
 }
 

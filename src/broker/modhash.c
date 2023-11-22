@@ -104,6 +104,7 @@ static json_t *modhash_entry_tojson (module_t *p,
                                      struct service_switch *sw)
 {
     json_t *svcs;
+    json_t *users = NULL;
     json_t *entry = NULL;
 
     if (!(svcs  = service_list_byuuid (sw, module_get_uuid (p))))
@@ -114,6 +115,14 @@ static json_t *modhash_entry_tojson (module_t *p,
                        "idle", (int)(now - module_get_lastseen (p)),
                        "status", module_get_status (p),
                        "services", svcs);
+    if (entry
+        && (users = module_get_depends (p))
+        && json_array_size (users) > 0) {
+        if (json_object_set (entry, "users", users) < 0) {
+            json_decref (entry);
+            entry = NULL;
+        }
+    }
     json_decref (svcs);
     return entry;
 }
