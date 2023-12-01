@@ -125,6 +125,11 @@ FLUX_KVS_READLINK
    If :var:`key` is a symlink, read the link value. The lookup fails if the key
    does not refer to a symlink object.
 
+FLUX_KVS_NOFOLLOW
+   If :var:`key` or any component of the key path is a symlink, return the link
+   value.  If no component of the key path is a symlink, read the key normally
+   (or read it based based on other flag conditions).
+
 FLUX_KVS_TREEOBJ
    All KVS lookups return an RFC 11 tree object. This flag requests that
    they be returned without conversion. That is, a "valref" will not
