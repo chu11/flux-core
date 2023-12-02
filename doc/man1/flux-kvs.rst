@@ -23,7 +23,7 @@ SYNOPSIS
 | **flux** **kvs** **version**
 | **flux** **kvs** **wait** *version*
 
-| **flux** **kvs** **namespace** **create** [*-o owner*] *name...*
+| **flux** **kvs** **namespace** **create** [*-o owner*] [*-r rootref*] *name...*
 | **flux** **kvs** **namespace** **remove** *name...*
 | **flux** **kvs** **namespace** **list**
 
