@@ -1572,6 +1572,60 @@ static void finalize_transaction_bynames (struct kvs_ctx *ctx,
     }
 }
 
+static int check_symlinks_in_dir (json_t *dir)
+{
+    json_t *data = treeobj_get_data (dir);
+    const char *key;
+    json_t *value;
+
+    if (!data)
+        return 0;
+
+    json_object_foreach (data, key, value) {
+        if (treeobj_is_symlink (value)) {
+            errno = EPERM;
+            return -1;
+        }
+        else if (treeobj_is_dir (value)) {
+            if (check_symlinks_in_dir (value) < 0)
+                return -1;
+        }
+    }
+
+    return 0;
+}
+
+static int check_ops_symlink (flux_t *h, const flux_msg_t *msg, json_t *ops)
+{
+    struct flux_msg_cred cred;
+    size_t index;
+    json_t *value;
+
+    if (flux_msg_get_cred (msg, &cred) < 0) {
+        flux_log_error (h, "%s: flux_msg_get_cred", __FUNCTION__);
+        return -1;
+    }
+
+    if (cred.rolemask & FLUX_ROLE_OWNER)
+        return 0;
+
+    json_array_foreach (ops, index, value) {
+        json_t *treeobj;
+        if (txn_decode_op (value, NULL, NULL, &treeobj) < 0)
+            return -1;
+        if (treeobj_is_symlink (treeobj)) {
+            errno = EPERM;
+            return -1;
+        }
+        else if (treeobj_is_dir (treeobj)) {
+            if (check_symlinks_in_dir (treeobj) < 0)
+                return -1;
+        }
+    }
+    return 0;
+}
+
+
 /* kvs.relaycommit (rank 0 only, no response).
  */
 static void relaycommit_request_cb (flux_t *h, flux_msg_handler_t *mh,
@@ -1638,6 +1692,9 @@ static void commit_request_cb (flux_t *h, flux_msg_handler_t *mh,
         flux_log_error (h, "%s: flux_request_unpack", __FUNCTION__);
         goto error;
     }
+
+    if (check_ops_symlink (h, msg, ops) < 0)
+        goto error;
 
     if (!(root = getroot (ctx,
                           ns,
@@ -1824,6 +1881,9 @@ static void fence_request_cb (flux_t *h, flux_msg_handler_t *mh,
         flux_log_error (h, "%s: flux_request_unpack", __FUNCTION__);
         goto error;
     }
+
+    if (check_ops_symlink (h, msg, ops) < 0)
+        goto error;
 
     if (!(root = getroot (ctx,
                           ns,
