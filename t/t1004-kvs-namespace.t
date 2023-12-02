@@ -28,6 +28,7 @@ NAMESPACETMP=namespacetmp
 NAMESPACERANK1=namespacerank1
 NAMESPACEORDER=namespaceorder
 NAMESPACEROOTREF=namespacerootref
+NAMESPACENOSYMLINKS=namespacenosymlinks
 
 namespace_create_loop() {
         i=0
@@ -544,6 +545,36 @@ test_expect_success NO_CHAIN_LINT 'kvs: wait in different namespaces works' '
 
         test_expect_code 0 wait $primarykvswaitpid
         test_expect_code 0 wait $testkvswaitpid
+'
+
+#
+# Basic tests - --nosymlinks option
+#
+
+test_expect_success 'kvs: namespace create with --nosymlinks works' '
+        flux kvs namespace create --nosymlinks $NAMESPACENOSYMLINKS
+'
+
+test_expect_success 'kvs: new namespace exists/is listed' '
+        flux kvs namespace list | grep $NAMESPACENOSYMLINKS
+'
+
+test_expect_success 'kvs: symlink in new namespace fails with EPERM' '
+        test_must_fail flux kvs link --namespace=$NAMESPACENOSYMLINKS foo bar 2> link.err &&
+        grep "Operation not permitted" link.err
+'
+
+test_expect_success 'kvs: symlink via treeobj fails with EPERM' '
+        test_must_fail flux kvs put --treeobj --namespace=$NAMESPACENOSYMLINKS \
+                foo="{\"ver\":1,\"type\":\"dir\",\"data\":{\"a\":{\"ver\":1,\"type\":\"symlink\",\"data\":{\"target\":\"a\"}}}}" \
+                2> link2.err &&
+        grep "Operation not permitted" link2.err
+
+'
+
+test_expect_success 'kvs: symlink in new newspace rank 1 fails with EPERM' '
+	test_must_fail flux exec -n -r 1 sh -c "flux kvs link --namespace=$NAMESPACENOSYMLINKS foo bar" 2> link3.err &&
+        grep "Operation not permitted" link3.err
 '
 
 test_done
