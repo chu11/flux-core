@@ -86,6 +86,7 @@ static int lookup_key (struct lookup_ctx *l,
 {
     flux_future_t *f = NULL;
     char path[64];
+    int flags = 0;
 
     /* Check for duplicate key, return if already looked up */
     if (flux_future_get_child (fall, key) != NULL)
@@ -96,7 +97,10 @@ static int lookup_key (struct lookup_ctx *l,
         goto error;
     }
 
-    if (!(f = flux_kvs_lookup (l->ctx->h, NULL, 0, path))) {
+    if (strstarts (key, "guest."))
+        flags |= FLUX_KVS_NOFOLLOW;
+
+    if (!(f = flux_kvs_lookup (l->ctx->h, NULL, flags, path))) {
         flux_log_error (l->ctx->h, "%s: flux_kvs_lookup", __FUNCTION__);
         goto error;
     }
@@ -210,6 +214,9 @@ static void info_lookup_continuation (flux_future_t *fall, void *arg)
             goto error;
         }
 
+        /* N.B. if FLUX_KVS_NOFOLLOW set, this will fail with EINVAL
+         * if symlink was returned
+         */
         if (flux_kvs_lookup_get (f, &s) < 0) {
             if (errno != ENOENT)
                 flux_log_error (l->ctx->h, "%s: flux_kvs_lookup_get", __FUNCTION__);
