@@ -23,7 +23,7 @@ SYNOPSIS
 | **flux** **kvs** **version**
 | **flux** **kvs** **wait** *version*
 
-| **flux** **kvs** **namespace** **create** [*-o owner*] [*-r rootref*] *name...*
+| **flux** **kvs** **namespace** **create** [*-o owner*] [*-r rootref*] [*-N*] *name...*
 | **flux** **kvs** **namespace** **remove** *name...*
 | **flux** **kvs** **namespace** **list**
 
@@ -457,6 +457,10 @@ Create a new KVS namespace.
 
   Initialize namespace with specific root directory reference
   If unspecified, an empty directory is referenced.
+
+.. option:: -N, --nosymlinks
+
+  Do not allow symlinks to be written in this namespace.
 
 namespace remove
 ----------------
