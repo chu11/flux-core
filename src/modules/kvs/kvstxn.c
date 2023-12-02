@@ -106,6 +106,7 @@ struct kvstxn {
 static void kvstxn_destroy (kvstxn_t *kt)
 {
     if (kt) {
+        int save_errno = errno;
         json_decref (kt->ops);
         json_decref (kt->keys);
         json_decref (kt->names);
@@ -119,6 +120,7 @@ static void kvstxn_destroy (kvstxn_t *kt)
         flux_future_destroy (kt->f_sync_content_flush);
         flux_future_destroy (kt->f_sync_checkpoint);
         free (kt);
+        errno = save_errno;
     }
 }
 
@@ -162,8 +164,8 @@ static kvstxn_t *kvstxn_create (kvstxn_mgr_t *ktm,
     kt->state = KVSTXN_STATE_INIT;
     return kt;
  error_enomem:
-    kvstxn_destroy (kt);
     errno = ENOMEM;
+    kvstxn_destroy (kt);
     return NULL;
 }
 
