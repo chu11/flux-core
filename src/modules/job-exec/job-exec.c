@@ -964,7 +964,7 @@ static void get_rootref_cb (flux_future_t *fprev, void *arg)
                   idf58 (job->id));
 
     /* if rootref not found, still create namespace */
-    if (!(f = ns_create_and_link (h, job, 0)))
+    if (!(f = ns_create_and_link (h, job, FLUX_KVS_NAMESPACE_NO_SYMLINKS)))
         goto error;
 
     flux_future_continue (fprev, f);
@@ -1008,7 +1008,7 @@ static flux_future_t *jobinfo_start_init (struct jobinfo *job)
     if (job->reattach)
         f_kvs = ns_get_rootref (h, job, 0);
     else
-        f_kvs = ns_create_and_link (h, job, 0);
+        f_kvs = ns_create_and_link (h, job, FLUX_KVS_NAMESPACE_NO_SYMLINKS);
 
     if (flux_future_push (f, "ns", f_kvs) < 0)
         goto err;
