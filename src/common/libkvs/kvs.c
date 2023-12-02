@@ -29,9 +29,10 @@ flux_future_t *flux_kvs_namespace_create (flux_t *h, const char *ns,
     json_t *rootdir = NULL;
     char rootref[BLOBREF_MAX_STRING_SIZE];
     void *data = NULL;
+    int valid_flags = FLUX_KVS_NAMESPACE_NO_SYMLINKS;
     int len;
 
-    if (!ns || flags) {
+    if (!ns || (flags & ~valid_flags)) {
         errno = EINVAL;
         return NULL;
     }
@@ -69,7 +70,9 @@ flux_future_t *flux_kvs_namespace_create_with (flux_t *h, const char *ns,
                                                const char *rootref,
                                                uint32_t owner, int flags)
 {
-    if (!ns || !rootref || flags) {
+    int valid_flags = FLUX_KVS_NAMESPACE_NO_SYMLINKS;
+
+    if (!ns || !rootref || (flags & ~valid_flags)) {
         errno = EINVAL;
         return NULL;
     }

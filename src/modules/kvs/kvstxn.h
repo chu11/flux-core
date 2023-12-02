@@ -35,7 +35,8 @@ typedef enum {
  * that it has been set via kvstxn_get_internal_flags().
  */
 
-#define KVSTXN_INTERNAL_FLAG_NO_PUBLISH 0x01
+#define KVSTXN_INTERNAL_FLAG_NO_PUBLISH  0x01
+#define KVSTXN_INTERNAL_FLAG_NO_SYMLINKS 0x02
 
 /*
  * kvstxn_t API

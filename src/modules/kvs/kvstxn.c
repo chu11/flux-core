@@ -124,6 +124,30 @@ static void kvstxn_destroy (kvstxn_t *kt)
     }
 }
 
+/* XXX: need depth count to avoid potential infinite recursion? */
+static int check_symlinks_in_dir (json_t *dir)
+{
+    json_t *data = treeobj_get_data (dir);
+    const char *key;
+    json_t *value;
+
+    if (!data)
+        return 0;
+
+    json_object_foreach (data, key, value) {
+        if (treeobj_is_symlink (value)) {
+            errno = EPERM;
+            return -1;
+        }
+        else if (treeobj_is_dir (value)) {
+            if (check_symlinks_in_dir (value) < 0)
+                return -1;
+        }
+    }
+
+    return 0;
+}
+
 static kvstxn_t *kvstxn_create (kvstxn_mgr_t *ktm,
                                 const char *name,
                                 json_t *ops,
@@ -135,8 +159,29 @@ static kvstxn_t *kvstxn_create (kvstxn_mgr_t *ktm,
     if (!(kt = calloc (1, sizeof (*kt))))
         goto error_enomem;
     if (ops) {
-        if (!(kt->ops = json_copy (ops)))
+        size_t index;
+        json_t *value;
+
+        if (!(kt->ops = json_array ()))
             goto error_enomem;
+
+        json_array_foreach (ops, index, value) {
+            if (internal_flags & KVSTXN_INTERNAL_FLAG_NO_SYMLINKS) {
+                json_t *treeobj;
+                if (txn_decode_op (value, NULL, NULL, &treeobj) < 0)
+                    goto cleanup;
+                if (treeobj_is_symlink (treeobj)) {
+                    errno = EPERM;
+                    goto cleanup;
+                }
+                else if (treeobj_is_dir (treeobj)) {
+                    if (check_symlinks_in_dir (treeobj) < 0)
+                        goto cleanup;
+                }
+            }
+            if (json_array_append (kt->ops, value) < 0)
+                goto error_enomem;
+        }
     }
     else {
         if (!(kt->ops = json_array ()))
@@ -165,6 +210,7 @@ static kvstxn_t *kvstxn_create (kvstxn_mgr_t *ktm,
     return kt;
  error_enomem:
     errno = ENOMEM;
+ cleanup:
     kvstxn_destroy (kt);
     return NULL;
 }
@@ -1268,7 +1314,8 @@ int kvstxn_mgr_add_transaction (kvstxn_mgr_t *ktm,
                                 int internal_flags)
 {
     kvstxn_t *kt;
-    int valid_internal_flags = KVSTXN_INTERNAL_FLAG_NO_PUBLISH;
+    int valid_internal_flags = (KVSTXN_INTERNAL_FLAG_NO_PUBLISH
+                                | KVSTXN_INTERNAL_FLAG_NO_SYMLINKS);
 
     if (!name
         || !ops

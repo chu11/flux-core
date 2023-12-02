@@ -1583,6 +1583,7 @@ static void relaycommit_request_cb (flux_t *h, flux_msg_handler_t *mh,
     const char *name;
     int flags;
     json_t *ops = NULL;
+    int kvstxn_flags = 0;
 
     if (flux_request_unpack (msg, NULL, "{ s:o s:s s:s s:i }",
                              "ops", &ops,
@@ -1599,7 +1600,14 @@ static void relaycommit_request_cb (flux_t *h, flux_msg_handler_t *mh,
         goto error;
     }
 
-    if (kvstxn_mgr_add_transaction (root->ktm, name, ops, flags, 0) < 0) {
+    if (root->flags & FLUX_KVS_NAMESPACE_NO_SYMLINKS)
+        kvstxn_flags |= KVSTXN_INTERNAL_FLAG_NO_SYMLINKS;
+
+    if (kvstxn_mgr_add_transaction (root->ktm,
+                                    name,
+                                    ops,
+                                    flags,
+                                    kvstxn_flags) < 0) {
         flux_log_error (h, "%s: kvstxn_mgr_add_transaction",
                         __FUNCTION__);
         goto error;
@@ -1671,17 +1679,22 @@ static void commit_request_cb (flux_t *h, flux_msg_handler_t *mh,
         goto error;
 
     if (ctx->rank == 0) {
+        int kvstxn_flags = 0;
+
         /* we use this flag to indicate if a treq has been added to
          * the ready queue.  We don't need to call
          * treq_count_reached() b/c this is a commit and nprocs is 1
          */
         treq_set_processed (tr, true);
 
+        if (root->flags & FLUX_KVS_NAMESPACE_NO_SYMLINKS)
+            kvstxn_flags |= KVSTXN_INTERNAL_FLAG_NO_SYMLINKS;
+
         if (kvstxn_mgr_add_transaction (root->ktm,
                                         treq_get_name (tr),
                                         ops,
                                         flags,
-                                        0) < 0) {
+                                        kvstxn_flags) < 0) {
             flux_log_error (h, "%s: kvstxn_mgr_add_transaction",
                             __FUNCTION__);
             goto error;
@@ -1767,6 +1780,7 @@ static void relayfence_request_cb (flux_t *h, flux_msg_handler_t *mh,
     }
 
     if (treq_count_reached (tr)) {
+        int kvstxn_flags = 0;
 
         /* If user called fence > nprocs time, should have been caught
          * earlier */
@@ -1776,11 +1790,14 @@ static void relayfence_request_cb (flux_t *h, flux_msg_handler_t *mh,
          * the ready queue */
         treq_set_processed (tr, true);
 
+        if (root->flags & FLUX_KVS_NAMESPACE_NO_SYMLINKS)
+            kvstxn_flags |= KVSTXN_INTERNAL_FLAG_NO_SYMLINKS;
+
         if (kvstxn_mgr_add_transaction (root->ktm,
                                         treq_get_name (tr),
                                         treq_get_ops (tr),
                                         treq_get_flags (tr),
-                                        0) < 0) {
+                                        kvstxn_flags) < 0) {
             flux_log_error (h, "%s: kvstxn_mgr_add_transaction",
                             __FUNCTION__);
             goto error;
@@ -1875,6 +1892,7 @@ static void fence_request_cb (flux_t *h, flux_msg_handler_t *mh,
         }
 
         if (treq_count_reached (tr)) {
+            int kvstxn_flags = 0;
 
             /* If user called fence > nprocs time, should have been caught
              * earlier */
@@ -1884,11 +1902,14 @@ static void fence_request_cb (flux_t *h, flux_msg_handler_t *mh,
              * the ready queue */
             treq_set_processed (tr, true);
 
+            if (root->flags & FLUX_KVS_NAMESPACE_NO_SYMLINKS)
+                kvstxn_flags |= KVSTXN_INTERNAL_FLAG_NO_SYMLINKS;
+
             if (kvstxn_mgr_add_transaction (root->ktm,
                                             treq_get_name (tr),
                                             treq_get_ops (tr),
                                             treq_get_flags (tr),
-                                            0) < 0) {
+                                            kvstxn_flags) < 0) {
                 flux_log_error (h, "%s: kvstxn_mgr_add_transaction",
                                 __FUNCTION__);
                 goto error;

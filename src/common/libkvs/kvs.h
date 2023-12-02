@@ -38,6 +38,10 @@ enum kvs_op {
     FLUX_KVS_WATCH_APPEND = 256
 };
 
+enum kvs_namespace {
+    FLUX_KVS_NAMESPACE_NO_SYMLINKS = 1,
+};
+
 /* Namespace
  * - namespace create only creates the namespace on rank 0.  Other
  *   ranks initialize against that namespace the first time they use

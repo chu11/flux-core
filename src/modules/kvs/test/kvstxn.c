@@ -153,6 +153,27 @@ void ops_append (json_t *array, const char *key, const char *value, int flags)
     json_array_append_new (array, op);
 }
 
+/* Append a treeobj object containing
+ *     { "key" : key, flags : <num>, "dirent" : <treeobj> } }
+ * or
+ *     { "key" : key, flags : <num>, "dirent" : null }
+ * to a json array.
+ */
+void ops_append_symlink (json_t *array,
+                         const char *key,
+                         const char *ns,
+                         const char *target,
+                         int flags)
+{
+    json_t *op;
+    json_t *dirent;
+
+    dirent = treeobj_create_symlink (ns, target);
+    txn_encode_op (key, flags, dirent, &op);
+    json_decref (dirent);
+    json_array_append_new (array, op);
+}
+
 struct cache *create_cache_with_empty_rootdir (char *ref, int ref_len)
 {
     struct cache *cache;
@@ -273,6 +294,32 @@ void kvstxn_mgr_basic_tests (void)
 
     ok (kvstxn_mgr_get_ready_transaction (ktm) == NULL,
         "kvstxn_mgr_get_ready_transaction returns NULL no ready kvstxns");
+
+    ops = json_array ();
+    ops_append (ops, "value1", "1", 0);
+
+    ok (kvstxn_mgr_add_transaction (ktm,
+                                    "transaction2",
+                                    ops,
+                                    0,
+                                    KVSTXN_INTERNAL_FLAG_NO_SYMLINKS) == 0,
+        "kvstxn_mgr_add_transaction works with non-symlink and no symlinks flag");
+
+    json_decref (ops);
+
+    ops = json_array ();
+    ops_append_symlink (ops, "symlink1", NULL, "foo", 0);
+
+    errno = 0;
+    ok (kvstxn_mgr_add_transaction (ktm,
+                                    "transaction4",
+                                    ops,
+                                    0,
+                                    KVSTXN_INTERNAL_FLAG_NO_SYMLINKS) < 0
+        && errno == EPERM,
+        "kvstxn_mgr_add_transaction fails with symlink and no symlinks flag");
+
+    json_decref (ops);
 
     kvstxn_mgr_destroy (ktm);
     cache_destroy (cache);
