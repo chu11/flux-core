@@ -461,6 +461,7 @@ int cmd_namespace_create (optparse_t *p, int argc, char **argv)
     uint32_t owner = FLUX_USERID_UNKNOWN;
     const char *str;
     const char *rootref;
+    int flags = 0;
 
     optindex = optparse_option_index (p);
     if ((optindex - argc) == 0) {
@@ -477,12 +478,14 @@ int cmd_namespace_create (optparse_t *p, int argc, char **argv)
 
     rootref = optparse_get_str (p, "rootref", NULL);
 
+    if (optparse_hasopt (p, "nosymlinks"))
+        flags |= FLUX_KVS_NAMESPACE_NO_SYMLINKS;
+
     if (!(h = flux_open (NULL, 0)))
         log_err_exit ("flux_open");
 
     for (i = optindex; i < argc; i++) {
         const char *name = argv[i];
-        int flags = 0;
         if (rootref)
             f = flux_kvs_namespace_create_with (h, name, rootref, owner, flags);
         else
@@ -580,12 +583,15 @@ static struct optparse_option namespace_create_opts[] =  {
     { .name = "rootref", .key = 'r', .has_arg = 1,
       .usage = "Initialize namespace with specific root reference",
     },
+    { .name = "nosymlinks", .key = 'N', .has_arg = 0,
+      .usage = "Do not allow symlinks to be written in this namespace",
+    },
     OPTPARSE_TABLE_END
 };
 
 static struct optparse_subcommand namespace_subcommands[] = {
     { "create",
-      "[-o owner] [-r rootref] name [name...]",
+      "[-o owner] [-r rootref] [-N] name [name...]",
       "Create a KVS namespace",
       cmd_namespace_create,
       0,
