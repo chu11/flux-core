@@ -462,6 +462,15 @@ static lookup_process_t walk (lookup_t *lh)
             walk_level_t *wltmp = NULL;
             lookup_process_t sret;
 
+            if (lh->flags & FLUX_KVS_NOFOLLOW) {
+                /* break out of loop, NOFOLLOW means we're done
+                 * walking the path, this symlink the value we will
+                 * return.
+                 */
+                walk_level_update_dirent (wl, dirent_tmp, entry);
+                break;
+            }
+
             sret = walk_symlink (lh, wl, entry, dirent_tmp, pathcomp, &wltmp);
             if (sret == LOOKUP_PROCESS_ERROR)
                 goto error;
@@ -1145,14 +1154,16 @@ lookup_process_t lookup (lookup_t *lh)
                     goto error;
                 }
             } else if (treeobj_is_symlink (lh->wdirent)) {
-                /* this should be "impossible" */
-                if (!(lh->flags & FLUX_KVS_READLINK)) {
-                    lh->errnum = EPROTO;
-                    goto error;
-                }
-                if (lh->flags & FLUX_KVS_READDIR) {
-                    lh->errnum = ENOTDIR;
-                    goto error;
+                if (!(lh->flags & FLUX_KVS_NOFOLLOW)) {
+                    /* this should be "impossible" */
+                    if (!(lh->flags & FLUX_KVS_READLINK)) {
+                        lh->errnum = EPROTO;
+                        goto error;
+                    }
+                    if (lh->flags & FLUX_KVS_READDIR) {
+                        lh->errnum = ENOTDIR;
+                        goto error;
+                    }
                 }
                 if (!(lh->val = treeobj_deep_copy (lh->wdirent))) {
                     lh->errnum = errno;

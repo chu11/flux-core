@@ -1744,6 +1744,79 @@ void lookup_links (void) {
     check_value (lh, test, "dirref1.link2symlink");
     json_decref (test);
 
+    /* nofollow link is last in path */
+    ok ((lh = lookup_create (cache,
+                             krm,
+                             KVS_PRIMARY_NAMESPACE,
+                             NULL,
+                             0,
+                             "dirref1.link2val",
+                             owner_cred,
+                             FLUX_KVS_NOFOLLOW,
+                             NULL)) != NULL,
+        "lookup_create NOFOLLOW on link end of path");
+    test = treeobj_create_symlink (NULL, "dirref2.val");
+    check_value (lh, test, "dirref1.link2val");
+    json_decref (test);
+
+    /* nofollow link is middle of path */
+    ok ((lh = lookup_create (cache,
+                             krm,
+                             KVS_PRIMARY_NAMESPACE,
+                             NULL,
+                             0,
+                             "dirref1.link2dirref.val",
+                             owner_cred,
+                             FLUX_KVS_NOFOLLOW,
+                             NULL)) != NULL,
+        "lookup_create NOFOLLOW on link middle of path");
+    test = treeobj_create_symlink (NULL, "dirref2");
+    check_value (lh, test, "dirref2");
+    json_decref (test);
+
+    /* nofollow corner case */
+    ok ((lh = lookup_create (cache,
+                             krm,
+                             KVS_PRIMARY_NAMESPACE,
+                             NULL,
+                             0,
+                             "dirref2.val",
+                             owner_cred,
+                             FLUX_KVS_NOFOLLOW,
+                             NULL)) != NULL,
+        "lookup_create NOFOLLOW on normal value");
+    test = treeobj_create_val ("foo", 3);
+    check_value (lh, test, "NOFOLLOW on normal value");
+    json_decref (test);
+
+    /* nofollow corner case */
+    ok ((lh = lookup_create (cache,
+                             krm,
+                             KVS_PRIMARY_NAMESPACE,
+                             NULL,
+                             0,
+                             "dirref1",
+                             owner_cred,
+                             FLUX_KVS_READDIR | FLUX_KVS_NOFOLLOW,
+                             NULL)) != NULL,
+        "lookup_create NOFOLLOW on dir");
+    check_value (lh, dirref1, "NOFOLLOW on dir");
+
+    /* nofollow corner case */
+    ok ((lh = lookup_create (cache,
+                             krm,
+                             KVS_PRIMARY_NAMESPACE,
+                             NULL,
+                             0,
+                             "dirref2.val",
+                             owner_cred,
+                             FLUX_KVS_TREEOBJ | FLUX_KVS_NOFOLLOW,
+                             NULL)) != NULL,
+        "lookup_create NOFOLLOW get treeobj)");
+    test = treeobj_create_val ("foo", 3);
+    check_value (lh, test, "NOFOLLOW on treeobj");
+    json_decref (test);
+
     ltest_finalize (cache, krm);
     json_decref (dirref3);
     json_decref (dir);

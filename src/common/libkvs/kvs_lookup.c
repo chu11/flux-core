@@ -93,12 +93,17 @@ static int validate_lookup_flags (int flags, bool watch_ok)
 
     flags &= ~FLUX_KVS_WAITCREATE;
 
+    /* XXX this permutation is dumb, do something smarter later */
     switch (flags) {
         case 0:
         case FLUX_KVS_TREEOBJ:
+        case FLUX_KVS_TREEOBJ | FLUX_KVS_NOFOLLOW:
         case FLUX_KVS_READDIR:
+        case FLUX_KVS_READDIR | FLUX_KVS_NOFOLLOW:
         case FLUX_KVS_READDIR | FLUX_KVS_TREEOBJ:
+        case FLUX_KVS_READDIR | FLUX_KVS_TREEOBJ | FLUX_KVS_NOFOLLOW:
         case FLUX_KVS_READLINK:
+        case FLUX_KVS_NOFOLLOW:
             return 0;
         default:
             return -1;
