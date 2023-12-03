@@ -14,6 +14,8 @@ SIZE=$(test_size_large)
 test_under_flux ${SIZE} kvs
 echo "# $0: flux session size will be ${SIZE}"
 
+FENCEAPI="${FLUX_BUILD_DIR}/t/kvs/fence_api"
+
 DIR=test.a.b
 
 waitfile=${SHARNESS_TEST_SRCDIR}/scripts/waitfile.lua
@@ -274,12 +276,96 @@ test_expect_success 'kvs: symlinkw/ Namespace fails (wrong user)' '
         unset_userid
 '
 
-test_expect_success 'kvs: symlink w/ Namespace works (user)' '
-        set_userid 9001 &&
-        flux kvs put --namespace=${NAMESPACETMP}-SYMLINKNS3 $DIR.linktest=3 &&
-        flux kvs link --namespace=${NAMESPACETMP}-SYMLINKNS2 --target-namespace=${NAMESPACETMP}-SYMLINKNS3 $DIR.linktest $DIR.link &&
-        test_kvs_key_namespace ${NAMESPACETMP}-SYMLINKNS2 $DIR.link 3 &&
+# test_expect_success 'kvs: symlink w/ Namespace works (user)' '
+#         set_userid 9001 &&
+#         flux kvs put --namespace=${NAMESPACETMP}-SYMLINKNS3 $DIR.linktest=3 &&
+#         flux kvs link --namespace=${NAMESPACETMP}-SYMLINKNS2 --target-namespace=${NAMESPACETMP}-SYMLINKNS3 $DIR.linktest $DIR.link &&
+#         test_kvs_key_namespace ${NAMESPACETMP}-SYMLINKNS2 $DIR.link 3 &&
+#         unset_userid
+# '
+
+#
+# Basic tests, guest can't create symlinks
+#
+
+test_expect_success 'kvs: namespace create works (owner, for user)' '
+	flux kvs namespace create -o 9999 $NAMESPACETMP-SYMLINK
+'
+
+test_expect_success 'kvs: symlink works (owner)' '
+        flux kvs link --namespace=$NAMESPACETMP-SYMLINK a b
+'
+
+test_expect_success 'kvs: symlink fail (user owner)' '
+        set_userid 9999 &&
+        test_must_fail flux kvs link --namespace=$NAMESPACETMP-SYMLINK c d 2> link.err &&
+        grep "Operation not permitted" link.err &&
         unset_userid
+'
+
+test_expect_success 'kvs: symlink works on rank 1 (owner)' '
+        flux exec -n -r 1 sh -c "flux kvs link --namespace=$NAMESPACETMP-SYMLINK e f"
+'
+
+test_expect_success 'kvs: symlink fail on rank 1 (user owner)' '
+        test_must_fail flux exec -n -r 1 sh -c "FLUX_HANDLE_USERID=9999 \
+                                FLUX_HANDLE_ROLEMASK=0x2 \
+                                flux kvs link --namespace=$NAMESPACETMP-SYMLINK g h" 2> link2.err &&
+        grep "Operation not permitted" link2.err
+'
+
+# dir treeobj with a symlink in it
+treeobj="{\"ver\":1,\"type\":\"dir\",\"data\":{\"a\":{\"ver\":1,\"type\":\"symlink\",\"data\":{\"target\":\"a\"}}}}"
+
+test_expect_success 'kvs: symlink via treeobj works (owner)' '
+        flux kvs put --treeobj --namespace=$NAMESPACETMP-SYMLINK \
+                foo=${treeobj}
+'
+
+test_expect_success 'kvs: symlink via treeobj fails (user owner)' '
+        set_userid 9999 &&
+        test_must_fail flux kvs put --treeobj --namespace=$NAMESPACETMP-SYMLINK \
+                foo=${treeobj} 2> link3.err &&
+        grep "Operation not permitted" link3.err &&
+        unset_userid
+'
+
+# dir treeobj with a symlink in it, inside a dir treeobj
+treeobj2="{\"ver\":1,\"type\":\"dir\",\"data\":{\"a\":{\"ver\":1,\"type\":\"dir\",\"data\":{\"a\":{\"ver\":1,\"type\":\"symlink\",\"data\":{\"target\":\"a\"}}}}}}"
+
+test_expect_success 'kvs: symlink via treeobj recursive works (owner)' '
+        flux kvs put --treeobj --namespace=$NAMESPACETMP-SYMLINK \
+                foo=${treeobj2}
+'
+
+test_expect_success 'kvs: symlink via treeobj recursive fails (user owner)' '
+        set_userid 9999 &&
+        test_must_fail flux kvs put --treeobj --namespace=$NAMESPACETMP-SYMLINK \
+                foo=${treeobj2} 2> link4.err &&
+        grep "Operation not permitted" link4.err &&
+        unset_userid
+'
+
+test_expect_success 'kvs: symlink fence works (owner)' '
+        ${FENCEAPI} --namespace=$NAMESPACETMP-SYMLINK --symlink 4 fencetest1
+'
+
+test_expect_success 'kvs: symlink fence fails (user owner)' '
+        set_userid 9999 &&
+        test_must_fail ${FENCEAPI} --namespace=$NAMESPACETMP-SYMLINK --symlink 4 fencetest2 2> link5.err &&
+        grep "Operation not permitted" link5.err &&
+        unset_userid
+'
+
+test_expect_success 'kvs: symlink fence works on rank 1 (owner)' '
+        flux exec -n -r 1 sh -c "${FENCEAPI} --namespace=$NAMESPACETMP-SYMLINK --symlink 4 fencetest3"
+'
+
+test_expect_success 'kvs: symlink fence fails on rank 1 (user owner)' '
+        test_must_fail flux exec -n -r 1 sh -c "FLUX_HANDLE_USERID=9999 \
+                                FLUX_HANDLE_ROLEMASK=0x2 \
+                                ${FENCEAPI} --namespace=$NAMESPACETMP-SYMLINK --symlink 4 fencetest4" 2> link6.err &&
+        grep "Operation not permitted" link6.err
 '
 
 #
