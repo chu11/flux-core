@@ -131,12 +131,13 @@ struct job *sqliterow_2_job (struct job_state_ctx *jsctx, sqlite3_stmt *res)
     }
 
     if (json_unpack (job->job_dbdata,
-                     "{s:I s:i s:i s:I s:f s?:f s?:f s:f s:i s:i}",
+                     "{s:I s:i s:i s?:I s:f s?:f s?:f s?:f s:f s:i s:i}",
                      "id", &job->id,
                      "userid", &job->userid,
                      "urgency", &job->urgency,
                      "priority", &job->priority,
                      "t_submit", &job->t_submit,
+                     "t_depend", &job->t_depend,
                      "t_run", &job->t_run,
                      "t_cleanup", &job->t_cleanup,
                      "t_inactive", &job->t_inactive,
@@ -147,9 +148,14 @@ struct job *sqliterow_2_job (struct job_state_ctx *jsctx, sqlite3_stmt *res)
     }
 
     if (json_unpack (job->job_dbdata,
-                     "{s?:s s?:i s?:i s?:s s?:s s?:f s?:i s:b}",
+                     "{s?:s s?:s s?:s s?:s s?:s}",
                      "name", &job->name,
+                     "cwd", &job->cwd,
+                     "queue", &job->queue,
+                     "project", &job->project,
+                     "bank", &job->bank,
                      "ntasks", &job->ntasks,
+                     "ncores", &job->ncores,
                      "nnodes", &job->nnodes,
                      "ranks", &ranks,
                      "nodelist", &nodelist,
@@ -160,6 +166,22 @@ struct job *sqliterow_2_job (struct job_state_ctx *jsctx, sqlite3_stmt *res)
         return NULL;
     }
 
+    /* N.B. success required for inactive job */
+    if (json_unpack (job->job_dbdata,
+                     "{s?:i s?:i s?:i s?:s s?:s s?:f s?:i s:b}",
+                     "ntasks", &job->ntasks,
+                     "ncores", &job->ncores,
+                     "nnodes", &job->nnodes,
+                     "ranks", &ranks,
+                     "nodelist", &nodelist,
+                     "expiration", &job->expiration,
+                     "waitstatus", &job->wait_status,
+                     "success", &success) < 0) {
+        flux_log (jsctx->h, LOG_ERR, "json_unpack");
+        return NULL;
+    }
+
+    /* N.B. result required for inactive job */
     if (json_unpack (job->job_dbdata,
                      "{s:b s?:s s?:i s?:s s:i s?:O s?:O}",
                      "exception_occurred", &exception_occurred,
