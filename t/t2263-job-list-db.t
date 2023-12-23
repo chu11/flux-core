@@ -80,6 +80,7 @@ get_job_list_values() {
         list_exception_severity=`echo ${jobdata} | jq ".exception_severity"`
         list_exception_note=`echo ${jobdata} | jq -r ".exception_note"`
         list_t_submit=`echo ${jobdata} | jq ".t_submit"`
+        list_t_depend=`echo ${jobdata} | jq ".t_depend"`
         list_t_run=`echo ${jobdata} | jq ".t_run"`
         list_t_cleanup=`echo ${jobdata} | jq ".t_cleanup"`
         list_t_inactive=`echo ${jobdata} | jq ".t_inactive"`
@@ -117,6 +118,7 @@ get_db_values() {
         db_exception_severity=`echo ${jobdata} | jq ".exception_severity"`
         db_exception_note=`echo ${jobdata} | jq -r ".exception_note"`
         db_t_submit=`echo ${jobdata} | jq ".t_submit"`
+        db_t_depend=`echo ${jobdata} | jq ".t_depend"`
         db_t_run=`echo ${jobdata} | jq ".t_run"`
         db_t_cleanup=`echo ${jobdata} | jq ".t_cleanup"`
         db_t_inactive=`echo ${jobdata} | jq ".t_inactive"`
@@ -150,6 +152,7 @@ db_compare_data() {
             || [ "${list_exception_severity}" != "${db_exception_severity}" ] \
             || [ "${list_exception_note}" != "${db_exception_note}" ] \
             || [ "${list_t_submit}" != "${db_t_submit}" ] \
+            || [ "${list_t_depend}" != "${db_t_depend}" ] \
             || [ "${list_t_run}" != "${db_t_run}" ] \
             || [ "${list_t_cleanup}" != "${db_t_cleanup}" ] \
             || [ "${list_t_inactive}" != "${db_t_inactive}" ]
