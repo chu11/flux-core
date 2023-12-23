@@ -196,6 +196,16 @@ wait_inactive_list_count() {
 
 # submit jobs for job list & job-list db testing
 
+test_expect_success 'configure testing queues' '
+        flux config load <<-EOF &&
+[policy]
+jobspec.defaults.system.queue = "defaultqueue"
+[queues.defaultqueue]
+[queues.altqueue]
+EOF
+        flux queue start --all
+'
+
 test_expect_success 'submit jobs for job list testing' '
         #  Create `hostname` jobspec
         #  N.B. Used w/ `flux job submit` for serial job submission
