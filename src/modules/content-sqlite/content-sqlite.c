@@ -54,6 +54,11 @@ const char *sql_checkpt_get = "SELECT value FROM checkpt"
                               "  WHERE key = ?1";
 const char *sql_checkpt_put = "REPLACE INTO checkpt (key,value) "
                               "  values (?1, ?2)";
+const char *sql_create_table_preallocate = "CREATE TABLE if not exists preallocate("
+                                       "  data BLOB"
+                                       ");";
+const char *sql_preallocate_fill = "INSERT INTO preallocate (data) values (?1)";
+const char *sql_drop_table_preallocate = "DROP TABLE preallocate";
 
 struct content_stats {
     tstat_t load;
@@ -68,6 +73,7 @@ struct content_sqlite {
     sqlite3_stmt *store_stmt;
     sqlite3_stmt *checkpt_get_stmt;
     sqlite3_stmt *checkpt_put_stmt;
+    sqlite3_stmt *preallocate_fill_stmt;
     flux_t *h;
     char *hashfun;
     int hash_size;
@@ -78,6 +84,8 @@ struct content_sqlite {
     char *synchronous;
     bool truncate;
 };
+
+#define PREALLOCATE_DELTA (1024*1024)
 
 static int set_config (char **conf, char *val)
 {
@@ -504,6 +512,10 @@ static void content_sqlite_closedb (struct content_sqlite *ctx)
             if (sqlite3_finalize (ctx->checkpt_put_stmt) != SQLITE_OK)
                 log_sqlite_error (ctx, "sqlite_finalize checkpt_put_stmt");
         }
+        if (ctx->preallocate_fill_stmt) {
+            if (sqlite3_finalize (ctx->preallocate_fill_stmt) != SQLITE_OK)
+                log_sqlite_error (ctx, "sqlite_finalize preallocate_fill_stmt");
+        }
         if (ctx->db) {
             if (sqlite3_close (ctx->db) != SQLITE_OK)
                 log_sqlite_error (ctx, "sqlite3_close");
@@ -733,6 +745,83 @@ error:
     return -1;
 }
 
+static int content_sqlite_preallocate (struct content_sqlite *ctx,
+                                       uint64_t preallocate_size)
+{
+    struct stat statbuf;
+    uint64_t tofill_count;
+    /* By default, sqlite is compiled with a max blob of 1 billion
+     * bytes.  So we'll go with 500m blocks as the default largest
+     * blob we'll write out at a time.
+     */
+    int blobsize = 1024*1024*512;
+
+    if (!preallocate_size)
+        return 0;
+
+    if (stat (ctx->dbfile, &statbuf) < 0) {
+        flux_log_error (ctx->h, "error getting db stats");
+        return -1;
+    }
+
+    if (statbuf.st_size >= preallocate_size)
+        return 0;
+
+    tofill_count = preallocate_size - statbuf.st_size;
+
+    if (sqlite3_exec (ctx->db,
+                      sql_create_table_preallocate,
+                      NULL,
+                      NULL,
+                      NULL) != SQLITE_OK) {
+        log_sqlite_error (ctx, "creating preallocate table");
+        goto error;
+    }
+
+    if (sqlite3_prepare_v2 (ctx->db,
+                            sql_preallocate_fill,
+                            -1,
+                            &ctx->preallocate_fill_stmt,
+                            NULL) != SQLITE_OK) {
+        log_sqlite_error (ctx, "preparing preallocate_fill stmt");
+        goto error;
+    }
+
+    /* if we're within PREALLOCATE_DELTA, that's close enough */
+    while (tofill_count > PREALLOCATE_DELTA) {
+        while (blobsize > tofill_count
+               && blobsize > PREALLOCATE_DELTA)
+            blobsize /= 2;
+        if (sqlite3_bind_zeroblob (ctx->preallocate_fill_stmt,
+                                   1,
+                                   blobsize) != SQLITE_OK) {
+            log_sqlite_error (ctx, "preallocate: binding zeroblob");
+            goto error;
+        }
+        if (sqlite3_step (ctx->preallocate_fill_stmt) != SQLITE_DONE
+            && sqlite3_errcode (ctx->db) != SQLITE_CONSTRAINT) {
+            log_sqlite_error (ctx, "preallocate: executing stmt");
+            goto error;
+        }
+        sqlite3_reset (ctx->preallocate_fill_stmt);
+        tofill_count -= blobsize;
+    }
+
+    if (sqlite3_exec (ctx->db,
+                      sql_drop_table_preallocate,
+                      NULL,
+                      NULL,
+                      NULL) != SQLITE_OK) {
+        log_sqlite_error (ctx, "dropping preallocate table");
+        goto error;
+    }
+
+    return 0;
+error:
+    set_errno_from_sqlite_error (ctx);
+    return -1;
+}
+
 static void content_sqlite_destroy (struct content_sqlite *ctx)
 {
     if (ctx) {
@@ -829,7 +918,8 @@ error:
 static int process_args (struct content_sqlite *ctx,
                          int argc,
                          char **argv,
-                         bool *truncate)
+                         bool *truncate,
+                         uint64_t *preallocate_size)
 {
     int i;
     for (i = 0; i < argc; i++) {
@@ -844,6 +934,17 @@ static int process_args (struct content_sqlite *ctx,
         else if (streq ("truncate", argv[i])) {
             *truncate = true;
         }
+        else if (strstarts (argv[i], "preallocate=")) {
+            unsigned long tmp;
+            char *endptr;
+            errno = 0;
+            tmp = strtoul (argv[i]+12, &endptr, 10);
+            if (errno != 0 || *endptr != '\0' || !tmp) {
+                errno = EINVAL;
+                return -1;
+            }
+            *preallocate_size = tmp;
+        }
         else {
             flux_log (ctx->h, LOG_ERR, "Unknown module option: '%s'", argv[i]);
             errno = EINVAL;
@@ -857,6 +958,7 @@ int mod_main (flux_t *h, int argc, char **argv)
 {
     struct content_sqlite *ctx;
     bool truncate = false;
+    uint64_t preallocate_size = 0;
     int rc = -1;
 
     if (!(ctx = content_sqlite_create (h))) {
@@ -864,11 +966,13 @@ int mod_main (flux_t *h, int argc, char **argv)
         return -1;
     }
     // override pragmas set above
-    if (process_args (ctx, argc, argv, &truncate) < 0)
+    if (process_args (ctx, argc, argv, &truncate, &preallocate_size) < 0)
         goto done;
     if (content_sqlite_setup (ctx, truncate) < 0)
         goto done;
     if (content_sqlite_opendb (ctx) < 0)
+        goto done;
+    if (content_sqlite_preallocate (ctx, preallocate_size) < 0)
         goto done;
     if (content_register_service (h, "content-backing") < 0)
         goto done;
