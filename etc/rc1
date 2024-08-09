@@ -54,7 +54,8 @@ if test $RANK -eq 0; then
             rm -f ${dumplink}
         fi
     elif test "${backingmod}" != "none"; then
-        flux module load ${backingmod}
+        # flux module load ${backingmod}
+        flux module load ${backingmod} preallocate=2000000000
     fi
 fi
 
