@@ -542,16 +542,20 @@ error:
 int remote_exec (flux_subprocess_t *p)
 {
     flux_future_t *f;
-    int flags = 0;
+    int forwarding_flags = 0;
 
     if (zlist_size (cmd_channel_list (p->cmd)) > 0)
-        flags |= SUBPROCESS_REXEC_CHANNEL;
+        forwarding_flags |= SUBPROCESS_REXEC_CHANNEL;
     if (p->ops.on_stdout)
-        flags |= SUBPROCESS_REXEC_STDOUT;
+        forwarding_flags |= SUBPROCESS_REXEC_STDOUT;
     if (p->ops.on_stderr)
-        flags |= SUBPROCESS_REXEC_STDERR;
+        forwarding_flags |= SUBPROCESS_REXEC_STDERR;
 
-    if (!(f = subprocess_rexec (p->h, p->service_name, p->rank, p->cmd, flags))
+    if (!(f = subprocess_rexec (p->h,
+                                p->service_name,
+                                p->rank,
+                                p->cmd,
+                                forwarding_flags))
         || flux_future_then (f, -1., rexec_continuation, p) < 0) {
         llog_debug (p,
                     "error sending rexec.exec request: %s",

@@ -315,13 +315,13 @@ static void server_exec_cb (flux_t *h,
     char **env = NULL;
     const char *errmsg = NULL;
     flux_error_t error;
-    int flags;
+    int forwarding_flags;
 
     if (flux_request_unpack (msg,
                              NULL,
                              "{s:o s:i}",
                              "cmd", &cmd_obj,
-                             "flags", &flags) < 0)
+                             "forwarding_flags", &forwarding_flags) < 0)
         goto error;
     if (s->shutdown) {
         errmsg = "subprocess server is shutting down";
@@ -333,11 +333,11 @@ static void server_exec_cb (flux_t *h,
         errno = EPERM;
         goto error;
     }
-    if (!(flags & SUBPROCESS_REXEC_CHANNEL))
+    if (!(forwarding_flags & SUBPROCESS_REXEC_CHANNEL))
         ops.on_channel_out = NULL;
-    if (!(flags & SUBPROCESS_REXEC_STDOUT))
+    if (!(forwarding_flags & SUBPROCESS_REXEC_STDOUT))
         ops.on_stdout = NULL;
-    if (!(flags & SUBPROCESS_REXEC_STDERR))
+    if (!(forwarding_flags & SUBPROCESS_REXEC_STDERR))
         ops.on_stderr = NULL;
 
     if (!(cmd = cmd_fromjson (cmd_obj, NULL))) {

@@ -42,7 +42,7 @@ struct rexec_response {
 
 struct rexec_ctx {
     json_t *cmd;
-    int flags;
+    int forwarding_flags;
     struct rexec_response response;
     uint32_t matchtag;
     uint32_t rank;
@@ -74,14 +74,14 @@ static void rexec_ctx_destroy (struct rexec_ctx *ctx)
 static struct rexec_ctx *rexec_ctx_create (flux_cmd_t *cmd,
                                            const char *service_name,
                                            uint32_t rank,
-                                           int flags)
+                                           int forwarding_flags)
 {
     struct rexec_ctx *ctx;
-    int valid_flags = SUBPROCESS_REXEC_STDOUT
+    int valid_forwarding_flags = SUBPROCESS_REXEC_STDOUT
         | SUBPROCESS_REXEC_STDERR
         | SUBPROCESS_REXEC_CHANNEL;
 
-    if ((flags & ~valid_flags)) {
+    if ((forwarding_flags & ~valid_forwarding_flags)) {
         errno = EINVAL;
         return NULL;
     }
@@ -90,7 +90,7 @@ static struct rexec_ctx *rexec_ctx_create (flux_cmd_t *cmd,
     if (!(ctx->cmd = cmd_tojson (cmd))
         || !(ctx->service_name = strdup (service_name)))
         goto error;
-    ctx->flags = flags;
+    ctx->forwarding_flags = forwarding_flags;
     ctx->response.pid = -1;
     ctx->rank = rank;
     return ctx;
@@ -123,7 +123,7 @@ flux_future_t *subprocess_rexec (flux_t *h,
                              FLUX_RPC_STREAMING,
                              "{s:O s:i}",
                              "cmd", ctx->cmd,
-                             "flags", ctx->flags))
+                             "forwarding_flags", ctx->forwarding_flags))
         || flux_future_aux_set (f,
                                 "flux::rexec",
                                 ctx,
