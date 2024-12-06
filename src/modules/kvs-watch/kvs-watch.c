@@ -27,7 +27,7 @@
 /* if the valref is very large, we won't load all immediately,
  * load at max MAX_LOAD
  */
-#define MAX_LOAD 4096
+#define MAX_LOADS 32768
 
 /* State for one watcher */
 struct watcher {
@@ -52,6 +52,7 @@ struct watcher {
     int start_index;            // start index of blobrefs to load
     int end_index;              // end index of blobrefs to load
     int last_index_loaded;      // last index sent
+    json_t *valref;             // valref for loads
     void *handle;               // zlistx_t handle
 };
 
@@ -89,6 +90,8 @@ struct watch_ctx {
     zhash_t *namespaces;        // hash of monitored namespaces
 };
 
+static int load_data (flux_t *h, struct watcher *w);
+
 static void watcher_destroy (struct watcher *w)
 {
     if (w) {
@@ -108,6 +111,7 @@ static void watcher_destroy (struct watcher *w)
             zlist_destroy (&w->loads);
         }
         json_decref (w->prev);
+        json_decref (w->valref);
         free (w);
         errno = saved_errno;
     }
@@ -315,6 +319,23 @@ static void load_continuation (flux_future_t *f, void *arg)
             && !(w->flags & FLUX_KVS_WATCH))
             w->finished = true;
     }
+    if (load_data (w->nsm->ctx->h, w) < 0) {
+        if (!w->mute) {
+            flux_error_t err;
+            errprintf (&err,
+                       "error sending request for content blobs [%d:%d]",
+                       w->start_index,
+                       w->end_index);
+            if (flux_respond_error (w->nsm->ctx->h,
+                                    w->request,
+                                    errno,
+                                    err.text) < 0)
+                flux_log_error (w->nsm->ctx->h,
+                                "%s: flux_respond_error",
+                                __FUNCTION__);
+        }
+        return;
+    }
     if (w->finished)
         watcher_cleanup (nsm, w);
 }
@@ -338,11 +359,12 @@ error:
     return NULL;
 }
 
-static int load_data (flux_t *h, struct watcher *w, json_t *val)
+static int load_data (flux_t *h, struct watcher *w)
 {
     int start_index, i;
 
     assert (w->index_valid);
+    assert (w->valref);
 
     if (w->last_index_loaded >= w->end_index)
         return 0;
@@ -354,12 +376,14 @@ static int load_data (flux_t *h, struct watcher *w, json_t *val)
 
     for (i = start_index; i <= w->end_index; i++) {
         flux_future_t *f;
-        const char *ref = treeobj_get_blobref (val, i);
+        const char *ref = treeobj_get_blobref (w->valref, i);
         if (!ref)
             return -1;
         if (!(f = load_ref (h, w, ref)))
             return -1;
         w->last_index_loaded = i;
+        if (zlist_size (w->loads) > MAX_LOADS)
+            break;
     }
     return 0;
 }
@@ -395,6 +419,7 @@ static int handle_initial_response (flux_t *h,
             w->index_valid = true;
             w->start_index = 0;
             w->end_index = treeobj_get_count (val) - 1;
+            w->valref = json_incref (val);
         }
         else {
             errprintf (&err,
@@ -404,7 +429,7 @@ static int handle_initial_response (flux_t *h,
             goto error_respond;
         }
 
-        if (load_data (h, w, val) < 0) {
+        if (load_data (h, w) < 0) {
             errprintf (&err,
                        "error sending request for content blobs [%d:%d]",
                        w->start_index,
@@ -515,8 +540,11 @@ static int handle_append_response (flux_t *h,
              */
             if (w->index_valid) {
                 int new_end_index = treeobj_get_count (val) - 1;
-                if (new_end_index > w->end_index)
+                if (new_end_index > w->end_index) {
                     w->end_index = new_end_index;
+                    json_decref (w->valref);
+                    w->valref = json_incref (val);
+                }
                 else if (new_end_index < w->end_index) {
                     errprintf (&err, "key watched with WATCH_APPEND truncated");
                     errno = EINVAL;
@@ -529,9 +557,10 @@ static int handle_append_response (flux_t *h,
                 w->index_valid = true;
                 w->start_index = 0;
                 w->end_index = treeobj_get_count (val) - 1;
+                w->valref = json_incref (val);
             }
 
-            if (load_data (h, w, val) < 0) {
+            if (load_data (h, w) < 0) {
                 errprintf (&err,
                            "error sending request for content blobs [%d:%d]",
                            w->start_index,
@@ -555,8 +584,11 @@ static int handle_append_response (flux_t *h,
                 goto error_respond;
             }
             new_end_index = treeobj_get_count (val) - 1;
-            if (new_end_index > w->end_index)
+            if (new_end_index > w->end_index) {
                 w->end_index = new_end_index;
+                json_decref (w->valref);
+                w->valref = json_incref (val);
+            }
             else if (new_end_index < w->end_index) {
                 errprintf (&err, "key watched with WATCH_APPEND shortened");
                 errno = EINVAL;
@@ -565,7 +597,7 @@ static int handle_append_response (flux_t *h,
             else
                 goto out;
 
-            if (load_data (h, w, val) < 0) {
+            if (load_data (h, w) < 0) {
                 errprintf (&err, "error loading reference");
                 goto error_respond;
             }
