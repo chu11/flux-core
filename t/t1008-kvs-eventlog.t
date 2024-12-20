@@ -60,6 +60,11 @@ test_expect_success 'flux kvs eventlog wait-event --human works' '
 	test_cmp test_human.wait-event.exp test_human.wait-event.out
 '
 
+test_expect_success 'flux kvs eventlog get works on an empty value' '
+	flux kvs put test.empty= &&
+	flux kvs eventlog get test.empty
+'
+
 has_color() {
 	# To grep for ansi escape we need the help of the non-shell builtin
   	# printf(1), so run under env(1) so we don't get shell builtin:
