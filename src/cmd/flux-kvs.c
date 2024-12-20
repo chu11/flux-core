@@ -1979,7 +1979,7 @@ void eventlog_get_continuation (flux_future_t *f, void *arg)
 {
     struct eventlog_get_ctx *ctx = arg;
     const char *s;
-    json_t *a;
+    json_t *a = NULL;
     size_t index;
     json_t *value;
     flux_error_t error;
@@ -1999,6 +1999,9 @@ void eventlog_get_continuation (flux_future_t *f, void *arg)
     if (flux_kvs_lookup_get (f, &s) < 0)
         log_err_exit ("flux_kvs_lookup_get");
 
+    if (!s)
+        goto reset;
+
     if (!(a = eventlog_decode (s)))
         log_err_exit ("eventlog_decode");
 
@@ -2013,6 +2016,7 @@ void eventlog_get_continuation (flux_future_t *f, void *arg)
 
     fflush (stdout);
 
+reset:
     /* If watching, re-arm future for next response.
      * If --count limit has been reached, send a cancel request.
      * The resulting ENODATA error response is handled above.
