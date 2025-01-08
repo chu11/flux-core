@@ -87,6 +87,8 @@ zlistx_t *subprocesses;
  */
 zlistx_t *subprocess_credits;
 
+int closed_stdins = 0;
+
 struct subproc_credit {
     void *handle;      /* handle to subprocess in credits list */
     int credits;
@@ -314,8 +316,13 @@ static void stdin_cb (flux_reactor_t *r,
         while (p) {
             if (flux_subprocess_state (p) == FLUX_SUBPROCESS_INIT
                 || flux_subprocess_state (p) == FLUX_SUBPROCESS_RUNNING) {
-                if ((len = flux_subprocess_write (p, "stdin", ptr, lenp)) < 0)
-                    log_err_exit ("flux_subprocess_write");
+                if ((len = flux_subprocess_write (p, "stdin", ptr, lenp)) < 0) {
+                    log_err_exit ("flux_subprocess_write rank=%d min_credits=%d lenp=%d closed_stdins=%d",
+                                  flux_subprocess_rank (p),
+                                  min_credits,
+                                  lenp,
+                                  closed_stdins);
+                }
                 if (stdin_enable_flow_control) {
                     /* N.B. normally we are subtracting the same
                      * number of credits from all active subprocesses,
@@ -362,6 +369,7 @@ static void stdin_cb (flux_reactor_t *r,
             p = zlistx_next (subprocesses);
         }
         flux_watcher_stop (stdin_w);
+        closed_stdins = 1;
     }
 }
 
