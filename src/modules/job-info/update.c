@@ -25,9 +25,14 @@
 #include "update.h"
 #include "util.h"
 
+struct update_msg {
+    const flux_msg_t *msg;
+    void *handle;
+};
+
 struct update_ctx {
     struct info_ctx *ctx;
-    struct flux_msglist *msglist;
+    zlistx_t *update_msgs;
     uint32_t userid;
     flux_jobid_t id;
     char *key;
@@ -48,7 +53,7 @@ static void update_ctx_destroy (void *data)
     if (data) {
         struct update_ctx *uc = data;
         int save_errno = errno;
-        flux_msglist_destroy (uc->msglist);
+        zlistx_destroy (&uc->update_msgs);
         free (uc->key);
         flux_future_destroy (uc->lookup_f);
         flux_future_destroy (uc->eventlog_watch_f);
@@ -76,6 +81,36 @@ static char *get_index_key (flux_jobid_t id, const char *key)
     return s;
 }
 
+static void update_msg_destroy (struct update_msg *umsg)
+{
+    if (umsg) {
+        flux_msg_decref (umsg->msg);
+        free (umsg);
+    }
+}
+
+/* zlistx_destructor_fn */
+static void update_msg_destroy_wrapper (void **data)
+{
+    if (data) {
+        struct update_msg *umsg = *data;
+        update_msg_destroy (umsg);
+        *data = NULL;
+    }
+}
+
+static struct update_msg *update_msg_create (struct info_ctx *ctx,
+                                             const flux_msg_t *msg)
+{
+    struct update_msg *umsg = calloc (1, sizeof (*umsg));
+
+    if (!umsg)
+        return NULL;
+
+    umsg->msg = flux_msg_incref (msg);
+    return umsg;
+}
+
 static struct update_ctx *update_ctx_create (struct info_ctx *ctx,
                                              const flux_msg_t *msg,
                                              flux_jobid_t id,
@@ -83,6 +118,7 @@ static struct update_ctx *update_ctx_create (struct info_ctx *ctx,
                                              int flags)
 {
     struct update_ctx *uc = calloc (1, sizeof (*uc));
+    struct update_msg *umsg = NULL;
 
     if (!uc)
         return NULL;
@@ -101,10 +137,18 @@ static struct update_ctx *update_ctx_create (struct info_ctx *ctx,
     }
     uc->flags = flags;
 
-    /* for lookups, the msglist will never be > 1 in length */
-    if (!(uc->msglist = flux_msglist_create ()))
+    /* for lookups, the list will never be > 1 in length */
+    if (!(uc->update_msgs = zlistx_new ()))
         goto error;
-    flux_msglist_append (uc->msglist, msg);
+    zlistx_set_destructor (uc->update_msgs, update_msg_destroy_wrapper);
+
+    if (!(umsg = update_msg_create (ctx, msg)))
+        goto error;
+
+    if (!(umsg->handle = zlistx_add_end (uc->update_msgs, umsg))) {
+        update_msg_destroy (umsg);
+        goto error;
+    }
 
     /* use jobid + key as lookup key, in future we may support other
      * keys other than R
@@ -152,7 +196,7 @@ static void eventlog_continuation (flux_future_t *f, void *arg)
     const char *name;
     json_t *context = NULL;
     const char *errmsg = NULL;
-    const flux_msg_t *msg;
+    struct update_msg *umsg;
 
     if (flux_rpc_get (f, NULL) < 0) {
         /* ENODATA is normal when job finishes or we've sent cancel */
@@ -162,7 +206,7 @@ static void eventlog_continuation (flux_future_t *f, void *arg)
     }
 
     /* if count == 0, all callers canceled streams */
-    if (flux_msglist_count (uc->msglist) == 0)
+    if (zlistx_size (uc->update_msgs) == 0)
         goto cleanup;
 
     if (flux_job_event_watch_get (f, &s) < 0) {
@@ -202,17 +246,17 @@ static void eventlog_continuation (flux_future_t *f, void *arg)
                                        uc->update_object,
                                        context);
 
-            msg = flux_msglist_first (uc->msglist);
-            while (msg) {
+            umsg = zlistx_first (uc->update_msgs);
+            while (umsg) {
                 if (flux_respond_pack (uc->ctx->h,
-                                       msg,
+                                       umsg->msg,
                                        "{s:O}",
                                        uc->key, uc->update_object) < 0) {
                     flux_log_error (ctx->h, "%s: flux_respond", __FUNCTION__);
                     eventlog_watch_cancel (uc);
                     goto cleanup;
                 }
-                msg = flux_msglist_next (uc->msglist);
+                umsg = zlistx_next (uc->update_msgs);
             }
         }
     }
@@ -222,11 +266,11 @@ static void eventlog_continuation (flux_future_t *f, void *arg)
     return;
 
 error:
-    msg = flux_msglist_first (uc->msglist);
-    while (msg) {
-        if (flux_respond_error (ctx->h, msg, errno, errmsg) < 0)
+    umsg = zlistx_first (uc->update_msgs);
+    while (umsg) {
+        if (flux_respond_error (ctx->h, umsg->msg, errno, errmsg) < 0)
             flux_log_error (ctx->h, "%s: flux_respond_error", __FUNCTION__);
-        msg = flux_msglist_next (uc->msglist);
+        umsg = zlistx_next (uc->update_msgs);
     }
 
 cleanup:
@@ -284,7 +328,7 @@ static void lookup_continuation (flux_future_t *f, void *arg)
     const char *errmsg = NULL;
     bool job_ended = false;
     bool submit_parsed = false;
-    const flux_msg_t *msg;
+    struct update_msg *umsg;
 
     if (flux_rpc_get_unpack (f,
                              "{s:s s:s}",
@@ -296,7 +340,7 @@ static void lookup_continuation (flux_future_t *f, void *arg)
     }
 
     /* if count == 0, all callers canceled streams */
-    if (flux_msglist_count (uc->msglist) == 0)
+    if (zlistx_size (uc->update_msgs) == 0)
         goto cleanup;
 
     if (!(uc->update_object = json_loads (key_str, 0, NULL))) {
@@ -353,32 +397,32 @@ static void lookup_continuation (flux_future_t *f, void *arg)
         goto error;
     }
 
-    msg = flux_msglist_first (uc->msglist);
-    while (msg) {
+    umsg = zlistx_first (uc->update_msgs);
+    while (umsg) {
         /* caller can't access this data, this is not a "fatal" error,
          * so send error to this one message and continue on the
          * msglist
          */
-        if (flux_msg_authorize (msg, uc->userid) < 0) {
-            if (flux_respond_error (ctx->h, msg, errno, NULL) < 0)
+        if (flux_msg_authorize (umsg->msg, uc->userid) < 0) {
+            if (flux_respond_error (ctx->h, umsg->msg, errno, NULL) < 0)
                 flux_log_error (ctx->h, "%s: flux_respond_error", __FUNCTION__);
-            flux_msglist_delete (uc->msglist);
+            zlistx_delete (uc->update_msgs, umsg->handle);
             goto next;
         }
 
-        if (flux_respond_pack (uc->ctx->h, msg, "{s:O}",
+        if (flux_respond_pack (uc->ctx->h, umsg->msg, "{s:O}",
                                uc->key, uc->update_object) < 0) {
             flux_log_error (ctx->h, "%s: flux_respond", __FUNCTION__);
             goto cleanup;
         }
 
     next:
-        msg = flux_msglist_next (uc->msglist);
+        umsg = zlistx_next (uc->update_msgs);
     }
 
     /* due to security check above, possible no more messages in this
      * watcher */
-    if (flux_msglist_count (uc->msglist) == 0)
+    if (zlistx_size (uc->update_msgs) == 0)
         goto cleanup;
 
     /* this job has ended, no need to watch the eventlog for future
@@ -397,11 +441,11 @@ static void lookup_continuation (flux_future_t *f, void *arg)
     return;
 
 error:
-    msg = flux_msglist_first (uc->msglist);
-    while (msg) {
-        if (flux_respond_error (ctx->h, msg, errno, errmsg) < 0)
+    umsg = zlistx_first (uc->update_msgs);
+    while (umsg) {
+        if (flux_respond_error (ctx->h, umsg->msg, errno, errmsg) < 0)
             flux_log_error (ctx->h, "%s: flux_respond_error", __FUNCTION__);
-        msg = flux_msglist_next (uc->msglist);
+        umsg = zlistx_next (uc->update_msgs);
     }
 
 cleanup:
@@ -521,6 +565,8 @@ void update_watch_cb (flux_t *h,
             goto error;
     }
     else {
+        struct update_msg *umsg;
+
         if (uc->update_object) {
             if (flux_msg_authorize (msg, uc->userid) < 0)
                 goto error;
@@ -536,7 +582,13 @@ void update_watch_cb (flux_t *h,
          * has not completed.  The security check will be done in
          * watch_lookup_continuation when the initial lookup completes.
          */
-        flux_msglist_append (uc->msglist, msg);
+        if (!(umsg = update_msg_create (ctx, msg)))
+            goto error;
+
+        if (!(umsg->handle = zlistx_add_end (uc->update_msgs, umsg))) {
+            update_msg_destroy (umsg);
+            goto error;
+        }
     }
 
     free (index_key);
@@ -582,18 +634,34 @@ static void update_watch_cancel (struct update_ctx *uc,
                                  const flux_msg_t *msg,
                                  bool cancel)
 {
+    struct update_msg *umsg;
     if (cancel) {
-        if (flux_msglist_cancel (uc->ctx->h, uc->msglist, msg) < 0)
-            flux_log_error (uc->ctx->h,
-                            "error handling job-info.update-watch-cancel");
+        umsg = zlistx_first (uc->update_msgs);
+        while (umsg) {
+            if (flux_cancel_match (msg, umsg->msg)) {
+                if (flux_respond_error (uc->ctx->h,
+                                        umsg->msg,
+                                        ENODATA,
+                                        NULL) < 0) {
+                    flux_log_error (uc->ctx->h,
+                                    "%s: flux_respond_error",
+                                    __FUNCTION__);
+                }
+                zlistx_delete (uc->update_msgs, umsg->handle);
+            }
+            umsg = zlistx_next (uc->update_msgs);
+        }
     }
     else {
-        if (flux_msglist_disconnect (uc->msglist, msg) < 0)
-            flux_log_error (uc->ctx->h,
-                            "error handling job-info.update-watch disconnect");
+        umsg = zlistx_first (uc->update_msgs);
+        while (umsg) {
+            if (flux_disconnect_match (msg, umsg->msg))
+                zlistx_delete (uc->update_msgs, umsg->handle);
+            umsg = zlistx_next (uc->update_msgs);
+        }
     }
 
-    if (flux_msglist_count (uc->msglist) == 0)
+    if (zlistx_size (uc->update_msgs) == 0)
         eventlog_watch_cancel (uc);
 }
 
@@ -637,17 +705,17 @@ void update_watch_cleanup (struct info_ctx *ctx)
     if (ctx->update_watchers) {
         struct update_ctx *uc;
         while (zlistx_first (ctx->update_watchers)) {
-            const flux_msg_t *msg;
+            struct update_msg *umsg;
             uc = zlistx_detach_cur (ctx->update_watchers);
             eventlog_watch_cancel (uc);
-            msg = flux_msglist_first (uc->msglist);
-            while (msg) {
-                if (flux_respond_error (ctx->h, msg, ENOSYS, NULL) < 0) {
+            umsg = zlistx_first (uc->update_msgs);
+            while (umsg) {
+                if (flux_respond_error (ctx->h, umsg->msg, ENOSYS, NULL) < 0) {
                     flux_log_error (ctx->h,
                                     "%s: flux_respond_error",
                                     __FUNCTION__);
                 }
-                msg = flux_msglist_next (uc->msglist);
+                umsg = zlistx_next (uc->update_msgs);
             }
             update_ctx_destroy (uc);
         }
@@ -667,7 +735,7 @@ int update_watch_count (struct info_ctx *ctx)
 
     uc = zlistx_first (ctx->update_watchers);
     while (uc) {
-        count += flux_msglist_count (uc->msglist);
+        count += zlistx_size (uc->update_msgs);
         uc = zlistx_next (ctx->update_watchers);
     }
     return count;
