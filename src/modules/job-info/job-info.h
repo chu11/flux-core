@@ -35,6 +35,7 @@ struct info_ctx {
     zlistx_t *guest_watchers;
     zhashx_t *guest_watchers_matchtags; /* matchtag + uuid -> guest_watcher */
     zlistx_t *update_watchers;
+    zhashx_t *update_watchers_matchtags; /* matchtag + uuid -> update_watcher */
     zhashx_t *index_uw;        /* jobid + key -> update_watcher lookup */
 };
 

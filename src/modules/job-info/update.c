@@ -27,6 +27,7 @@
 
 struct update_msg {
     const flux_msg_t *msg;
+    char *matchtag_key;
     void *handle;
 };
 
@@ -85,6 +86,7 @@ static void update_msg_destroy (struct update_msg *umsg)
 {
     if (umsg) {
         flux_msg_decref (umsg->msg);
+        free (umsg->matchtag_key);
         free (umsg);
     }
 }
@@ -107,8 +109,14 @@ static struct update_msg *update_msg_create (struct info_ctx *ctx,
     if (!umsg)
         return NULL;
 
+    if (!(umsg->matchtag_key = create_matchtag_key (ctx->h, msg)))
+        goto cleanup;
     umsg->msg = flux_msg_incref (msg);
     return umsg;
+
+ cleanup:
+    update_msg_destroy (umsg);
+    return NULL;
 }
 
 static struct update_ctx *update_ctx_create (struct info_ctx *ctx,
@@ -406,6 +414,7 @@ static void lookup_continuation (flux_future_t *f, void *arg)
         if (flux_msg_authorize (umsg->msg, uc->userid) < 0) {
             if (flux_respond_error (ctx->h, umsg->msg, errno, NULL) < 0)
                 flux_log_error (ctx->h, "%s: flux_respond_error", __FUNCTION__);
+            zhashx_delete (ctx->update_watchers_matchtags, umsg->matchtag_key);
             zlistx_delete (uc->update_msgs, umsg->handle);
             goto next;
         }
@@ -464,6 +473,8 @@ static int update_lookup (struct info_ctx *ctx,
 {
     struct update_ctx *uc = NULL;
     const char *topic = "job-info.lookup";
+    char *matchtag_key = NULL;
+    struct update_msg *umsg;
 
     if (!(uc = update_ctx_create (ctx,
                                   msg,
@@ -504,14 +515,27 @@ static int update_lookup (struct info_ctx *ctx,
         goto error_list;
     }
 
+    /* we just created this update ctx, there's only one message on
+     * update_msgs so far */
+    umsg = zlistx_first (uc->update_msgs);
+    if (zhashx_insert (ctx->update_watchers_matchtags,
+                       umsg->matchtag_key,
+                       uc) < 0) {
+        flux_log_error (ctx->h, "%s: zhashx_insert", __FUNCTION__);
+        goto error_list;
+    }
+
+    free (matchtag_key);
     return 0;
 
 error_list:
     zlistx_delete (ctx->update_watchers, uc->handle);
+    free (matchtag_key);
     return -1;
 
 error:
     update_ctx_destroy (uc);
+    free (matchtag_key);
     return -1;
 }
 
@@ -589,6 +613,14 @@ void update_watch_cb (flux_t *h,
             update_msg_destroy (umsg);
             goto error;
         }
+
+        if (zhashx_insert (ctx->update_watchers_matchtags,
+                           umsg->matchtag_key,
+                           uc) < 0) {
+            zlistx_delete (uc->update_msgs, umsg->handle);
+            flux_log_error (ctx->h, "%s: zhashx_insert", __FUNCTION__);
+            goto error;
+        }
     }
 
     free (index_key);
@@ -647,6 +679,8 @@ static void update_watch_cancel (struct update_ctx *uc,
                                     "%s: flux_respond_error",
                                     __FUNCTION__);
                 }
+                zhashx_delete (uc->ctx->update_watchers_matchtags,
+                               umsg->matchtag_key);
                 zlistx_delete (uc->update_msgs, umsg->handle);
             }
             umsg = zlistx_next (uc->update_msgs);
@@ -655,8 +689,11 @@ static void update_watch_cancel (struct update_ctx *uc,
     else {
         umsg = zlistx_first (uc->update_msgs);
         while (umsg) {
-            if (flux_disconnect_match (msg, umsg->msg))
+            if (flux_disconnect_match (msg, umsg->msg)) {
+                zhashx_delete (uc->ctx->update_watchers_matchtags,
+                               umsg->matchtag_key);
                 zlistx_delete (uc->update_msgs, umsg->handle);
+            }
             umsg = zlistx_next (uc->update_msgs);
         }
     }
@@ -671,6 +708,18 @@ void update_watchers_cancel (struct info_ctx *ctx,
 {
     struct update_ctx *uc;
 
+    if (cancel) {
+        char buf[1024];
+        if (get_matchtag_key (ctx->h, msg, buf, sizeof (buf)) < 0)
+            goto fallthrough;
+        if ((uc = zhashx_lookup (ctx->update_watchers_matchtags, buf))) {
+            update_watch_cancel (uc, msg, cancel);
+            return;
+        }
+        /* else fallthrough to loop over everything */
+    }
+
+ fallthrough:
     uc = zlistx_first (ctx->update_watchers);
     while (uc) {
         update_watch_cancel (uc, msg, cancel);
@@ -696,6 +745,8 @@ int update_watch_setup (struct info_ctx *ctx)
     /* no destructor for index_uw, destruction handled on
      * update_watchers list */
     if (!(ctx->index_uw = zhashx_new ()))
+        return -1;
+    if (!(ctx->update_watchers_matchtags = zhashx_new ()))
         return -1;
     return 0;
 }
@@ -726,6 +777,8 @@ void update_watch_cleanup (struct info_ctx *ctx)
         zhashx_destroy (&ctx->index_uw);
         ctx->index_uw = NULL;
     }
+    if (ctx->update_watchers_matchtags)
+        zhashx_destroy (&ctx->update_watchers_matchtags);
 }
 
 int update_watch_count (struct info_ctx *ctx)
