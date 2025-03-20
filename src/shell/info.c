@@ -332,7 +332,20 @@ void shell_info_destroy (struct shell_info *info)
 {
     if (info) {
         int saved_errno = errno;
-        flux_future_destroy (info->R_watch_future);
+        if (info->R_watch_future) {
+            flux_t *h = flux_future_get_flux (info->R_watch_future);
+            flux_future_t *f;
+            f = flux_rpc_pack (h,
+                               "job-info.update-watch-cancel",
+                               FLUX_NODEID_ANY,
+                               FLUX_RPC_NORESPONSE,
+                               "{s:i}",
+                               "matchtag",
+                                 flux_rpc_get_matchtag (info->R_watch_future));
+            if (!f)
+                shell_log_error ("job-info.update-watch-cancel failed");
+            flux_future_destroy (info->R_watch_future);
+        }
         json_decref (info->R);
         jobspec_destroy (info->jobspec);
         rcalc_destroy (info->rcalc);
