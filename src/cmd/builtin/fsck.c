@@ -367,10 +367,25 @@ static int cmd_fsck (optparse_t *p, int ac, char *av[])
 
     flux_future_destroy (f);
 
-    flux_close (h);
-
     if (!quiet)
         fprintf (stderr, "Total errors: %d\n", errorcount);
+
+    if (optparse_hasopt (p, "checkpoint")
+        && optparse_hasopt (p, "rootref")
+        && errorcount == 0) {
+        if (!(f = kvs_checkpoint_commit (h,
+                                         blobref,
+                                         0, /* restart sequence at 0 */
+                                         (double)time (NULL),
+                                         KVS_CHECKPOINT_FLAG_CACHE_BYPASS))
+            || flux_rpc_get (f, NULL) < 0)
+            log_err_exit ("error updating checkpoint: %s",
+                          future_strerror (f, errno));
+        flux_future_destroy (f);
+    }
+
+    flux_close (h);
+
     return (errorcount ? -1 : 0);
 }
 
@@ -383,6 +398,9 @@ static struct optparse_option fsck_opts[] = {
     },
     { .name = "rootref", .key = 'r', .has_arg = 1,
       .usage = "check integrity based on a specific root reference",
+    },
+    { .name = "checkpoint", .key = 'c', .has_arg = 0,
+      .usage = "checkpoint rootref if there are no errors",
     },
     OPTPARSE_TABLE_END
 };
