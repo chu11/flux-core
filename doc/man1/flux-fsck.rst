@@ -38,6 +38,12 @@ OPTIONS
 
    Use a specific root reference as the starting root version.
 
+.. option:: -c, --checkpoint
+
+   If a root reference specified by :option:`--rootref` does not
+   contain any errors, checkpoint that root reference to the be new
+   checkpointed root reference.
+
 
 EXIT STATUS
 ===========
