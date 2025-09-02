@@ -30,14 +30,23 @@
 
 #define BLOBREF_ASYNC_MAX 1000
 
+struct fsck_valref_data
+{
+    flux_t *h;
+    json_t *treeobj;
+    int index;
+    int count;
+    int in_flight;
+    const char *path;
+    int errorcount;
+    int errnum;
+};
+
 static void fsck_treeobj (flux_t *h,
                           const char *path,
                           json_t *treeobj);
 
-static void valref_validate (flux_t *h,
-                             json_t *treeobj,
-                             int index,
-                             void *arg);
+static void valref_validate (struct fsck_valref_data *fvd);
 
 static bool verbose;
 static bool quiet;
@@ -60,18 +69,6 @@ void read_error (const char *fmt, ...)
     read_verror (fmt, ap);
     va_end (ap);
 }
-
-struct fsck_valref_data
-{
-    flux_t *h;
-    json_t *treeobj;
-    int index;
-    int count;
-    int in_flight;
-    const char *path;
-    int errorcount;
-    int errnum;
-};
 
 static void valref_validate_continuation (flux_future_t *f, void *arg)
 {
@@ -96,7 +93,7 @@ static void valref_validate_continuation (flux_future_t *f, void *arg)
     fvd->in_flight--;
 
     if (fvd->index < fvd->count) {
-        valref_validate (fvd->h, fvd->treeobj, fvd->index, fvd);
+        valref_validate (fvd);
         fvd->in_flight++;
         fvd->index++;
     }
@@ -104,7 +101,7 @@ static void valref_validate_continuation (flux_future_t *f, void *arg)
     flux_future_destroy (f);
 }
 
-static void valref_validate (flux_t *h, json_t *treeobj, int index, void *arg)
+static void valref_validate (struct fsck_valref_data *fvd)
 {
     uint32_t hash[BLOBREF_MAX_DIGEST_SIZE];
     ssize_t hash_size;
@@ -112,22 +109,22 @@ static void valref_validate (flux_t *h, json_t *treeobj, int index, void *arg)
     flux_future_t *f;
     int *indexp;
 
-    blobref = treeobj_get_blobref (treeobj, index);
+    blobref = treeobj_get_blobref (fvd->treeobj, fvd->index);
 
     if ((hash_size = blobref_strtohash (blobref, hash, sizeof (hash))) < 0)
         log_err_exit ("cannot get hash from ref string");
 
-    if (!(f = flux_rpc_raw (h,
+    if (!(f = flux_rpc_raw (fvd->h,
                             "content-backing.validate",
                             hash,
                             hash_size,
                             0,
                             0))
-        || flux_future_then (f, -1, valref_validate_continuation, arg) < 0)
+        || flux_future_then (f, -1, valref_validate_continuation, fvd) < 0)
         log_err_exit ("cannot validate valref blob");
     if (!(indexp = (int *)malloc (sizeof (int))))
         log_err_exit ("cannot allocate index memory");
-    (*indexp) = index;
+    (*indexp) = fvd->index;
     if (flux_future_aux_set (f, "index", indexp, free) < 0)
         log_err_exit ("could not save index value");
 }
@@ -143,7 +140,7 @@ static void fsck_valref (flux_t *h, const char *path, json_t *treeobj)
 
     while (fvd.in_flight < BLOBREF_ASYNC_MAX
            && fvd.index < fvd.count) {
-        valref_validate (h, treeobj, fvd.index, &fvd);
+        valref_validate (&fvd);
         fvd.in_flight++;
         fvd.index++;
     }
