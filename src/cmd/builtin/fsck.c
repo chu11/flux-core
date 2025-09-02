@@ -46,6 +46,8 @@ static void fsck_treeobj (flux_t *h,
                           const char *path,
                           json_t *treeobj);
 
+static void valref_load (struct fsck_valref_data *fvd, int index);
+
 static void valref_validate (struct fsck_valref_data *fvd);
 
 static bool verbose;
@@ -70,7 +72,7 @@ void read_error (const char *fmt, ...)
     va_end (ap);
 }
 
-static void valref_validate_continuation (flux_future_t *f, void *arg)
+static void valref_load_continuation (flux_future_t *f, void *arg)
 {
     struct fsck_valref_data *fvd = arg;
 
@@ -93,11 +95,72 @@ static void valref_validate_continuation (flux_future_t *f, void *arg)
     fvd->in_flight--;
 
     if (fvd->index < fvd->count) {
+        valref_load (fvd, fvd->index);
+        fvd->in_flight++;
+        fvd->index++;
+    }
+
+    flux_future_destroy (f);
+}
+
+static void valref_load (struct fsck_valref_data *fvd, int index)
+{
+    const char *blobref;
+    flux_future_t *f;
+    int *indexp;
+
+    blobref = treeobj_get_blobref (fvd->treeobj, index);
+    if (!(f = content_load_byblobref (fvd->h,
+                                      blobref,
+                                      CONTENT_FLAG_CACHE_BYPASS))
+        || flux_future_then (f, -1, valref_load_continuation, fvd))
+        log_err_exit ("cannot retrieve valref blob");
+    if (!(indexp = (int *)malloc (sizeof (int))))
+        log_err_exit ("cannot allocate index memory");
+    (*indexp) = index;
+    if (flux_future_aux_set (f, "index", indexp, free) < 0)
+        log_err_exit ("could not save index value");
+}
+
+static void valref_validate_continuation (flux_future_t *f, void *arg)
+{
+    struct fsck_valref_data *fvd = arg;
+
+    if (flux_rpc_get (f, NULL) < 0) {
+        int *index = flux_future_aux_get (f, "index");
+        if (errno == ENOSYS) {
+            /* "validate" support added in v0.77.0.  Forward request to
+             * "load" for backwards compatibility
+             *
+             * N.B. fvd->in_flight does not need to change, stays
+             * constant with new request sent by valref_load()
+             */
+            valref_load (fvd, *index);
+            goto out;
+        }
+        if (verbose) {
+            if (errno == ENOENT)
+                read_error ("%s: missing blobref index=%d",
+                            fvd->path,
+                            (*index));
+            else
+                read_error ("%s: error retrieving blobref index=%d: %s",
+                            fvd->path,
+                            (*index),
+                            future_strerror (f, errno));
+        }
+        fvd->errorcount++;
+        fvd->errnum = errno;     /* we'll report the last errno */
+    }
+    fvd->in_flight--;
+
+    if (fvd->index < fvd->count) {
         valref_validate (fvd);
         fvd->in_flight++;
         fvd->index++;
     }
 
+out:
     flux_future_destroy (f);
 }
 
