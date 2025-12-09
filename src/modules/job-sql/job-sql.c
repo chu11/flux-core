@@ -44,7 +44,9 @@ const char *sql_insert =
 
 const char *sql_update_eventlog =
     "UPDATE jobs"
-    "  set eventlog = json_insert(eventlog, '$[#]', json(?2))"
+    "  set eventlog = json_set ( "
+    "        json_insert (eventlog, '$.eventlog[#]', json (?2)), "
+    "        ?3, json (?4)) "
     "where id = ?1";
 
 const char *sql_update_jobspec =
@@ -145,10 +147,12 @@ static int db_insert (struct job_sql_ctx *ctx,
                       json_t *R,
                       flux_error_t *error)
 {
+    json_t *o;
     int rc = -1;
     int n;
     char *s;
-
+    size_t index;
+    json_t *value;
     /* 1: id
      */
     if (sqlite3_bind_int64 (ctx->insert_stmt,
@@ -162,8 +166,27 @@ static int db_insert (struct job_sql_ctx *ctx,
     }
     /* 2: eventlog
      */
-    if (!(s = json_dumps (events, JSON_COMPACT))) {
-        errprintf (error, "error encoding eventlog");
+    if (!(o = json_object ())) {
+        errno = ENOMEM;
+        goto done;
+    }
+    if (json_object_set (o, "eventlog", events) < 0) {
+        errprintf (error, "failed to insert eventlog");
+        goto done;
+    }
+    json_array_foreach (events, index, value) {
+        json_t *name = json_object_get (value, "name");
+        if (!name) {
+            errprintf (error, "failed to get event name");
+            goto done;
+        }
+        if (json_object_set (o, json_string_value (name), value) < 0) {
+            errprintf (error, "failed to insert to eventlog object");
+            goto done;
+        }
+    }
+    if (!(s = json_dumps (o, JSON_COMPACT))) {
+        errprintf (error, "error encoding eventlog object");
         goto done;
     }
     if (sqlite3_bind_text (ctx->insert_stmt,
@@ -235,6 +258,8 @@ static int db_update (struct job_sql_ctx *ctx,
                       json_t *R,
                       flux_error_t *error)
 {
+    char *s = NULL;
+    char *name = NULL;
     int rc = -1;
     int n;
 
@@ -254,8 +279,9 @@ static int db_update (struct job_sql_ctx *ctx,
     }
 
     if (json_array_size (events) > 0) {
-        char *s;
-        if (!(s = json_dumps (json_array_get (events, 0), JSON_COMPACT))) {
+        json_t *o = json_array_get (events, 0);
+        if (!(s = json_dumps (o, JSON_COMPACT))
+            || asprintf (&name, "$.%s", json_string_value (json_object_get (o, "name"))) < 0) {
             errprintf (error, "db update: error encoding event");
             goto done;
         }
@@ -264,7 +290,17 @@ static int db_update (struct job_sql_ctx *ctx,
                                   2,
                                   s,
                                   strlen (s),
-                                  free) != SQLITE_OK) {
+                                  SQLITE_STATIC) != SQLITE_OK
+            || sqlite3_bind_text (ctx->update_eventlog_stmt,
+                                  3,
+                                  name,
+                                  strlen (name),
+                                  SQLITE_STATIC) != SQLITE_OK
+            || sqlite3_bind_text (ctx->update_eventlog_stmt,
+                                  4,
+                                  s,
+                                  strlen (s),
+                                  SQLITE_STATIC) != SQLITE_OK) {
             errprintf (error,
                        "db update eventlog %s bind: %s",
                        idf58 (id),
@@ -342,6 +378,8 @@ done:
     sqlite3_reset (ctx->update_eventlog_stmt);
     sqlite3_reset (ctx->update_jobspec_stmt);
     sqlite3_reset (ctx->update_R_stmt);
+    free (s);
+    free (name);
     return rc;
 }
 
