@@ -277,7 +277,11 @@ static void joblist_continuation (flux_future_t *f, void *arg)
     json_t *jobs;
     size_t index;
     json_t *value;
-    if (flux_rpc_get_unpack (f, "{s:o}", "jobs", &jobs) < 0) {
+    int version = 0;
+    if (flux_rpc_get_unpack (f,
+                             "{s:o s?i}",
+                             "jobs", &jobs,
+                             "version", &version) < 0) {
         if (errno == ENODATA) {
             joblist_query_finish (joblist);
             flux_future_destroy (f);
@@ -295,6 +299,12 @@ static void joblist_continuation (flux_future_t *f, void *arg)
     json_array_foreach (jobs, index, value) {
         if (json_array_append (joblist->jobs_query, value) < 0)
             fatal (ENOMEM, "error appending to jobs query array");
+    }
+    /* version 0 protocol does not stream, all results in one response */
+    if (version == 0) {
+        joblist_query_finish (joblist);
+        flux_future_destroy (f);
+        return;
     }
     flux_future_reset (f);
 }
