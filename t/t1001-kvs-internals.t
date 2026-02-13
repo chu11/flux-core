@@ -495,6 +495,19 @@ test_expect_success 'kvs: module stats returns reasonable transaction stats' '
 '
 
 #
+# test empty kvs txn works
+#
+
+test_expect_success 'kvs: test empty kvs txn works' '
+	${FLUX_BUILD_DIR}/t/kvs/emptytxn
+'
+
+test_expect_success 'kvs: module commit stats min is updated' '
+        commitdata=$(flux module stats -p transaction-opcount.commit kvs) &&
+        echo $commitdata | jq -e ".min == 0"
+'
+
+#
 # test ENOSYS on unfinished requests when unloading the KVS module
 #
 # N.B. do this last as we are unloading the kvs module

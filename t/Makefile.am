@@ -465,6 +465,7 @@ check_PROGRAMS = \
 	kvs/issue1876 \
 	kvs/waitcreate_cancel \
 	kvs/setrootevents \
+	kvs/emptytxn \
 	request/treq \
 	request/rpc \
 	request/rpc_stream \
@@ -715,6 +716,11 @@ kvs_setrootevents_SOURCES = kvs/setrootevents.c
 kvs_setrootevents_CPPFLAGS = $(test_cppflags)
 kvs_setrootevents_LDADD = $(test_ldadd)
 kvs_setrootevents_LDFLAGS = $(test_ldflags)
+
+kvs_emptytxn_SOURCES = kvs/emptytxn.c
+kvs_emptytxn_CPPFLAGS = $(test_cppflags)
+kvs_emptytxn_LDADD = $(test_ldadd)
+kvs_emptytxn_LDFLAGS = $(test_ldflags)
 
 request_treq_SOURCES = request/treq.c
 request_treq_CPPFLAGS = $(test_cppflags)
