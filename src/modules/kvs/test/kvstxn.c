@@ -2819,7 +2819,8 @@ void kvstxn_process_big_fileval (void)
 
     cache_count.treeobj_count = 0;
     cache_count.total_count = 0;
-    ok (kvstxn_iter_dirty_cache_entries (kt, cache_count_treeobj_cb,
+    ok (kvstxn_iter_dirty_cache_entries (kt,
+                                         cache_count_treeobj_cb,
                                          &cache_count) == 0,
         "kvstxn_iter_dirty_cache_entries works for dirty cache entries");
 
@@ -2858,7 +2859,8 @@ void kvstxn_process_big_fileval (void)
 
     cache_count.treeobj_count = 0;
     cache_count.total_count = 0;
-    ok (kvstxn_iter_dirty_cache_entries (kt, cache_count_treeobj_cb,
+    ok (kvstxn_iter_dirty_cache_entries (kt,
+                                         cache_count_treeobj_cb,
                                          &cache_count) == 0,
         "kvstxn_iter_dirty_cache_entries works for dirty cache entries");
 
