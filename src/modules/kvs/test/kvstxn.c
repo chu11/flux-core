@@ -3539,6 +3539,57 @@ void kvstxn_process_fallback_merge (void)
     ktest_finalize (cache, krm);
 }
 
+void kvstxn_process_key_depth (void)
+{
+    struct cache *cache;
+    kvsroot_mgr_t *krm;
+    kvstxn_mgr_t *ktm;
+    kvstxn_t *kt;
+    json_t *root;
+    char root_ref[BLOBREF_MAX_STRING_SIZE];
+    /* N.B. default max depth is 64 */
+    char *key =
+        "a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p.q.r.s.t.u.v.w.x.y.z."
+        "A.B.C.D.E.F.G.H.I.J.K.L.M.N.O.P.Q.R.S.T.U.V.W.X.Y.Z."
+        "0.1.2.3.4.5.6.7.8.9.10.11.12.13.14.15.16.17.18.19.20";
+
+    ktest_init (&cache, &krm);
+
+    /* This root is an empty root */
+    root = treeobj_create_dir ();
+
+    ok (treeobj_hash ("sha1", root, root_ref, sizeof (root_ref)) == 0,
+        "treeobj_hash worked");
+
+    (void)cache_insert (cache, create_cache_entry_treeobj (root_ref, root));
+
+    ok ((ktm = kvstxn_mgr_create (cache,
+                                  KVS_PRIMARY_NAMESPACE,
+                                  "sha1",
+                                  NULL,
+                                  &test_global)) != NULL,
+        "kvstxn_mgr_create works");
+
+    create_ready_kvstxn (ktm, "transaction1", key, "blarg", 0, 0);
+
+    ok ((kt = kvstxn_mgr_get_ready_transaction (ktm)) != NULL,
+        "kvstxn_mgr_get_ready_transaction returns ready kvstxn");
+
+    ok (kvstxn_process (kt, root_ref, 0) == KVSTXN_PROCESS_ERROR,
+        "kvstxn_process returns KVSTXN_PROCESS_ERROR");
+
+    /* error is caught continuously */
+    ok (kvstxn_process (kt, root_ref, 0) == KVSTXN_PROCESS_ERROR,
+        "kvstxn_process returns KVSTXN_PROCESS_ERROR again");
+
+    ok (kvstxn_get_errnum (kt) == EINVAL,
+        "kvstxn_get_errnum return EINVAL");
+
+    kvstxn_mgr_destroy (ktm);
+    ktest_finalize (cache, krm);
+    json_decref (root);
+}
+
 int main (int argc, char *argv[])
 {
     plan (NO_PLAN);
@@ -3581,6 +3632,7 @@ int main (int argc, char *argv[])
     kvstxn_process_append_errors ();
     kvstxn_process_append_no_duplicate ();
     kvstxn_process_fallback_merge ();
+    kvstxn_process_key_depth ();
 
     done_testing ();
     return (0);
