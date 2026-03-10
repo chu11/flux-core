@@ -100,6 +100,8 @@ struct kvstxn {
     } state;
 };
 
+#define KVS_KEY_MAX_DEPTH 64
+
 static void kvstxn_destroy (kvstxn_t *kt)
 {
     if (kt) {
@@ -627,6 +629,7 @@ static int kvstxn_link_dirent (kvstxn_t *kt,
     json_t *dir = rootdir;
     json_t *subdir = NULL, *dir_entry;
     int rc = -1;
+    int key_depth = 0;
 
     if (!(cpy = kvs_util_normalize_key (key, NULL)))
         goto done;
@@ -646,6 +649,11 @@ static int kvstxn_link_dirent (kvstxn_t *kt,
      */
     while ((next = strchr (name, '.'))) {
         *next++ = '\0';
+
+        if (++key_depth > KVS_KEY_MAX_DEPTH) {
+            errno = EINVAL;
+            goto done;
+        }
 
         if (!treeobj_is_dir (dir)) {
             errno = ENOTRECOVERABLE;
@@ -760,6 +768,10 @@ static int kvstxn_link_dirent (kvstxn_t *kt,
     /* This is the final path component of the key.  Add/modify/delete
      * it in the directory.
      */
+    if (++key_depth > KVS_KEY_MAX_DEPTH) {
+        errno = EINVAL;
+        goto done;
+    }
     if (!json_is_null (dirent)) {
         if (flags & FLUX_KVS_APPEND) {
             if (kvstxn_append (kt, dirent, dir, name, append) < 0)
