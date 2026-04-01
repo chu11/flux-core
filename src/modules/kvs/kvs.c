@@ -2501,7 +2501,7 @@ static void config_reload_cb (flux_t *h,
     }
     if (max_ops_parse (ctx, conf, &error) < 0) {
         errstr = error.text;
-        goto error;
+        goto error_decref;
     }
     if (kvs_checkpoint_reload (ctx->kcp, conf, &error) < 0) {
         errstr = error.text;
