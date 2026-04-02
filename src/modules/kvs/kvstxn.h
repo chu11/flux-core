@@ -111,7 +111,8 @@ json_t *kvstxn_get_keys (kvstxn_t *kt);
  */
 kvstxn_process_t kvstxn_process (kvstxn_t *kt,
                                  const char *root_ref,
-                                 int root_seq);
+                                 int root_seq,
+                                 int key_max_depth);
 
 /* on stall, iterate through all missing refs that the caller should
  * load into the cache

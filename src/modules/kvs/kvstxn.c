@@ -100,8 +100,6 @@ struct kvstxn {
     } state;
 };
 
-#define KVS_KEY_MAX_DEPTH 64
-
 static void kvstxn_destroy (kvstxn_t *kt)
 {
     if (kt) {
@@ -621,6 +619,7 @@ static int kvstxn_link_dirent (kvstxn_t *kt,
                                const char *key,
                                json_t *dirent,
                                int flags,
+                               int key_max_depth,
                                const char **missing_ref,
                                bool *append)
 {
@@ -650,7 +649,7 @@ static int kvstxn_link_dirent (kvstxn_t *kt,
     while ((next = strchr (name, '.'))) {
         *next++ = '\0';
 
-        if (++key_depth > KVS_KEY_MAX_DEPTH) {
+        if (key_max_depth && (++key_depth > key_max_depth)) {
             errno = EINVAL;
             goto done;
         }
@@ -742,6 +741,7 @@ static int kvstxn_link_dirent (kvstxn_t *kt,
                                     nkey,
                                     dirent,
                                     flags,
+                                    key_max_depth,
                                     missing_ref,
                                     append) < 0) {
                 free (nkey);
@@ -768,7 +768,7 @@ static int kvstxn_link_dirent (kvstxn_t *kt,
     /* This is the final path component of the key.  Add/modify/delete
      * it in the directory.
      */
-    if (++key_depth > KVS_KEY_MAX_DEPTH) {
+    if (key_max_depth && (++key_depth > key_max_depth)) {
         errno = EINVAL;
         goto done;
     }
@@ -856,7 +856,8 @@ error:
 
 kvstxn_process_t kvstxn_process (kvstxn_t *kt,
                                  const char *root_ref,
-                                 int root_seq)
+                                 int root_seq,
+                                 int key_max_depth)
 {
     /* Incase user calls kvstxn_process() again */
     if (kt->errnum)
@@ -968,6 +969,7 @@ kvstxn_process_t kvstxn_process (kvstxn_t *kt,
                                         key,
                                         dirent,
                                         flags,
+                                        key_max_depth,
                                         &missing_ref,
                                         &append) < 0) {
                     kt->errnum = errno;

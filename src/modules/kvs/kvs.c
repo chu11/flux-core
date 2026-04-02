@@ -67,6 +67,10 @@ const double max_namespace_age = 3600.;
  */
 const uint64_t kvs_transaction_max_ops = 16384;
 
+/* Key max depth
+*/
+const int kvs_key_max_depth = 64;
+
 struct kvs_ctx {
     struct cache *cache;    /* blobref => cache_entry */
     kvsroot_mgr_t *krm;
@@ -80,6 +84,7 @@ struct kvs_ctx {
     char initial_rootref[BLOBREF_MAX_STRING_SIZE];
     bool initial_rootref_set;
     uint64_t transaction_max_ops;
+    int key_max_depth;
     bool events_init;            /* flag */
     char *hash_name;
     unsigned int seq;           /* for commit transactions */
@@ -112,6 +117,9 @@ static void kvstxn_apply (kvstxn_t *kt);
 static int max_ops_parse (struct kvs_ctx *ctx,
                           const flux_conf_t *conf,
                           flux_error_t *errp);
+static int max_depth_parse (struct kvs_ctx *ctx,
+                            const flux_conf_t *conf,
+                            flux_error_t *errp);
 
 /*
  * kvs_ctx functions
@@ -192,6 +200,7 @@ static struct kvs_ctx *kvs_ctx_create (flux_t *h)
     }
     ctx->transaction_merge = 1;
     ctx->transaction_max_ops = kvs_transaction_max_ops;
+    ctx->key_max_depth = kvs_key_max_depth;
     if (!(ctx->requests = msg_hash_create (MSG_HASH_TYPE_UUID_MATCHTAG)))
         goto error;
     list_head_init (&ctx->work_queue);
@@ -960,7 +969,8 @@ static void kvstxn_apply (kvstxn_t *kt)
 
     if ((ret = kvstxn_process (kt,
                                root->ref,
-                               root->seq)) == KVSTXN_PROCESS_ERROR) {
+                               root->seq,
+                               ctx->key_max_depth)) == KVSTXN_PROCESS_ERROR) {
         errnum = kvstxn_get_errnum (kt);
         goto done;
     }
@@ -2503,6 +2513,10 @@ static void config_reload_cb (flux_t *h,
         errstr = error.text;
         goto error_decref;
     }
+    if (max_depth_parse (ctx, conf, &error) < 0) {
+        errstr = error.text;
+        goto error_decref;
+    }
     if (kvs_checkpoint_reload (ctx->kcp, conf, &error) < 0) {
         errstr = error.text;
         goto error_decref;
@@ -2648,6 +2662,28 @@ static int max_ops_parse (struct kvs_ctx *ctx,
         return -1;
     }
     ctx->transaction_max_ops = t_max_ops;
+    return 0;
+}
+
+static int max_depth_parse (struct kvs_ctx *ctx,
+                            const flux_conf_t *conf,
+                            flux_error_t *errp)
+{
+    uint64_t t_max_depth = kvs_key_max_depth;
+    flux_error_t error;
+    if (flux_conf_unpack (conf,
+                          &error,
+                          "{s?{s?I}}",
+                          "kvs",
+                          "key-max-depth", &t_max_depth) < 0) {
+        errprintf (errp, "error reading config for kvs: %s", error.text);
+        return -1;
+    }
+    if (t_max_depth <= 0) {
+        errprintf (errp, "kvs key-max-depth invalid");
+        return -1;
+    }
+    ctx->key_max_depth = t_max_depth;
     return 0;
 }
 
