@@ -451,15 +451,52 @@ test_expect_success 'kvs: txns above limit fail (not rank 0)' '
 '
 
 #
-# test excessively long key depths will be rejected
+# test key-max-depth and long key depths will be rejected
 #
 
 longkey="a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p.q.r.s.t.u.v.w.x.y.z.\
 A.B.C.D.E.F.G.H.I.J.K.L.M.N.O.P.Q.R.S.T.U.V.W.X.Y.Z.\
 0.1.2.3.4.5.6.7.8.9.10.11.12.13.14.15.16.17.18.19.20"
 
+# N.B. default is key depth of 64
 test_expect_success 'kvs: excessively long key depths rejected' '
 	test_must_fail flux kvs put ${longkey}=1
+'
+
+test_expect_success 'configure illegal key-max-depth' '
+	test_must_fail flux config load <<-EOF
+	[kvs]
+	key-max-depth = "foobar"
+	EOF
+'
+
+test_expect_success 'configure bad key-max-depth' '
+	test_must_fail flux config load <<-EOF
+	[kvs]
+	key-max-depth = 0
+	EOF
+'
+
+test_expect_success 'configure small key-max-depth' '
+	flux config load <<-EOF
+	[kvs]
+	key-max-depth = 10
+	EOF
+'
+
+test_expect_success 'kvs: small key-max-depth means below key rejected' '
+	test_must_fail flux kvs put "a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p.q.r"=1
+'
+
+test_expect_success 'configure extra long key-max-depth' '
+	flux config load <<-EOF
+	[kvs]
+	key-max-depth = 100
+	EOF
+'
+
+test_expect_success 'kvs: excessively long key depth now accepted' '
+	flux kvs put ${longkey}=1
 '
 
 test_done
