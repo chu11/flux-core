@@ -419,21 +419,49 @@ void exec_subcommand_dir (bool vopt,
     free (path);
 }
 
+struct similar_cmd {
+    int distance;
+    char *cmd;
+};
+
 struct similar_cmds {
-    int min;
     zlist_t *cmds;
     const char *argv0;
 };
+
+/* only output if command is similar enough, we'll go with a
+ * distance of at most 3.
+ *
+ * e.g. "resourcccce" will be similar to "resource", but not
+ * "resourccccce".
+ */
+#define DISTANCE_MAX 3
+
+static void similar_cmd_free (void *data)
+{
+    if (data) {
+        struct similar_cmd *sc = data;
+        free (sc->cmd);
+        free (sc);
+    }
+}
+
+static int similar_cmd_compare (void *item1, void *item2)
+{
+    struct similar_cmd *sc1 = item1;
+    struct similar_cmd *sc2 = item2;
+    return (sc1->distance - sc2->distance);
+}
 
 /* return true if no dups */
 static bool similar_dupcheck (struct similar_cmds *similar,
                               const char *cmd)
 {
-    char *str = zlist_first (similar->cmds);
-    while (str) {
-        if (streq (str, cmd))
+    struct similar_cmd *sc = zlist_first (similar->cmds);
+    while (sc) {
+        if (streq (sc->cmd, cmd))
             return false;
-        str = zlist_next (similar->cmds);
+        sc = zlist_next (similar->cmds);
     }
     return true;
 }
@@ -442,15 +470,13 @@ static void similar_check (struct similar_cmds *similar,
                            const char *cmd)
 {
     int distance = levenshtein_distance (cmd, similar->argv0);
-    if (distance > 0 && distance <= similar->min) {
-        if (distance < similar->min) {
-            zlist_purge (similar->cmds);
-            similar->min = distance;
-        }
+    if (distance > 0 && distance <= DISTANCE_MAX) {
         if (similar_dupcheck (similar, cmd)) {
-            char *cpy = xstrdup (cmd);
-            zlist_append (similar->cmds, cpy);
-            zlist_freefn (similar->cmds, cpy, free, true);
+            struct similar_cmd *sc = xzmalloc (sizeof (*cmd));
+            sc->distance = distance;
+            sc->cmd = xstrdup (cmd);
+            zlist_append (similar->cmds, sc);
+            zlist_freefn (similar->cmds, sc, similar_cmd_free, true);
         }
     }
 }
@@ -486,11 +512,10 @@ static void find_similar_command (const char *searchpath, const char *argv0)
 {
     extern struct builtin_cmd builtin_cmds[];
     struct builtin_cmd *builtin_cmd = &builtin_cmds[0];
-    struct similar_cmds similar = {INT_MAX, NULL, argv0};
+    struct similar_cmds similar = {NULL, argv0};
     char *searchpathcpy;
     char *dir, *saveptr = NULL, *a1;
 
-    similar.min = INT_MAX;
     if (!(similar.cmds = zlist_new ()))
         log_err_exit ("failed to create cmds list");
     similar.argv0 = argv0;
@@ -510,24 +535,20 @@ static void find_similar_command (const char *searchpath, const char *argv0)
     }
     free (searchpathcpy);
 
-    /* only output if command is similar enough, we'll go with a
-     * distance of at most 3.
-     *
-     * e.g. "resourcccce" will be similar to "resource", but not
-     * "resourccccce".
-     */
-    if (similar.min <= 3) {
-        char *str;
+    if (zlist_size (similar.cmds) > 0) {
+        struct similar_cmd *sc;
         int i = 3;
+
+        zlist_sort (similar.cmds, similar_cmd_compare);
 
         log_msg ("The most similar command%s",
                  zlist_size (similar.cmds) > 1 ? "s are" : " is");
 
         /* output at most 3 commands */
-        str = zlist_first (similar.cmds);
-        while (str && i-- > 0) {
-            log_msg ("\t%s", str);
-            str = zlist_next (similar.cmds);
+        sc = zlist_first (similar.cmds);
+        while (sc && i-- > 0) {
+            log_msg ("\t%s", sc->cmd);
+            sc = zlist_next (similar.cmds);
         }
     }
 
