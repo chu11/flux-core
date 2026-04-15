@@ -50,11 +50,26 @@ test_expect_success 'construct FLUX_URI for rank 2 (child of 1)' '
 	test $(FLUX_URI=$(cat uri2) flux getattr rank) -eq 2
 '
 
+# N.B. under ASAN, segfault signal can be captured and reported
+# differently than expected.  Therefore we use this function to ensure
+# broker failed or received SIGSEGV (139 - 128 = 11 == SIGSEGV)
+test_must_fail_or_segfault() {
+    "$@"
+    exit_code=$?
+    if test $exit_code = 139; then
+        return 0
+    elif test $exit_code = 0; then
+        echo >&2 "test_must_fail_or segfault: command succeeded: $*"
+        return 1
+    fi
+    return 0
+}
+
 # Choice of signal 11 (SIGSEGV) is deliberate here.
 # The broker should not trap this signal - see flux-framework/flux-core#4230.
 test_expect_success 'kill -11 broker 1' '
 	$startctl kill 1 11 &&
-	test_expect_code 139 $startctl wait 1
+	test_must_fail_or_segfault $startctl wait 1
 '
 
 test_expect_success 'wait broker.online to reach count of one' '
