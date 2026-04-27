@@ -21,6 +21,8 @@ struct resource_config {
     bool no_update_watch;
     bool monitor_force_up;
     int journal_max;
+    bool eventlog_truncate;
+    double eventlog_truncate_preserve_time;
     bool systemd_enable; // systemd.enable, not under [resource]
 };
 

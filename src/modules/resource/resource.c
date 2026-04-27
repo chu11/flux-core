@@ -16,6 +16,7 @@
 #endif
 
 #include <flux/core.h>
+#include <time.h>
 #include <jansson.h>
 
 #include "src/common/libutil/errno_safe.h"
@@ -23,6 +24,7 @@
 #include "src/common/libidset/idset.h"
 #include "src/common/libeventlog/eventlog.h"
 #include "src/common/librlist/rlist.h"
+#include "src/common/libutil/fsd.h"
 #include "ccan/str/str.h"
 
 #include "resource.h"
@@ -36,6 +38,7 @@
 #include "rutil.h"
 #include "status.h"
 #include "upgrade.h"
+#include "truncate.h"
 
 /* Parse [resource] table.
  *
@@ -67,6 +70,12 @@
  *
  * journal-max = 100000
  *   Maximum size allowed of the resource journal before it is truncated.
+ *
+ * eventlog-truncate = false
+ *   Truncate resource.eventlog of unnecessary eventlog entries
+ *
+ * eventlog-truncate-preserve-time = 0.0
+ *   Length of time to preserve eventlog entries for historical purposes.
  */
 
 /* Initialize a resource_config object
@@ -141,12 +150,15 @@ static int parse_config (struct resource_ctx *ctx,
     int no_update_watch = 0;
     int rediscover = 0;
     int journal_max = 100000;
+    int eventlog_truncate = 0;
+    const char *eventlog_truncate_preserve_time = NULL;
+    double truncate_time = 0.0;
     json_t *o = NULL;
     json_t *config = NULL;
 
     if (flux_conf_unpack (conf,
                           &error,
-                          "{s?{s?s s?s s?o s?o s?s s?b s?b s?b s?b s?i !}}",
+                          "{s?{s?s s?s s?o s?o s?s s?b s?b s?b s?b s?i s?b s?s !}}",
                           "resource",
                             "path", &path,
                             "scheduling", &scheduling_path,
@@ -157,7 +169,10 @@ static int parse_config (struct resource_ctx *ctx,
                             "noverify", &noverify,
                             "no-update-watch", &no_update_watch,
                             "rediscover", &rediscover,
-                            "journal-max", &journal_max) < 0) {
+                            "journal-max", &journal_max,
+                            "eventlog-truncate", &eventlog_truncate,
+                            "eventlog-truncate-preserve-time",
+                              &eventlog_truncate_preserve_time) < 0) {
         errprintf (errp,
                    "error parsing [resource] configuration: %s",
                    error.text);
@@ -213,6 +228,14 @@ static int parse_config (struct resource_ctx *ctx,
             return -1;
         }
     }
+    if (eventlog_truncate && eventlog_truncate_preserve_time) {
+        if (fsd_parse_duration (eventlog_truncate_preserve_time,
+                                &truncate_time) < 0) {
+            errprintf (errp, "invalid eventlog truncate preservation time");
+            json_decref (o);
+            return -1;
+        }
+    }
     /* Check systemd.enable so we know whether sdmon.online will be populated.
      * Configuration errors in [systemd] are handled elsewhere.
      */
@@ -233,6 +256,8 @@ static int parse_config (struct resource_ctx *ctx,
         rconfig->rediscover = rediscover ? true : false;
         rconfig->R = o;
         rconfig->systemd_enable = systemd_enable ? true : false;
+        rconfig->eventlog_truncate = eventlog_truncate ? true : false;
+        rconfig->eventlog_truncate_preserve_time = truncate_time;
     }
     else
         json_decref (o);
@@ -412,6 +437,8 @@ int parse_args (flux_t *h, int argc,
             config->monitor_force_up = true;
         else if (streq (argv[i], "noverify"))
             config->noverify = true;
+        else if (streq (argv[i], "eventlog-truncate"))
+            config->eventlog_truncate = true;
         else  {
             flux_log (h, LOG_ERR, "unknown option: %s", argv[i]);
             errno = EINVAL;
@@ -420,7 +447,6 @@ int parse_args (flux_t *h, int argc,
     }
     return 0;
 }
-
 
 int mod_main (flux_t *h, int argc, char **argv)
 {
@@ -479,6 +505,11 @@ int mod_main (flux_t *h, int argc, char **argv)
             goto error;
         if (!(ctx->drain = drain_create (ctx, eventlog)))
             goto error;
+        if (config.eventlog_truncate
+            && !flux_attr_get (ctx->h, "broker.recovery-mode"))
+            truncate_eventlog (ctx,
+                               eventlog,
+                               config.eventlog_truncate_preserve_time);
     }
     /*  topology is initialized after exclude/drain etc since this
      *  rank may attempt to drain itself due to a topology mismatch.
@@ -497,6 +528,9 @@ int mod_main (flux_t *h, int argc, char **argv)
         flux_log_error (h, "flux_reactor_run");
         goto error;
     }
+    /* Checkpoint final drain state */
+    if (ctx->rank == 0)
+        drain_checkpoint (ctx->drain);
     resource_config_deinit (&config);
     resource_ctx_destroy (ctx);
     json_decref (eventlog);
