@@ -156,6 +156,16 @@ journal-max
    default is 100,000. This value takes immediate effect on a configuration
    update.
 
+eventlog-truncate
+   (optional) If true, truncate any entries from the ``resource.eventlog``
+   that are no longer needed due to state being checkpointed into the KVS.
+
+eventlog-truncate-preserve-time
+   (optional) An amount of time specified in Flux Standard Duration (FSD)
+   to preserve ``resource.eventlog`` entries, even if they entries are
+   eligible to be truncated.  For example, specifying "100d" would inform
+   the resource module to only remove entries greater than 100 days old.
+
 Note that, except where noted above, updates to the resource table are
 ignored until the next Flux restart.
 
