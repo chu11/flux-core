@@ -919,6 +919,7 @@ void drain_checkpoint (struct drain *drain)
         || flux_future_get (f, NULL) < 0)
         flux_log_error (drain->ctx->h, "failed to checkpoint drain state");
     json_decref (drain_state);
+    flux_kvs_txn_destroy (txn);
     flux_future_destroy (f);
 }
 
