@@ -57,6 +57,12 @@ TESTS = \
 	test_msg_hash.t \
 	test_rpc_track.t
 
+# test_roleconf_wrap uses ld --wrap to fake the passwd/group database, which
+# is not supported by all linkers (e.g. macos).  Built only where available.
+if HAVE_LD_WRAP
+TESTS += test_roleconf_wrap.t
+endif
+
 check_PROGRAMS = \
         $(TESTS)
 
@@ -106,6 +112,14 @@ test_roleconf_t_SOURCES = test/roleconf.c
 test_roleconf_t_CPPFLAGS = $(test_cppflags)
 test_roleconf_t_LDADD = $(test_ldadd)
 test_roleconf_t_LDFLAGS = $(test_ldflags)
+
+if HAVE_LD_WRAP
+test_roleconf_wrap_t_SOURCES = test/roleconf_wrap.c
+test_roleconf_wrap_t_CPPFLAGS = $(test_cppflags)
+test_roleconf_wrap_t_LDADD = $(test_ldadd)
+test_roleconf_wrap_t_LDFLAGS = $(test_ldflags) \
+	-Wl,--wrap=getpwnam_r,--wrap=getpwuid_r,--wrap=getgrnam_r
+endif
 
 test_usock_t_SOURCES = test/usock.c
 test_usock_t_CPPFLAGS = $(test_cppflags)

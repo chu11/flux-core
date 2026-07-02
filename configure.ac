@@ -193,6 +193,21 @@ AC_LINK_IFELSE([AC_LANG_PROGRAM([])], [
 ])
 LDFLAGS=$saved_LDFLAGS
 
+# ld --wrap is used by some unit tests to interpose libc functions.
+# It is a GNU ld/lld/gold feature; the macos linker does not support it.
+saved_LDFLAGS="$LDFLAGS"
+LDFLAGS="-Wl,--wrap=getpwnam_r $LDFLAGS"
+AC_MSG_CHECKING([whether ld supports --wrap])
+AC_LINK_IFELSE([AC_LANG_PROGRAM([])], [
+  AC_MSG_RESULT([yes])
+  have_ld_wrap=yes
+  ],[
+  AC_MSG_RESULT([no])
+  have_ld_wrap=no
+])
+LDFLAGS=$saved_LDFLAGS
+AM_CONDITIONAL([HAVE_LD_WRAP], [test "x$have_ld_wrap" = xyes])
+
 LT_INIT
 AC_PROG_AWK
 
