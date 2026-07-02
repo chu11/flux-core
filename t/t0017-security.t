@@ -88,6 +88,93 @@ test_expect_success 'connector-local restored private access policy' '
 	grep allow-guest-user=false dmesg6.out
 '
 
+test_expect_success 'connector-local accepts [access.roles.admin] users' '
+	cat >access.toml <<-EOT &&
+	[access]
+	allow-guest-user = true
+	[access.roles.admin]
+	users = [ "$(id -un)" ]
+	EOT
+	flux config reload
+'
+
+test_expect_success 'connector-local accepts admin groups one-liner' '
+	cat >access.toml <<-EOT &&
+	[access]
+	allow-guest-user = true
+	roles.admin.groups = [ "$(id -gn)" ]
+	EOT
+	flux config reload
+'
+
+test_expect_success 'connector-local tolerates unknown admin user name' '
+	cat >access.toml <<-EOT &&
+	[access]
+	allow-guest-user = true
+	[access.roles.admin]
+	users = [ "nosuchuser-xyzzy" ]
+	EOT
+	flux config reload
+'
+
+test_expect_success 'connector-local rejects unknown role name' '
+	cat >access.toml <<-EOT &&
+	[access]
+	allow-guest-user = true
+	[access.roles.operator]
+	users = [ "$(id -un)" ]
+	EOT
+	test_must_fail flux config reload 2>roles1.err &&
+	grep -i "unknown role" roles1.err
+'
+
+test_expect_success 'connector-local rejects unknown key in admin role' '
+	cat >access.toml <<-EOT &&
+	[access]
+	allow-guest-user = true
+	[access.roles.admin]
+	userz = [ "$(id -un)" ]
+	EOT
+	test_must_fail flux config reload
+'
+
+test_expect_success 'connector-local rejects non-array admin users' '
+	cat >access.toml <<-EOT &&
+	[access]
+	allow-guest-user = true
+	[access.roles.admin]
+	users = "$(id -un)"
+	EOT
+	test_must_fail flux config reload
+'
+
+# N.B. connector-local only applies [access.roles] to guest connections
+# (peer uid != instance owner).  A single-user test instance cannot make such
+# a connection (SO_PEERCRED reports the owner uid, and FLUX_HANDLE_ROLEMASK
+# spoofing is client-side and bypasses client_authenticate()).  The guest
+# credential-stamping path is covered end-to-end by the system test
+# t/system/0008-access-roles.t; here we only confirm that configuring an
+# admin role does not perturb the owner's own connection.
+test_expect_success 'owner rolemask unaffected by [access.roles.admin] config' '
+	cat >access.toml <<-EOT &&
+	[access]
+	allow-guest-user = true
+	[access.roles.admin]
+	users = [ "$(id -un)" ]
+	EOT
+	flux config reload &&
+	flux ping --count=1 --userid broker >ping-owner.out &&
+	grep -q "userid=$(id -u) rolemask=0x5" ping-owner.out
+'
+
+# Restore default policy so later tests are unaffected
+test_expect_success 'connector-local restored policy after roles tests' '
+	cat >access.toml <<-EOT &&
+	[access]
+	EOT
+	flux config reload
+'
+
 test_expect_success 'simulated local connector auth failure returns EPERM' '
 	flux getattr size &&
 	flux module debug --set 1 connector-local &&
