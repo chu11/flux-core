@@ -45,6 +45,7 @@ TESTS = \
 	test_sendfd.t \
         test_disconnect.t \
 	test_auth.t \
+	test_roleconf.t \
 	test_usock.t \
 	test_usock_echo.t \
 	test_usock_epipe.t \
@@ -100,6 +101,11 @@ test_auth_t_SOURCES = test/auth.c
 test_auth_t_CPPFLAGS = $(test_cppflags)
 test_auth_t_LDADD = $(test_ldadd)
 test_auth_t_LDFLAGS = $(test_ldflags)
+
+test_roleconf_t_SOURCES = test/roleconf.c
+test_roleconf_t_CPPFLAGS = $(test_cppflags)
+test_roleconf_t_LDADD = $(test_ldadd)
+test_roleconf_t_LDFLAGS = $(test_ldflags)
 
 test_usock_t_SOURCES = test/usock.c
 test_usock_t_CPPFLAGS = $(test_cppflags)
