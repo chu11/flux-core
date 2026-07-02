@@ -1163,7 +1163,7 @@ void check_print_rolemask (void)
     char *buf = NULL;
     size_t size = 0;
 
-    rolemask = FLUX_ROLE_LOCAL | FLUX_ROLE_USER | 0x10;
+    rolemask = FLUX_ROLE_LOCAL | FLUX_ROLE_USER | FLUX_ROLE_ADMIN | 0x10;
     if (!(msg = flux_msg_create (FLUX_MSGTYPE_REQUEST))
         || flux_msg_set_rolemask (msg, rolemask) < 0)
         BAIL_OUT ("failed to create test request");
@@ -1172,7 +1172,7 @@ void check_print_rolemask (void)
     flux_msg_fprint (fp, msg);
     fclose (fp); // close flushes content
     diag ("%s", buf);
-    ok (buf && strstr (buf, "rolemask=user,local,0x10") != NULL,
+    ok (buf && strstr (buf, "rolemask=user,local,admin,0x10") != NULL,
         "flux_msg_fprint() rolemask string is correct");
     free (buf);
     flux_msg_destroy (msg);

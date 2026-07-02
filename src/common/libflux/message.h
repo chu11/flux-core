@@ -225,8 +225,16 @@ enum {
     FLUX_ROLE_OWNER = 1,
     FLUX_ROLE_USER = 2,
     FLUX_ROLE_LOCAL = 4,
+    FLUX_ROLE_ADMIN = 8,
     FLUX_ROLE_ALL = 0xFFFFFFFF,
 };
+
+/* Roles that are exempt from per-user access restrictions such as job
+ * private mode: the owner has full control and the admin role is granted
+ * elevated visibility (see RFC 12).
+ */
+#define FLUX_ROLE_PRIVILEGED (FLUX_ROLE_OWNER | FLUX_ROLE_ADMIN)
+
 int flux_msg_set_rolemask (flux_msg_t *msg, uint32_t rolemask);
 int flux_msg_get_rolemask (const flux_msg_t *msg, uint32_t *rolemask);
 
