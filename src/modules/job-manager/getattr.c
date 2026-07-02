@@ -112,7 +112,7 @@ void getattr_handle_request (flux_t *h,
         goto error;
     if (!(job = zhashx_lookup (ctx->active_jobs, &id))
         && !(job = zhashx_lookup (ctx->inactive_jobs, &id))) {
-        if (ctx->private_mode && !(cred.rolemask & FLUX_ROLE_OWNER))
+        if (ctx->private_mode && !(cred.rolemask & FLUX_ROLE_PRIVILEGED))
             errno = EPERM;
         else {
             errstr = "unknown job";
@@ -120,7 +120,9 @@ void getattr_handle_request (flux_t *h,
         }
         goto error;
     }
-    /* Security: guests can only access their own jobs. In private mode,
+    /* Security: guests can only access their own jobs.  The admin role does
+     * not change this: it only exempts a guest from private mode (existence
+     * hiding above), not from per-job access control.  In private mode,
      * suppress the errstr so existence of the job is not revealed.
      */
     if (flux_msg_cred_authorize (cred, job->userid) < 0) {

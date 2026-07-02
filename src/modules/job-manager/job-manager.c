@@ -54,7 +54,7 @@ void getinfo_handle_request (flux_t *h,
         goto error;
     if (flux_msg_get_cred (msg, &cred) < 0)
         goto error;
-    if (ctx->private_mode && !(cred.rolemask & FLUX_ROLE_OWNER)) {
+    if (ctx->private_mode && !(cred.rolemask & FLUX_ROLE_PRIVILEGED)) {
         errno = EPERM;
         goto error;
     }
@@ -93,7 +93,7 @@ static void stats_cb (flux_t *h, flux_msg_handler_t *mh,
         goto error;
     if (flux_msg_get_cred (msg, &cred) < 0)
         goto error;
-    if (ctx->private_mode && !(cred.rolemask & FLUX_ROLE_OWNER)) {
+    if (ctx->private_mode && !(cred.rolemask & FLUX_ROLE_PRIVILEGED)) {
         errno = EPERM;
         goto error;
     }
