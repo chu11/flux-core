@@ -211,11 +211,17 @@ static void finalize_exec_request_if_done (struct sdproc *proc)
         && (!proc->out || proc->out_eof_sent)
         && (!proc->err || proc->err_eof_sent)) {
 
+        /* A post-start check failed and the unit was SIGKILLed to clean up.
+         * Now that it has been reaped, return the stored error.
+         */
+        if (proc->errnum) {
+            exec_respond_error (proc, proc->errnum, proc->error.text);
+        }
         /* If there was an exec error, fail with ENOENT.
          * N.B. we have no way of discerning which exec(2) error occurred,
          * so guess ENOENT.  It could actually be EPERM, for example.
          */
-        if (sdexec_unit_has_failed (proc->unit)) {
+        else if (sdexec_unit_has_failed (proc->unit)) {
             flux_error_t error;
             errprintf (&error,
                        "unit process could not be started (systemd error %d)",
@@ -418,17 +424,38 @@ static void property_changed_continuation (flux_future_t *f, void *arg)
      * so channel output may begin after this.
      * If there is an exec error, "started" should not be sent.
      */
-    if (!proc->started_response_sent) {
+    if (!proc->started_response_sent && !proc->errnum) {
         if (sdexec_unit_has_started (proc->unit)) {
             flux_error_t check_error;
             if (sdproc_post_start_checks (proc, &check_error) < 0) {
+                flux_future_t *f2;
                 flux_log (h,
                           LOG_ERR,
                           "%s: post-start check failed: %s",
                           sdexec_unit_name (proc->unit),
                           check_error.text);
-                exec_respond_error (proc, EIO, check_error.text);
-                return;
+                /* The unit has already started, so we cannot simply respond
+                 * with an error and destroy the sdproc - that would leak the
+                 * running transient unit. Instead, record the error, SIGKILL
+                 * the unit, and start channel output so streams reach EOF.
+                 * The stored error is returned by
+                 * finalize_exec_request_if_done() once the unit has been
+                 * reaped (failed -> reset-failed -> inactive.dead), the same
+                 * way disconnect_cb() relies on normal cleanup.
+                 */
+                proc->error = check_error;
+                proc->errnum = EIO;
+                if ((f2 = sdexec_kill_unit (h,
+                                            proc->ctx->rank,
+                                            sdexec_unit_name (proc->unit),
+                                            "main",
+                                            SIGKILL)))
+                    flux_future_destroy (f2);
+                else
+                    flux_log_error (h, "error killing unit after failed check");
+                sdexec_channel_start_output (proc->out);
+                sdexec_channel_start_output (proc->err);
+                goto done;
             }
             if (flux_respond_pack (h,
                                    proc->msg,
@@ -444,7 +471,7 @@ static void property_changed_continuation (flux_future_t *f, void *arg)
     /* The finished response is sent when wait status is available.
      * If there was an exec error, "finished" should not be sent.
      */
-    if (!proc->finished_response_sent) {
+    if (!proc->finished_response_sent && !proc->errnum) {
         if (sdexec_unit_has_finished (proc->unit)) {
             if (flux_respond_pack (h,
                                    proc->msg,
@@ -458,10 +485,14 @@ static void property_changed_continuation (flux_future_t *f, void *arg)
     }
     /* If the unit reaches active.exited call StopUnit to cause stdout
      * and stderr to reach eof, and the unit to transition to inactive.dead.
+     * Normally we wait until the finished response has been sent, but on the
+     * post-start check failure path (proc->errnum set) that response is
+     * suppressed, so key off the stored error instead to ensure the unit is
+     * still reaped rather than left in active.exited.
      */
     if (sdexec_unit_state (proc->unit) == STATE_ACTIVE
         && sdexec_unit_substate (proc->unit) == SUBSTATE_EXITED
-        && proc->finished_response_sent) {
+        && (proc->finished_response_sent || proc->errnum)) {
 
         if (!proc->f_stop) {
             flux_future_t *f2;
@@ -512,6 +543,7 @@ static void property_changed_continuation (flux_future_t *f, void *arg)
             proc->f_stop = f2;
         }
     }
+done:
     flux_future_reset (f);
     /* Conditionally send the final RPC response.
      */
