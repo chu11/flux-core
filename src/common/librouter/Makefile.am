@@ -22,6 +22,8 @@ librouter_la_SOURCES = \
 	sendfd.c \
 	auth.c \
 	auth.h \
+	roleconf.c \
+	roleconf.h \
 	usock.c \
 	usock.h \
 	disconnect.h \
