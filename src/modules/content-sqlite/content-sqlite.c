@@ -667,13 +667,13 @@ static void content_sqlite_closedb (struct content_sqlite *ctx)
  */
 static int set_count (void *arg, int ncols, char **cols, char **col_names)
 {
-    int *result = arg;
-    int count = 0;
+    int64_t *result = arg;
+    int64_t count = 0;
     int rc = -1;
 
     if (ncols == 1) {
         errno = 0;
-        count = strtoul (cols[0], NULL, 10);
+        count = strtoll (cols[0], NULL, 10);
         if (errno == 0) {
             *result = count;
             rc = 0;
@@ -721,7 +721,7 @@ void stats_get_cb (flux_t *h,
                    void *arg)
 {
     struct content_sqlite *ctx = arg;
-    int count;
+    int64_t count;
     const char *errmsg = NULL;
     json_t *load_time = NULL;
     json_t *store_time = NULL;
@@ -743,7 +743,7 @@ void stats_get_cb (flux_t *h,
         goto error;
     if (flux_respond_pack (h,
                            msg,
-                           "{s:i s:I s:I s:O s:O s:{s:s s:s} s:O}",
+                           "{s:I s:I s:I s:O s:O s:{s:s s:s} s:O}",
                            "object_count", count,
                            "dbfile_size", get_file_size (ctx->dbfile),
                            "dbfile_free", get_fs_free (ctx->dbfile),
@@ -772,7 +772,7 @@ static int content_sqlite_opendb (struct content_sqlite *ctx, bool truncate)
 {
     int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
     char s[128];
-    int count;
+    int64_t count;
 
     if (truncate)
         (void)unlink (ctx->dbfile);
@@ -897,9 +897,9 @@ static int content_sqlite_opendb (struct content_sqlite *ctx, bool truncate)
     }
     flux_log (ctx->h,
               LOG_DEBUG,
-              "%s (%d objects) journal_mode=%s synchronous=%s",
+              "%s (%jd objects) journal_mode=%s synchronous=%s",
               ctx->dbfile,
-              count,
+              (intmax_t)count,
               ctx->journal_mode,
               ctx->synchronous);
     return 0;
