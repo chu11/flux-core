@@ -98,7 +98,6 @@ struct sdproc {
     struct stop_timer stop;
 
     int errnum;
-    const char *errstr;
     flux_error_t error;
 
     char *expected_cpus;  /* expected AllowedCPUs idset string, or NULL */
