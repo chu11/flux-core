@@ -26,6 +26,7 @@
 #include "src/common/libutil/blobref.h"
 #include "src/common/libutil/log.h"
 #include "src/common/libutil/errno_safe.h"
+#include "src/common/libutil/errprintf.h"
 #include "src/common/libutil/tstat.h"
 #include "src/common/libutil/monotime.h"
 #include "src/common/libkvs/kvs_checkpoint.h"
@@ -39,12 +40,14 @@ const size_t compression_threshold = 256; /* compress blobs >= this size */
 const char *sql_create_table = "CREATE TABLE if not exists objects("
                                "  hash BLOB PRIMARY KEY,"
                                "  size INT,"
-                               "  object BLOB"
+                               "  object BLOB,"
+                               "  epoch INT DEFAULT 0"
                                ");";
 const char *sql_load = "SELECT object,size FROM objects"
                        "  WHERE hash = ?1 LIMIT 1";
-const char *sql_store = "INSERT INTO objects (hash,size,object) "
-                        "  values (?1, ?2, ?3)";
+const char *sql_store = "INSERT INTO objects (hash,size,object,epoch) "
+                        "  values (?1, ?2, ?3, ?4) "
+                        "ON CONFLICT(hash) DO UPDATE SET epoch = excluded.epoch";
 const char *sql_validate = "SELECT EXISTS("
                            "  SELECT 1 FROM objects WHERE hash = ?1)";
 const char *sql_objects_count = "SELECT count(1) FROM objects";
@@ -73,7 +76,50 @@ const char *sql_table_list = "SELECT tbl_name FROM sqlite_master where type = 't
 
 const char *sql_checkpt_get_all = "SELECT * FROM checkpt_v2 ORDER BY id DESC";
 
+const char *sql_alter_objects_add_epoch = "ALTER TABLE objects ADD COLUMN epoch INT DEFAULT 0";
+const char *sql_get_max_checkpt_id = "SELECT MAX(id) FROM checkpt_v2";
+const char *sql_table_info = "PRAGMA table_info(objects)";
+const char *sql_mark_blob = "UPDATE objects SET epoch = MAX(epoch, ?1) WHERE hash = ?2";
+/* Select up to 'delete_cap' (?4) garbage rowids in a bounded rowid window
+ * (?2 < rowid <= ?3), ascending, resuming from a cursor.  See sweep_cb.
+ */
+const char *sql_sweep_select = "SELECT rowid FROM objects"
+                               "  WHERE epoch < ?1 AND rowid > ?2 AND rowid <= ?3"
+                               "  ORDER BY rowid LIMIT ?4";
+const char *sql_sweep_delete = "DELETE FROM objects WHERE rowid = ?1";
+const char *sql_max_rowid = "SELECT MAX(rowid) FROM objects";
+const char *sql_count_sweep_candidates = "SELECT COUNT(*) FROM objects WHERE epoch < ?1";
+
 #define MAX_CHECKPOINTS_DEFAULT 5
+
+/* Upper bound on the number of hashes accepted by a single mark RPC.
+ * The mark handler runs synchronously on content-sqlite's single reactor
+ * thread, so an unbounded array would block all other backing traffic while
+ * it is processed.  flux-gc batches marks in chunks of 100; this cap is well
+ * above that but still bounds the per-RPC work.  Like the sweep ceilings below,
+ * it targets a worst-case stall of roughly 100ms: a mark is an indexed UPDATE
+ * (~1us warm by the same rough microbenchmark), so 16384 ~= 16ms, comfortably
+ * under budget.  Treat this as an order-of-magnitude bound, not a guarantee.
+ */
+#define MARK_HASHES_MAX 16384
+
+/* Per-call ceilings on the two sweep bounds.  The sweep runs synchronously on
+ * the reactor thread, so both the DELETE work and the SELECT scan must be
+ * bounded to cap the stall.  'delete_cap' limits rows deleted (the dominant
+ * cost); 'window' limits rows scanned (so a sparse span still makes progress).
+ * Requests above these are CLAMPED, not rejected: flux-gc terminates its sweep
+ * loop on the rowid cursor reaching the high-water mark, not on batch size, so
+ * a clamped call is harmless -- the tool simply makes another call.
+ *
+ * The ceilings target a worst-case per-call stall of roughly 100ms.  This is a
+ * ROUGH back-of-envelope from warm-cache microbenchmarks (~5us per deleted row,
+ * ~0.1us per scanned row): 8192 deletes ~= 40ms and 512K scanned rows ~= 50ms,
+ * ~90ms combined.  Real disk / cold cache is slower, so treat 100ms as an
+ * order-of-magnitude bound, not a guarantee.  flux-gc's defaults (1000 / 100K)
+ * sit well under these; the ceilings only bound a hostile or buggy caller.
+ */
+#define SWEEP_DELETE_MAX 8192
+#define SWEEP_WINDOW_MAX (1<<19)   /* 512K rows scanned per call */
 
 struct content_stats {
     tstat_t load;
@@ -101,6 +147,7 @@ struct content_sqlite {
     char *synchronous;
     int max_checkpoints;
     bool truncate;
+    int64_t current_epoch;
 };
 
 static int set_config (char **conf, const char *val)
@@ -307,12 +354,16 @@ static int content_sqlite_store (struct content_sqlite *ctx,
         set_errno_from_sqlite_error (ctx);
         goto error;
     }
-    /* N.B. ignore SQLITE_CONSTRAINT errors - it means the insert failed
-     * because it violated the implicit primary key uniqueness constraint.
-     * Blob and blobref are indeed stored and storage is conserved - success!
+    if (sqlite3_bind_int64 (ctx->store_stmt,
+                            4,
+                            ctx->current_epoch) != SQLITE_OK) {
+        log_sqlite_error (ctx, "store: binding epoch");
+        set_errno_from_sqlite_error (ctx);
+        goto error;
+    }
+    /* N.B. ON CONFLICT clause updates epoch without rewriting object.
      */
-    if (sqlite3_step (ctx->store_stmt) != SQLITE_DONE
-                    && sqlite3_errcode (ctx->db) != SQLITE_CONSTRAINT) {
+    if (sqlite3_step (ctx->store_stmt) != SQLITE_DONE) {
         log_sqlite_error (ctx, "store: executing stmt");
         set_errno_from_sqlite_error (ctx);
         goto error;
@@ -548,6 +599,12 @@ void checkpoint_put_cb (flux_t *h,
         set_errno_from_sqlite_error (ctx);
         goto error;
     }
+    /* Update current_epoch to the id of the just-inserted checkpoint */
+    ctx->current_epoch = sqlite3_last_insert_rowid (ctx->db);
+    flux_log (ctx->h,
+              LOG_DEBUG,
+              "checkpoint-put: advanced epoch to %jd",
+              (intmax_t)ctx->current_epoch);
     if (sqlite3_bind_int (ctx->checkpt_prune_stmt,
                           1,
                           ctx->max_checkpoints) != SQLITE_OK) {
@@ -667,13 +724,13 @@ static void content_sqlite_closedb (struct content_sqlite *ctx)
  */
 static int set_count (void *arg, int ncols, char **cols, char **col_names)
 {
-    int *result = arg;
-    int count = 0;
+    int64_t *result = arg;
+    int64_t count = 0;
     int rc = -1;
 
     if (ncols == 1) {
         errno = 0;
-        count = strtoul (cols[0], NULL, 10);
+        count = strtoll (cols[0], NULL, 10);
         if (errno == 0) {
             *result = count;
             rc = 0;
@@ -721,7 +778,7 @@ void stats_get_cb (flux_t *h,
                    void *arg)
 {
     struct content_sqlite *ctx = arg;
-    int count;
+    int64_t count;
     const char *errmsg = NULL;
     json_t *load_time = NULL;
     json_t *store_time = NULL;
@@ -743,8 +800,9 @@ void stats_get_cb (flux_t *h,
         goto error;
     if (flux_respond_pack (h,
                            msg,
-                           "{s:i s:I s:I s:O s:O s:{s:s s:s} s:O}",
+                           "{s:I s:I s:I s:I s:O s:O s:{s:s s:s} s:O}",
                            "object_count", count,
+                           "current_epoch", ctx->current_epoch,
                            "dbfile_size", get_file_size (ctx->dbfile),
                            "dbfile_free", get_fs_free (ctx->dbfile),
                            "load_time", load_time,
@@ -766,13 +824,535 @@ error:
     json_decref (checkpoints);
 }
 
+/* content-backing.mark - mark a batch of blobs to target epoch
+ * Request: {"epoch":I, "hashes":[s,s,...]}  (hashes are blobref strings)
+ * Response: {"marked":i}
+ *
+ * Raise the epoch of each named blob to at least 'epoch' (the GC horizon H),
+ * protecting it from a later sweep.  This is the "mark" half of the online
+ * mark-and-sweep GC driven by flux-gc: the tool walks the reachable KVS tree
+ * and marks every reachable blob to H, then sweeps everything left below H.
+ *
+ * The update is UPDATE ... SET epoch = MAX(epoch, ?) so it is idempotent and
+ * monotonic: re-marking never lowers an epoch, and a blob absent from the
+ * store (already swept, or never stored) simply matches no row.  'marked' is
+ * the number of rows actually changed, for the caller's progress accounting.
+ *
+ * The batch is capped at MARK_HASHES_MAX because the whole loop runs
+ * synchronously on this module's reactor thread, blocking all other content
+ * requests until it completes; the cap bounds that stall (and rejects a
+ * malformed or hostile request that would otherwise pin the reactor).
+ */
+static void mark_cb (flux_t *h,
+                     flux_msg_handler_t *mh,
+                     const flux_msg_t *msg,
+                     void *arg)
+{
+    struct content_sqlite *ctx = arg;
+    int64_t target_epoch;
+    json_t *hashes;
+    size_t index;
+    json_t *hash_str;
+    sqlite3_stmt *stmt = NULL;
+    int marked_count = 0;
+    bool in_txn = false;
+    flux_error_t error;
+    const char *errstr = NULL;
+
+    if (flux_request_unpack (msg,
+                             NULL,
+                             "{s:I s:o}",
+                             "epoch", &target_epoch,
+                             "hashes", &hashes) < 0)
+        goto error;
+
+    if (!json_is_array (hashes)) {
+        errno = EPROTO;
+        goto error;
+    }
+    /* Bound the synchronous work per request (see function comment). */
+    if (json_array_size (hashes) > MARK_HASHES_MAX) {
+        errprintf (&error,
+                   "mark request of %zu hashes exceeds limit of %d",
+                   json_array_size (hashes),
+                   MARK_HASHES_MAX);
+        errstr = error.text;
+        errno = EINVAL;
+        goto error;
+    }
+
+    /* Wrap the batch in a single transaction.  In autocommit mode each
+     * sqlite3_step() below would be its own implicit transaction, so a mark of
+     * N hashes would incur N commits (N WAL-frame appends and fsync-class
+     * bookkeeping under synchronous=NORMAL) instead of one, roughly doubling
+     * the cost of the batch.
+     */
+    if (sqlite3_exec (ctx->db, "BEGIN", NULL, NULL, NULL) != SQLITE_OK) {
+        log_sqlite_error (ctx, "mark: BEGIN");
+        set_errno_from_sqlite_error (ctx);
+        goto error;
+    }
+    in_txn = true;
+
+    /* Prepare once and re-bind/re-step per hash (reset below after each). */
+    if (sqlite3_prepare_v2 (ctx->db,
+                            sql_mark_blob,
+                            -1,
+                            &stmt,
+                            NULL) != SQLITE_OK) {
+        log_sqlite_error (ctx, "mark: preparing statement");
+        set_errno_from_sqlite_error (ctx);
+        goto error;
+    }
+
+    json_array_foreach (hashes, index, hash_str) {
+        const char *blobref;
+        char hash[BLOBREF_MAX_DIGEST_SIZE];
+        ssize_t hash_len;
+
+        if (!json_is_string (hash_str)) {
+            errno = EPROTO;
+            goto error;
+        }
+
+        blobref = json_string_value (hash_str);
+
+        /* Convert blobref string to raw hash */
+        if ((hash_len = blobref_strtohash (blobref, hash, sizeof (hash))) < 0) {
+            errno = EPROTO;
+            goto error;
+        }
+
+        if (hash_len != ctx->hash_size) {
+            errno = EPROTO;
+            goto error;
+        }
+
+        if (sqlite3_bind_int64 (stmt, 1, target_epoch) != SQLITE_OK) {
+            log_sqlite_error (ctx, "mark: binding epoch");
+            set_errno_from_sqlite_error (ctx);
+            goto error;
+        }
+
+        if (sqlite3_bind_text (stmt, 2, hash, hash_len, SQLITE_TRANSIENT) != SQLITE_OK) {
+            log_sqlite_error (ctx, "mark: binding hash");
+            set_errno_from_sqlite_error (ctx);
+            goto error;
+        }
+
+        if (sqlite3_step (stmt) != SQLITE_DONE) {
+            log_sqlite_error (ctx, "mark: executing statement");
+            set_errno_from_sqlite_error (ctx);
+            goto error;
+        }
+
+        /* sqlite3_changes() is 0 when the hash matched no row or MAX() left
+         * the epoch unchanged, so 'marked' counts only real updates.  Reset
+         * the statement to reuse it for the next hash.
+         */
+        marked_count += sqlite3_changes (ctx->db);
+        sqlite3_reset (stmt);
+    }
+
+    sqlite3_finalize (stmt);
+    stmt = NULL;
+    if (sqlite3_exec (ctx->db, "COMMIT", NULL, NULL, NULL) != SQLITE_OK) {
+        log_sqlite_error (ctx, "mark: COMMIT");
+        set_errno_from_sqlite_error (ctx);
+        goto error;
+    }
+    in_txn = false;
+
+    if (flux_respond_pack (h, msg, "{s:i}", "marked", marked_count) < 0)
+        flux_log_error (h, "mark: flux_respond_pack");
+    return;
+
+error:
+    if (stmt)
+        sqlite3_finalize (stmt);
+    if (in_txn)
+        sqlite3_exec (ctx->db, "ROLLBACK", NULL, NULL, NULL);
+    if (flux_respond_error (h, msg, errno, errstr) < 0)
+        flux_log_error (h, "mark: flux_respond_error");
+}
+
+/* content-backing.sweep - delete a bounded batch of blobs with epoch < H
+ * Request:  {"epoch":I, "cursor":I, "high_water":I, "delete_cap":i, "window":i}
+ * Response: {"deleted":I, "cursor":I}
+ *
+ * Delete blobs with epoch < 'epoch' (the GC horizon H) whose rowid lies in
+ * (cursor, min(high_water, cursor+window)], ascending by rowid, stopping after
+ * 'delete_cap' deletions.  Returns the number deleted and a new cursor for the
+ * caller to pass to the next call.  The caller sweeps by looping until the
+ * cursor reaches the high-water rowid it froze at the start of the run (via
+ * gc-info); a call that deletes nothing still advances the cursor by the
+ * window, so the loop always makes progress and terminates deterministically.
+ *
+ * Two caps bound the synchronous per-call work independently: 'delete_cap'
+ * limits rows deleted (the dominant cost) and 'window' limits rows scanned (so
+ * a sparse span does not stall scanning for delete_cap matches).  Both are
+ * clamped to server ceilings rather than rejected -- since termination is by
+ * cursor, not batch size, a clamped call is harmless.
+ *
+ * The rowid cursor makes the whole sweep a single ascending pass: every row at
+ * or below the returned cursor is settled (deleted, or epoch >= H and staying
+ * so, since epochs only rise), so it is never rescanned.  Bounding at
+ * high_water keeps the sweep from chasing blobs stored after the run began.
+ */
+static void sweep_cb (flux_t *h,
+                      flux_msg_handler_t *mh,
+                      const flux_msg_t *msg,
+                      void *arg)
+{
+    struct content_sqlite *ctx = arg;
+    int64_t threshold_epoch;
+    int64_t cursor;
+    int64_t high_water;
+    int delete_cap;
+    int window;
+    sqlite3_stmt *select_stmt = NULL;
+    sqlite3_stmt *delete_stmt = NULL;
+    int64_t *rowids = NULL;
+    int64_t scan_limit;
+    int64_t deleted = 0;
+    bool in_txn = false;
+    int n = 0;
+    int i;
+    int rc;
+
+    if (flux_request_unpack (msg,
+                             NULL,
+                             "{s:I s:I s:I s:i s:i}",
+                             "epoch", &threshold_epoch,
+                             "cursor", &cursor,
+                             "high_water", &high_water,
+                             "delete_cap", &delete_cap,
+                             "window", &window) < 0)
+        goto error;
+
+    if (cursor < 0 || high_water < 0 || delete_cap <= 0 || window <= 0) {
+        errno = EINVAL;
+        goto error;
+    }
+    /* Clamp both caps to their ceilings (see SWEEP_DELETE_MAX / _WINDOW_MAX). */
+    if (delete_cap > SWEEP_DELETE_MAX)
+        delete_cap = SWEEP_DELETE_MAX;
+    if (window > SWEEP_WINDOW_MAX)
+        window = SWEEP_WINDOW_MAX;
+
+    /* Scan the window (cursor, scan_limit], capped at high_water. */
+    scan_limit = cursor + window;
+    if (scan_limit > high_water)
+        scan_limit = high_water;
+
+    if (!(rowids = malloc (delete_cap * sizeof (rowids[0])))) {
+        errno = ENOMEM;
+        goto error;
+    }
+
+    /* Collect the batch of garbage rowids first, then delete them.  Draining
+     * the SELECT fully before issuing any DELETE avoids modifying the table
+     * while a scan against it is open (undefined behavior in SQLite).
+     */
+    if (sqlite3_prepare_v2 (ctx->db, sql_sweep_select, -1, &select_stmt, NULL)
+            != SQLITE_OK) {
+        log_sqlite_error (ctx, "sweep: preparing select");
+        set_errno_from_sqlite_error (ctx);
+        goto error;
+    }
+    if (sqlite3_bind_int64 (select_stmt, 1, threshold_epoch) != SQLITE_OK
+        || sqlite3_bind_int64 (select_stmt, 2, cursor) != SQLITE_OK
+        || sqlite3_bind_int64 (select_stmt, 3, scan_limit) != SQLITE_OK
+        || sqlite3_bind_int (select_stmt, 4, delete_cap) != SQLITE_OK) {
+        log_sqlite_error (ctx, "sweep: binding select");
+        set_errno_from_sqlite_error (ctx);
+        goto error;
+    }
+    while ((rc = sqlite3_step (select_stmt)) == SQLITE_ROW)
+        rowids[n++] = sqlite3_column_int64 (select_stmt, 0);
+    if (rc != SQLITE_DONE) {
+        log_sqlite_error (ctx, "sweep: executing select");
+        set_errno_from_sqlite_error (ctx);
+        goto error;
+    }
+    sqlite3_finalize (select_stmt);
+    select_stmt = NULL;
+
+    /* Delete the collected rowids in one transaction (as in mark_cb). */
+    if (sqlite3_prepare_v2 (ctx->db, sql_sweep_delete, -1, &delete_stmt, NULL)
+            != SQLITE_OK) {
+        log_sqlite_error (ctx, "sweep: preparing delete");
+        set_errno_from_sqlite_error (ctx);
+        goto error;
+    }
+    if (sqlite3_exec (ctx->db, "BEGIN", NULL, NULL, NULL) != SQLITE_OK) {
+        log_sqlite_error (ctx, "sweep: BEGIN");
+        set_errno_from_sqlite_error (ctx);
+        goto error;
+    }
+    in_txn = true;
+    for (i = 0; i < n; i++) {
+        if (sqlite3_bind_int64 (delete_stmt, 1, rowids[i]) != SQLITE_OK
+            || sqlite3_step (delete_stmt) != SQLITE_DONE) {
+            log_sqlite_error (ctx, "sweep: executing delete");
+            set_errno_from_sqlite_error (ctx);
+            goto error;
+        }
+        deleted += sqlite3_changes (ctx->db);
+        sqlite3_reset (delete_stmt);
+    }
+    sqlite3_finalize (delete_stmt);
+    delete_stmt = NULL;
+    if (sqlite3_exec (ctx->db, "COMMIT", NULL, NULL, NULL) != SQLITE_OK) {
+        log_sqlite_error (ctx, "sweep: COMMIT");
+        set_errno_from_sqlite_error (ctx);
+        goto error;
+    }
+    in_txn = false;
+
+    /* Advance the cursor.  If delete_cap bounded the scan (the select returned
+     * a full batch), the window may still hold garbage past the last row, so
+     * resume just past it; otherwise the whole window is settled.  rowids are
+     * ascending, so the last one is the highest.
+     */
+    if (n == delete_cap)
+        cursor = rowids[n - 1];
+    else
+        cursor = scan_limit;
+
+    free (rowids);
+    if (flux_respond_pack (h,
+                           msg,
+                           "{s:I s:I}",
+                           "deleted", deleted,
+                           "cursor", cursor) < 0)
+        flux_log_error (h, "sweep: flux_respond_pack");
+    return;
+
+error:
+    if (select_stmt)
+        sqlite3_finalize (select_stmt);
+    if (delete_stmt)
+        sqlite3_finalize (delete_stmt);
+    if (in_txn)
+        sqlite3_exec (ctx->db, "ROLLBACK", NULL, NULL, NULL);
+    free (rowids);
+    if (flux_respond_error (h, msg, errno, NULL) < 0)
+        flux_log_error (h, "sweep: flux_respond_error");
+}
+
+/* content-backing.gc-info - get GC information
+ * Request: {"epoch":I get_count?b}
+ * Response: {"current_epoch":I "high_water":I candidates?I}
+ *
+ * 'high_water' is MAX(rowid) of the objects table -- the largest rowid present
+ * when the run begins.  flux-gc freezes it and bounds the sweep at it so the
+ * sweep terminates deterministically without chasing blobs stored after the
+ * run began (which get a higher rowid and epoch >= H).  It is cheap: MAX(rowid)
+ * on a rowid table reads the last btree entry, no scan.
+ *
+ * 'candidates' (the count of blobs with epoch < the requested threshold) is
+ * only computed and returned when 'get_count' is true.  It requires a COUNT(*)
+ * over the objects table -- an UNBOUNDED full-table scan that runs synchronously
+ * on this module's single reactor thread, blocking all other content traffic
+ * for its duration.  On a large production store that stall can be seconds or
+ * more, so 'get_count' must NOT be used on a hot path.  flux-gc never sets it
+ * (it reads only current_epoch and high_water, and the count is not even a
+ * meaningful "reclaimable" estimate before the mark phase runs, since it
+ * includes reachable data); the count exists solely for the test suite and
+ * deliberate, low-frequency ad-hoc inspection where the stall is acceptable.
+ */
+static void gc_info_cb (flux_t *h,
+                        flux_msg_handler_t *mh,
+                        const flux_msg_t *msg,
+                        void *arg)
+{
+    struct content_sqlite *ctx = arg;
+    int64_t threshold_epoch;
+    int get_count = 0;
+    sqlite3_stmt *stmt = NULL;
+    sqlite3_stmt *hw_stmt = NULL;
+    int64_t candidates = 0;
+    int64_t high_water = 0;
+
+    if (flux_request_unpack (msg,
+                             NULL,
+                             "{s:I s?b}",
+                             "epoch", &threshold_epoch,
+                             "get_count", &get_count) < 0)
+        goto error;
+
+    /* MAX(rowid); NULL (empty table) reads back as 0 via column_int64. */
+    if (sqlite3_prepare_v2 (ctx->db, sql_max_rowid, -1, &hw_stmt, NULL)
+            != SQLITE_OK
+        || sqlite3_step (hw_stmt) != SQLITE_ROW) {
+        log_sqlite_error (ctx, "gc-info: querying high_water");
+        set_errno_from_sqlite_error (ctx);
+        goto error;
+    }
+    high_water = sqlite3_column_int64 (hw_stmt, 0);
+
+    if (get_count) {
+        /* Unbounded full-table scan on the reactor thread -- test / ad-hoc
+         * inspection only, never a hot path (see function comment).
+         */
+        if (sqlite3_prepare_v2 (ctx->db,
+                                sql_count_sweep_candidates,
+                                -1,
+                                &stmt,
+                                NULL) != SQLITE_OK) {
+            log_sqlite_error (ctx, "gc-info: preparing statement");
+            set_errno_from_sqlite_error (ctx);
+            goto error;
+        }
+
+        if (sqlite3_bind_int64 (stmt, 1, threshold_epoch) != SQLITE_OK) {
+            log_sqlite_error (ctx, "gc-info: binding epoch");
+            set_errno_from_sqlite_error (ctx);
+            goto error;
+        }
+
+        if (sqlite3_step (stmt) != SQLITE_ROW) {
+            log_sqlite_error (ctx, "gc-info: executing statement");
+            set_errno_from_sqlite_error (ctx);
+            goto error;
+        }
+
+        candidates = sqlite3_column_int64 (stmt, 0);
+    }
+
+    if (flux_respond_pack (h,
+                           msg,
+                           get_count ? "{s:I s:I s:I}" : "{s:I s:I}",
+                           "current_epoch", ctx->current_epoch,
+                           "high_water", high_water,
+                           "candidates", candidates) < 0)
+        flux_log_error (h, "gc-info: flux_respond_pack");
+
+    sqlite3_finalize (hw_stmt);
+    sqlite3_finalize (stmt);
+    return;
+
+error:
+    if (flux_respond_error (h, msg, errno, NULL) < 0)
+        flux_log_error (h, "gc-info: flux_respond_error");
+    if (hw_stmt)
+        sqlite3_finalize (hw_stmt);
+    if (stmt)
+        sqlite3_finalize (stmt);
+}
+
+/* Check if epoch column exists in objects table.
+ * Returns 1 if exists, 0 if not, -1 on error.
+ */
+static int epoch_column_exists (struct content_sqlite *ctx)
+{
+    sqlite3_stmt *stmt = NULL;
+    int exists = 0;
+    int rc;
+
+    if (sqlite3_prepare_v2 (ctx->db,
+                            sql_table_info,
+                            -1,
+                            &stmt,
+                            NULL) != SQLITE_OK) {
+        log_sqlite_error (ctx, "preparing table_info query");
+        return -1;
+    }
+
+    while ((rc = sqlite3_step (stmt)) == SQLITE_ROW) {
+        const unsigned char *col_name = sqlite3_column_text (stmt, 1);
+        if (col_name && streq ((const char *)col_name, "epoch")) {
+            exists = 1;
+            break;
+        }
+    }
+
+    if (rc != SQLITE_DONE && rc != SQLITE_ROW) {
+        log_sqlite_error (ctx, "querying table_info");
+        sqlite3_finalize (stmt);
+        return -1;
+    }
+
+    sqlite3_finalize (stmt);
+    return exists;
+}
+
+/* Add epoch column to objects table if it doesn't exist.
+ */
+static int migrate_add_epoch_column (struct content_sqlite *ctx)
+{
+    int exists = epoch_column_exists (ctx);
+
+    if (exists < 0)
+        return -1;
+
+    if (exists) {
+        flux_log (ctx->h, LOG_DEBUG, "epoch column already exists");
+        return 0;
+    }
+
+    flux_log (ctx->h, LOG_INFO, "adding epoch column to objects table");
+    if (sqlite3_exec (ctx->db,
+                      sql_alter_objects_add_epoch,
+                      NULL,
+                      NULL,
+                      NULL) != SQLITE_OK) {
+        log_sqlite_error (ctx, "adding epoch column");
+        set_errno_from_sqlite_error (ctx);
+        return -1;
+    }
+
+    return 0;
+}
+
+/* Initialize current_epoch from MAX(checkpt_v2.id).
+ * Returns 0 on success, -1 on error.
+ */
+static int init_current_epoch (struct content_sqlite *ctx)
+{
+    sqlite3_stmt *stmt = NULL;
+    int rc;
+
+    if (sqlite3_prepare_v2 (ctx->db,
+                            sql_get_max_checkpt_id,
+                            -1,
+                            &stmt,
+                            NULL) != SQLITE_OK) {
+        log_sqlite_error (ctx, "preparing get_max_checkpt_id query");
+        return -1;
+    }
+
+    rc = sqlite3_step (stmt);
+    if (rc == SQLITE_ROW) {
+        if (sqlite3_column_type (stmt, 0) == SQLITE_NULL) {
+            ctx->current_epoch = 0;  // No checkpoints yet
+        }
+        else {
+            ctx->current_epoch = sqlite3_column_int64 (stmt, 0);
+        }
+    }
+    else {
+        log_sqlite_error (ctx, "querying max checkpoint id");
+        sqlite3_finalize (stmt);
+        return -1;
+    }
+
+    sqlite3_finalize (stmt);
+    flux_log (ctx->h,
+              LOG_DEBUG,
+              "initialized current_epoch=%jd",
+              (intmax_t)ctx->current_epoch);
+    return 0;
+}
+
 /* Open the database file ctx->dbfile and set up the database.
  */
 static int content_sqlite_opendb (struct content_sqlite *ctx, bool truncate)
 {
     int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
     char s[128];
-    int count;
+    int64_t count;
 
     if (truncate)
         (void)unlink (ctx->dbfile);
@@ -831,6 +1411,10 @@ static int content_sqlite_opendb (struct content_sqlite *ctx, bool truncate)
         log_sqlite_error (ctx, "creating checkpt table");
         goto error;
     }
+    if (migrate_add_epoch_column (ctx) < 0)
+        goto error;
+    if (init_current_epoch (ctx) < 0)
+        goto error;
     if (sqlite3_prepare_v2 (ctx->db,
                             sql_load,
                             -1,
@@ -897,9 +1481,9 @@ static int content_sqlite_opendb (struct content_sqlite *ctx, bool truncate)
     }
     flux_log (ctx->h,
               LOG_DEBUG,
-              "%s (%d objects) journal_mode=%s synchronous=%s",
+              "%s (%jd objects) journal_mode=%s synchronous=%s",
               ctx->dbfile,
-              count,
+              (intmax_t)count,
               ctx->journal_mode,
               ctx->synchronous);
     return 0;
@@ -1076,6 +1660,24 @@ static const struct flux_msg_handler_spec htab[] = {
         "content-sqlite.stats-get",
         stats_get_cb,
         FLUX_ROLE_USER
+    },
+    {
+        FLUX_MSGTYPE_REQUEST,
+        "content-backing.mark",
+        mark_cb,
+        0
+    },
+    {
+        FLUX_MSGTYPE_REQUEST,
+        "content-backing.sweep",
+        sweep_cb,
+        0
+    },
+    {
+        FLUX_MSGTYPE_REQUEST,
+        "content-backing.gc-info",
+        gc_info_cb,
+        0
     },
     FLUX_MSGHANDLER_TABLE_END,
 };
