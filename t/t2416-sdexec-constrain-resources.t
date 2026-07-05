@@ -308,6 +308,25 @@ test_expect_success 'AllowedCPUs check failure drains rank with useful message' 
 	flux resource drain -i $drained -no {reason} | grep AllowedCPUs
 '
 
+# A post-start check failure must still be reported as a job failure AND must
+# not leave the transient unit behind (sdexec should SIGKILL and reap it).
+# The unit name is shell-<rank>-<f58plain jobid>.service; match that specific
+# unit (the job may land on either broker) rather than a rank glob.  systemd
+# garbage collects the failed transient unit asynchronously, so wait for it.
+test_expect_success 'AllowedCPUs check failure reports failure and reaps unit' '
+	test_when_finished "flux resource drain -no {ranks} | xargs -r flux resource undrain" &&
+	id=$(flux submit -n1 -c1 \
+	    --setattr=exec.bulkexec.sdexec-test-expected-cpus=9998-9999 \
+	    hostname) &&
+	flux job wait-event -vt 60 $id exception &&
+	flux job wait-event -t 60 $id clean &&
+	rank=$(flux jobs -no {ranks} $id) &&
+	unit=shell-${rank}-$(flux job id --to=f58plain $id).service &&
+	test_debug "echo waiting for $unit to be reaped" &&
+	test_wait_until "test 0 -eq \$(systemctl --user list-units \
+	    --all --no-legend --type=service $unit | wc -l)"
+'
+
 #
 # Mapper error reporting: sdexec-mapper.lookup returns a useful error message
 # when resource IDs cannot be mapped to the local hwloc topology.
