@@ -47,36 +47,16 @@ struct output_client {
     flux_future_t *f_getcredit;
 };
 
-static void client_send_eof (struct output_client *client)
-{
-    /* Note: client should not be instantiated on rank 0, and may be NULL
-     * if already destroyed. Check both conditions before sending EOF.
-     */
-    if (client && client->shell_rank != 0) {
-        flux_future_t *f;
-        /* Nonzero shell rank: send EOF to leader shell to notify
-         *  that no more messages will be sent to shell.write
-         */
-        if (!(f = flux_shell_rpc_pack (client->shell,
-                                       "write",
-                                        0,
-                                        FLUX_RPC_NORESPONSE,
-                                        "{s:s s:i s:{}}",
-                                        "name", "eof",
-                                        "shell_rank", client->shell_rank,
-                                        "context")))
-            shell_log_errno ("shell.write: eof");
-        flux_future_destroy (f);
-    }
-}
-
 void output_client_destroy (struct output_client *client)
 {
     if (client) {
         int saved_errno = errno;
 
-        client_send_eof (client);
-
+        /* Note: no explicit EOF is sent to the leader here. The leader
+         * learns that no more output is forthcoming from any shell via
+         * the shell.tasks-complete callback (see the tasks-complete
+         * builtin and output/service.c).
+         */
         flux_future_destroy (client->f_getcredit);
         free (client);
         errno = saved_errno;
