@@ -49,6 +49,7 @@ extern struct shell_builtin builtin_pty;
 extern struct shell_builtin builtin_batch;
 extern struct shell_builtin builtin_doom;
 extern struct shell_builtin builtin_exception;
+extern struct shell_builtin builtin_tasks_complete;
 extern struct shell_builtin builtin_rlimit;
 extern struct shell_builtin builtin_cyclic;
 extern struct shell_builtin builtin_hostfile;
@@ -79,6 +80,7 @@ static struct shell_builtin * builtins [] = {
     &builtin_batch,
     &builtin_doom,
     &builtin_exception,
+    &builtin_tasks_complete,
     &builtin_rlimit,
     &builtin_cyclic,
     &builtin_hostfile,
