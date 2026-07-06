@@ -399,6 +399,21 @@ Shell Lifecycle Callbacks
    cleanup and time-sensitive operations), while ``shell.exit`` runs after
    the reactor stops (suitable only for final synchronous cleanup).
 
+**shell.tasks-complete**
+  Called on the leader shell (rank 0) once all tasks across all shells in
+  the job have completed. Unlike ``shell.finish``, which is called on each
+  shell when its own local tasks complete, this callback is invoked a single
+  time and only after every shell has reported completion of its local tasks.
+  A lost shell is accounted for, so the callback fires even if a shell is
+  lost.
+
+  **Use cases**: Taking action that must wait for all job tasks to complete,
+  independent of non-task processes (such as MPIR tool daemons) that may still
+  be running.
+
+  **Context**: Leader shell only. Reactor is still running. The shell may
+  remain active after this callback if other completion references are held.
+
 Special Purpose Callbacks
 --------------------------
 
