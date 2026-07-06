@@ -77,6 +77,22 @@ test_expect_success 'flux-shell: exit-timeout preserves failing task signal in f
 	flux job wait-event -t 30 $jobid finish | grep "status=35584" &&
 	flux job eventlog $jobid | grep exception | grep "Segmentation fault"
 '
+test_expect_success 'flux-shell: create linger userrc' '
+	cat >linger.lua <<-EOF
+	plugin.searchpath = "${SHARNESS_TEST_DIRECTORY}/shell/plugins/.libs"
+	plugin.load { file = "linger.so", conf = { linger = 3.0 } }
+	EOF
+'
+test_expect_success 'flux-shell: exit-timeout ignores lingering non-task process' '
+	run_timeout 30 flux run -n2 -N2 \
+		-o exit-timeout=1s -o userrc=linger.lua true 2>linger.err &&
+	test_must_fail grep exit-timeout linger.err
+'
+test_expect_success 'flux-shell: exit-timeout ignores lingering process (single shell)' '
+	run_timeout 30 flux run -n1 \
+		-o exit-timeout=1s -o userrc=linger.lua true 2>linger1.err &&
+	test_must_fail grep exit-timeout linger1.err
+'
 test_expect_success 'flux-shell: exit-timeout=aaa is rejected' '
 	test_must_fail flux run -o exit-timeout=aaa true
 '
