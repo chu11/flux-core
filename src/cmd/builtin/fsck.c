@@ -395,34 +395,25 @@ static void fsck_error (void *arg,
 {
     struct fsck_ctx *ctx = arg;
 
-    switch (error) {
-        case KVS_TREEWALK_ERROR_INVALID:
-            errmsg (ctx, "%s: invalid tree object", path);
-            break;
-        case KVS_TREEWALK_ERROR_BADCOUNT:
-            errmsg (ctx, "%s: invalid dirref treeobj count", path);
-            break;
-        case KVS_TREEWALK_ERROR_LOAD:
-            if (errnum == ENOENT)
-                errmsg (ctx, "%s: missing dirref blobref", path);
-            else
-                errmsg (ctx,
-                        "%s: error retrieving dirref blobref: %s",
-                        path,
-                        strerror (errnum));
-            if (ctx->repair && errnum == ENOENT) {
-                record_repair (ctx, path, NULL); // unlink only
-                warn (ctx, "%s unlinked due to missing blobref", path);
-                ctx->unlink_dir_count++;
-            }
-            break;
-        case KVS_TREEWALK_ERROR_DECODE:
-            errmsg (ctx, "%s: could not decode directory", path);
-            break;
-        case KVS_TREEWALK_ERROR_NOTDIR:
-            errmsg (ctx, "%s: dirref references non-directory", path);
-            break;
+    /* A load failure gets errnum-specific wording plus repair handling for a
+     * missing (ENOENT) blobref; the other categories share the common string.
+     */
+    if (error == KVS_TREEWALK_ERROR_LOAD) {
+        if (errnum == ENOENT)
+            errmsg (ctx, "%s: missing dirref blobref", path);
+        else
+            errmsg (ctx,
+                    "%s: error retrieving dirref blobref: %s",
+                    path,
+                    strerror (errnum));
+        if (ctx->repair && errnum == ENOENT) {
+            record_repair (ctx, path, NULL); // unlink only
+            warn (ctx, "%s unlinked due to missing blobref", path);
+            ctx->unlink_dir_count++;
+        }
     }
+    else
+        errmsg (ctx, "%s: %s", path, kvs_treewalk_strerror (error));
     ctx->errorcount++;
 }
 

@@ -268,18 +268,9 @@ static void mark_error (void *arg,
                         enum kvs_treewalk_error error,
                         int errnum)
 {
-    switch (error) {
-        case KVS_TREEWALK_ERROR_INVALID:
-            log_msg_exit ("%s: invalid tree object", path);
-        case KVS_TREEWALK_ERROR_BADCOUNT:
-            log_msg_exit ("%s: dirref blobref count is not 1", path);
-        case KVS_TREEWALK_ERROR_LOAD:
-            log_errn_exit (errnum, "%s: cannot load dirref", path);
-        case KVS_TREEWALK_ERROR_DECODE:
-            log_msg_exit ("%s: cannot decode dirref treeobj", path);
-        case KVS_TREEWALK_ERROR_NOTDIR:
-            log_msg_exit ("%s: dirref references non-directory", path);
-    }
+    if (error == KVS_TREEWALK_ERROR_LOAD)
+        log_errn_exit (errnum, "%s: %s", path, kvs_treewalk_strerror (error));
+    log_msg_exit ("%s: %s", path, kvs_treewalk_strerror (error));
 }
 
 static const struct kvs_treewalk_ops mark_ops = {

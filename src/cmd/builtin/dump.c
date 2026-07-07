@@ -285,23 +285,16 @@ static void dump_error (void *arg,
                         enum kvs_treewalk_error error,
                         int errnum)
 {
-    switch (error) {
-        case KVS_TREEWALK_ERROR_LOAD:
-            read_error ("%s: missing blobref: %s", path, strerror (errnum));
-            break;
-        case KVS_TREEWALK_ERROR_BADCOUNT:
-            log_msg_exit ("%s: blobref count is not 1", path);
-            break;
-        case KVS_TREEWALK_ERROR_DECODE:
-            log_err_exit ("%s: could not decode directory", path);
-            break;
-        case KVS_TREEWALK_ERROR_NOTDIR:
-            log_msg_exit ("%s: dirref references non-directory", path);
-            break;
-        case KVS_TREEWALK_ERROR_INVALID:
-            log_msg_exit ("%s: invalid tree object", path);
-            break;
-    }
+    /* A missing blob is non-fatal under --ignore-failed-read (read_error
+     * returns), so it is handled separately from the fatal categories.
+     */
+    if (error == KVS_TREEWALK_ERROR_LOAD)
+        read_error ("%s: %s: %s",
+                    path,
+                    kvs_treewalk_strerror (error),
+                    strerror (errnum));
+    else
+        log_msg_exit ("%s: %s", path, kvs_treewalk_strerror (error));
 }
 
 static const struct kvs_treewalk_ops dump_ops = {
