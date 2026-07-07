@@ -558,7 +558,13 @@ _flux_resource()
         --no-skip-empty \
     "
     local status_OPTS="\
-        ${list_OPTS} \
+        -h --help \
+        -o --format= \
+        -s --states= \
+        -n --no-header \
+        -q --queue= \
+        -i --include= \
+        --skip-empty \
     "
     local R_OPTS="\
         -h --help \
@@ -582,10 +588,10 @@ _flux_resource()
     local eventlog_OPTS="\
         -h --help \
         -f --format= \
-        -T --time-format=
+        -T --time-format= \
         -L --color= \
-        -F --follor \
-        -w --wait-event= \
+        -F --follow \
+        -w --wait= \
     "
 
     _flux_split_longopt && split=true
@@ -1289,6 +1295,7 @@ _flux_config()
         esac
         $split && return
 
+        var="${cmd//-/_}_OPTS"
         COMPREPLY=( $(compgen -W "${!var} -h --help" -- "$cur") )
         if [[ "${COMPREPLY[@]}" == *= ]]; then
             # Add space if there is not a '=' in suggestions
@@ -2133,7 +2140,7 @@ _flux_start()
         -o --broker-opts= \
         --wrap= \
         -s --test-size= \
-        -c --config-path = \
+        -c --config-path= \
         --conf= \
         -S --setattr= \
     "
@@ -2284,29 +2291,25 @@ _flux_modprobe()
         -v --verbose \
         --show-deps \
         --dry-run \
-        --confdir= \
     "
     rc1_OPTS="\
         -v --verbose \
         --show-deps \
         --dry-run \
-        --confdir= \
         --timing \
     "
     rc3_OPTS="\
         -v --verbose \
-        --show-deps \
         --dry-run \
-        --confdir= \
     "
     list_dependencies_OPTS="\
-        -S, --set-alternative= \
-        -D, --disable= \
-        -f, --full \
+        -S --set-alternative= \
+        -D --disable= \
+        -f --full \
     "
     show_OPTS="\
-        -S, --set-alternative= \
-        -D, --disable= \
+        -S --set-alternative= \
+        -D --disable= \
     "
 
     _flux_split_longopt && split=true
