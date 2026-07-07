@@ -237,11 +237,13 @@ _flux_hostlist()
         -m --minus \
         -X --xor \
         -f --fallback \
+        -F --find= \
+        -l --local \
         -q --quiet \
     "
     _flux_split_longopt && split=true
     case $prev in
-        --limit | --exclude | --nth | --delimiter | -!(-*)[lmxn])
+        --limit | --exclude | --nth | --delimiter | --find | -!(-*)[mxnF])
             return
             ;;
     esac
@@ -407,6 +409,7 @@ _flux_submit_commands()
         --cwd= \
         --signal= \
         --add-file= \
+        --list-plugins \
     "
     local SUBMIT_OPTIONS="\
         -N --nodes= \
@@ -420,6 +423,8 @@ _flux_submit_commands()
         --gpus-per-node= \
         -v --verbose \
         --taskmap= \
+        --resources-shape= \
+        --resources-json= \
     "
     local BATCH_ALLOC_OPTIONS="\
         -n --nslots= \
@@ -496,7 +501,7 @@ _flux_submit_commands()
             return
             ;;
         --add-file | --env-file | --input | --output | --error | \
-            --log | --log-stderr)
+            --log | --log-stderr | --resources-json)
             compopt -o filenames
             COMPREPLY=( $(compgen -f -- "$cur") $(compgen -d -- "$cur") )
             return
@@ -546,6 +551,7 @@ _flux_resource()
         -h --help \
         -s --states= \
         -i --include= \
+        -q --queue= \
     "
     local list_OPTS="\
         -h --help \
@@ -558,7 +564,14 @@ _flux_resource()
         --no-skip-empty \
     "
     local status_OPTS="\
-        ${list_OPTS} \
+        -h --help \
+        -o --format= \
+        -s --states= \
+        -n --no-header \
+        -q --queue= \
+        -i --include= \
+        -L --color= \
+        --skip-empty \
     "
     local R_OPTS="\
         -h --help \
@@ -578,14 +591,19 @@ _flux_resource()
         -n --no-header \
         -q --queue= \
         -i --include= \
+        -L --color= \
     "
     local eventlog_OPTS="\
         -h --help \
         -f --format= \
-        -T --time-format=
+        -T --time-format= \
         -L --color= \
-        -F --follor \
-        -w --wait-event= \
+        -F --follow \
+        -w --wait= \
+        -H --human \
+        -t --timeout= \
+        -m --match-context= \
+        -i --include= \
     "
 
     _flux_split_longopt && split=true
@@ -717,6 +735,7 @@ _flux_job()
     local attach_OPTS="\
         -E --show-events \
         -X --show-exec \
+        --show-status \
         -w --wait-event= \
         -l --label-io \
         -v --verbose \
@@ -745,6 +764,7 @@ _flux_job()
         -p --path= \
         -H --human \
         -L --color= \
+        -F --follow \
     "
     local wait_event_OPTS="\
         -f --format= \
@@ -910,6 +930,7 @@ _flux_queue()
         -a --all \
         -v --verbose \
         --quiet \
+        --nocheckpoint \
         -m --message= \
     "
     local status_OPTS="\
@@ -1106,6 +1127,7 @@ _flux_kvs()
     "
     link_OPTS="\
         -N --namespace= \
+        -T --target-namespace= \
         -O --treeobj-root \
         -b --blobref \
         -s --sequence \
@@ -1151,7 +1173,8 @@ _flux_kvs()
 
         _flux_split_longopt && split=true
         case $prev in
-            --src-namespace | --dst-namespace | --namespace | -!(-*)[SDN])
+            --src-namespace | --dst-namespace | --namespace | \
+                --target-namespace | -!(-*)[SDNT])
                 _flux_complete_namespace
                 return
                 ;;
@@ -1254,7 +1277,7 @@ _flux_overlay()
 _flux_config()
 {
     local cmd=$1
-    local subcmds="reload get builtin load"
+    local subcmds="reload get builtin load set unset"
     local split=false
 
     local get_OPTS="\
@@ -1262,6 +1285,9 @@ _flux_config()
         -q --quiet \
         -d --default= \
         -c --config-path \
+    "
+    local reload_OPTS="\
+        --follower-noop \
     "
 
     if [[ $cmd != "config" ]]; then
@@ -1289,6 +1315,7 @@ _flux_config()
         esac
         $split && return
 
+        var="${cmd//-/_}_OPTS"
         COMPREPLY=( $(compgen -W "${!var} -h --help" -- "$cur") )
         if [[ "${COMPREPLY[@]}" == *= ]]; then
             # Add space if there is not a '=' in suggestions
@@ -1336,9 +1363,11 @@ _flux_module()
     local load_OPTS="\
         --name= \
         --exec \
+        --loader= \
     "
     local remove_OPTS="\
         -f --force \
+        --cancel \
     "
     local reload_OPTS="\
         ${remove_OPTS} \
@@ -1468,6 +1497,7 @@ _flux_jobs()
         --name= \
         -q --queue= \
         -o --format= \
+        --json \
         --color= \
         -R --recursive \
         -L --level= \
@@ -1696,6 +1726,8 @@ _flux_dump()
         --checkpoint \
         --no-cache \
         --ignore-failed-read \
+        --sd-notify \
+        --maxreqs= \
     "
     compopt -o default -o bashdefault
 
@@ -1717,6 +1749,9 @@ _flux_restore()
         --checkpoint \
         --key= \
         --no-cache \
+        --size-limit= \
+        --maxreqs= \
+        --sd-notify \
     "
     compopt -o default -o bashdefault
     COMPREPLY=( $(compgen -W "${OPTS} -h --help" -- "$cur") )
@@ -2088,6 +2123,9 @@ _flux_attr()
     local lsattr_OPTS="\
         -v --values \
     "
+    local setattr_OPTS="\
+        -f --force \
+    "
     if [[ $cmd != "flux" ]]; then
         if [[ $cur != -* && ( $cmd == "getattr" || $cmd == "setattr" ) ]]; then
             COMPREPLY=( $(compgen -W "$(flux lsattr)" -- "$cur") )
@@ -2104,7 +2142,8 @@ _flux_attr()
 _flux_content()
 {
     local cmd=$1
-    local subcmds="load store flush dropcache"
+    local subcmds="load store flush dropcache checkpoint"
+    local checkpoint_subcmds="list update"
     load_OPTS="\
         -b --bypass-cache \
     "
@@ -2112,7 +2151,19 @@ _flux_content()
         -b --bypass-cache \
         --chunksize=
     "
-    if [[ $cmd != "content" ]]; then
+    checkpoint_list_OPTS="\
+        -n --no-header \
+        -j --json \
+    "
+    if _flux_contains_word "checkpoint" ${COMP_WORDS[*]}; then
+        local checkpoint_subcmd=$(_flux_get_subcmd checkpoint)
+        if [[ $checkpoint_subcmd == "checkpoint" ]]; then
+            COMPREPLY=( $(compgen -W "${checkpoint_subcmds}" -- "$cur") )
+        else
+            var="checkpoint_${checkpoint_subcmd}_OPTS"
+            COMPREPLY=( $(compgen -W "${!var} -h --help" -- "$cur") )
+        fi
+    elif [[ $cmd != "content" ]]; then
         var="${cmd//-/_}_OPTS"
         COMPREPLY=( $(compgen -W "${!var} -h --help" -- "$cur") )
     else
@@ -2133,9 +2184,11 @@ _flux_start()
         -o --broker-opts= \
         --wrap= \
         -s --test-size= \
-        -c --config-path = \
+        -c --config-path= \
         --conf= \
         -S --setattr= \
+        -r --recovery \
+        --sysconfig \
     "
     _flux_split_longopt && split=true
     case $prev in
@@ -2216,6 +2269,8 @@ _flux_housekeeping()
     kill_OPTS="\
         -s --signal= \
         -t --targets= \
+        -j --jobid= \
+        --all \
     "
     _flux_split_longopt && split=true
     case $prev in
@@ -2284,29 +2339,25 @@ _flux_modprobe()
         -v --verbose \
         --show-deps \
         --dry-run \
-        --confdir= \
     "
     rc1_OPTS="\
         -v --verbose \
         --show-deps \
         --dry-run \
-        --confdir= \
         --timing \
     "
     rc3_OPTS="\
         -v --verbose \
-        --show-deps \
         --dry-run \
-        --confdir= \
     "
     list_dependencies_OPTS="\
-        -S, --set-alternative= \
-        -D, --disable= \
-        -f, --full \
+        -S --set-alternative= \
+        -D --disable= \
+        -f --full \
     "
     show_OPTS="\
-        -S, --set-alternative= \
-        -D, --disable= \
+        -S --set-alternative= \
+        -D --disable= \
     "
 
     _flux_split_longopt && split=true
@@ -2406,9 +2457,20 @@ _flux_gc()
     local OPTS="\
         -v --verbose \
         --no-cache \
-        --maxreqs \
+        --maxreqs= \
     "
+    _flux_split_longopt && split=true
+    case $prev in
+        --maxreqs)
+            return
+            ;;
+    esac
+    $split && return
+
     COMPREPLY=( $(compgen -W "${OPTS} -h --help" -- "$cur") )
+    if [[ "${COMPREPLY[@]}" == *= ]]; then
+        compopt -o nospace
+    fi
     return 0
 }
 
@@ -2490,7 +2552,7 @@ _flux_python3()
         compopt -o default -o bashdefault
         return 0
     fi
-    COMPREPLY=( $(compgen -W "--get-path -h --help" -- "$cur") )
+    COMPREPLY=( $(compgen -W "--get-path --list-versions -h --help" -- "$cur") )
     return 0
 }
 
