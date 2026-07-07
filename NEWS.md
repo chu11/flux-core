@@ -1,3 +1,54 @@
+flux-core version 0.87.0 - 2026-07-07
+-------------------------------------
+
+## New Features
+ * content: add online garbage collection (#7681)
+ * shell: add new `shell.tasks-complete` callback and use it to disable
+   exit-timeout (#7709)
+ * flux-restore: pipeline content store requests (#7701)
+ * job-manager: pipeline KVS lookups when reloading jobs on restart (#7694)
+ * speed up KVS traversal in `flux dump` and `flux fsck` by pipelining
+   content loads (#7697)
+ * job-list: add `t_priority` and `t_sched` attributes (#7684)
+ * add `access.private-mode` config key which restricts guest users to their
+   own jobs (#7685)
+ * flux-fsck: allow online check if --repair is not specified (#7688)
+ * add node topology aware scheduling (#7621)
+ * python: improve CLI option parsing with `FluxArgumentParser` (#7675)
+ * broker: add timeout on built-in module unload (#7659)
+
+## Fixes
+ * etc: update bash completions (#7710)
+ * sdexec: reap orphan sdproc transient unit on post-start check failure
+   (#7706)
+ * rc3: dump with --no-cache during offline garbage collection (#7698)
+ * fix `zlistx_sort()` sorting bug (#7693)
+ * scheduler: limit jobspec recursion depth (#7691)
+ * job-list: speed up initialization after restart (#7692)
+ * job-manager: remove bottleneck in history plugin to speed up restart
+   with many jobs (#7689)
+ * job-manager: drop redundant inactive-add loop on restart (#7690)
+ * resource: fix monitor initialization race on reload (#7683)
+ * job-exec: post `shell-exit` event and terminate jobs stuck after leader
+   shell exit (#7674)
+ * improve handling of job standard input (#7670)
+ * resource: change default history from 0 to 90d (#7671)
+ * job-exec: improve determination of ranks to drain due to timeout or exit
+   before first barrier (#7666)
+ * overlay: apply `tbon.tcp_user_timeout` to parent socket too (#7664)
+ * config: don't exit reactor on parent disconnect (#7665)
+ * flux-admin: fix system-scripts confdir path (#7661)
+
+## Cleanup
+ * refactor overlay module (#7672)
+
+## Build/CI/Testsuite/Documentation
+ * github: bump the github-actions group with 6 updates (#7700)
+ * doc: describe flux-pam session management in admin guide (#7657)
+ * doc: update and improve `flux-jobtap-plugins(7)` (#7658)
+ * doc: document jobtap event processing model (#7655)
+
+
 flux-core version 0.86.0 - 2026-06-03
 -------------------------------------
 
