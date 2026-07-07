@@ -305,6 +305,23 @@ static int doom_shell_lost (flux_plugin_t *p,
     return 0;
 }
 
+/* All tasks across all shells have completed, so the exit-timeout watchdog
+ * has nothing left to guard: stop the timer. The watchdog exists to catch
+ * tasks that fail to exit, so once every task has completed it must not fire
+ * on non-task processes (e.g. MPIR tool daemons) that legitimately outlive
+ * the tasks. A genuinely hung task prevents its shell from reporting
+ * completion, so the timer is not stopped and still expires in that case.
+ */
+static int doom_tasks_complete (flux_plugin_t *p,
+                                const char *topic,
+                                flux_plugin_arg_t *args,
+                                void *arg)
+{
+    struct shell_doom *doom = arg;
+    flux_watcher_stop (doom->timer);
+    return 0;
+}
+
 static void doom_destroy (struct shell_doom *doom)
 {
     if (doom) {
@@ -399,6 +416,11 @@ static int doom_init (flux_plugin_t *p,
     }
     if (flux_plugin_add_handler (p, "shell.lost", doom_shell_lost, doom) < 0)
         return shell_log_errno ("failed to add shell.lost handler");
+    if (flux_plugin_add_handler (p,
+                                 "shell.tasks-complete",
+                                 doom_tasks_complete,
+                                 doom) < 0)
+        return shell_log_errno ("failed to add shell.tasks-complete handler");
     return 0;
 }
 

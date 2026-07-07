@@ -109,6 +109,7 @@ flux_shell_SOURCES = \
 	doom.c \
 	sysmon.c \
 	exception.c \
+	tasks-complete.c \
 	rlimit.c \
 	taskmap/cyclic.c \
 	taskmap/hostfile.c \

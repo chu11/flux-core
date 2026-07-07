@@ -14,19 +14,18 @@
  * leader shell implements this "shell-<id>.write" service to which
  * client shell ranks send output (see output/client.c).
  *
- * Clients may send an RFC 24 encoded data event, and "eof" event
- * to indicate no more output is forthcoming, or a "log" event for
+ * Clients may send an RFC 24 encoded data event, or a "log" event for
  * propagation of log messages from other job shells.
  *
  * Local task and logging output is not routed through this service
  * code.
  *
- * The output service includes a reference for each remote shell. If
- * there are no remote shells then the service is not started. When
- * the service is in use, an 'output.write' completion reference is
- * taken on the job shell to ensure the shell and this service remain
- * active. Once all remote shells have sent "eof", then the reference
- * is dropped.
+ * If there are no remote shells the service is not started. When the
+ * service is in use, an 'output.service' completion reference is taken
+ * on the job shell to ensure the shell and this service remain active.
+ * The reference is dropped once all tasks across all shells have
+ * completed, signaled by the shell.tasks-complete callback (see the
+ * tasks-complete builtin), which also accounts for any lost shells.
  *
  */
 #if HAVE_CONFIG_H
@@ -39,59 +38,39 @@
 
 #include <flux/core.h>
 #include <flux/shell.h>
-#include <flux/idset.h>
-
-#include "ccan/str/str.h"
 
 #include "output/output.h"
 
 struct output_service {
     struct shell_output *out;
-    int refcount;
-    struct idset *active_shells;
 };
 
 void output_service_destroy (struct output_service *service)
 {
     if (service) {
         int saved_errno = errno;
-        idset_destroy (service->active_shells);
         free (service);
         errno = saved_errno;
     }
 }
 
-static void output_service_decref (struct output_service *service)
+/* All tasks across all shells have completed (see the tasks-complete
+ * builtin), so no more output will be sent from any remote shell. Drop
+ * the completion reference that keeps this service and the shell active.
+ * This callback is invoked at most once so no re-entry guard is needed.
+ */
+static int output_service_tasks_complete (flux_plugin_t *p,
+                                          const char *topic,
+                                          flux_plugin_arg_t *args,
+                                          void *arg)
 {
-    if (--service->refcount == 0) {
-        if (flux_shell_remove_completion_ref (service->out->shell,
-                                              "output.service") < 0)
-            shell_log_errno ("flux_shell_remove_completion_ref");
+    struct output_service *service = arg;
 
-        /* Remove output service reference from shell output
-         */
-        shell_output_decref (service->out);
-    }
-}
-
-static void output_service_decref_shell_rank (struct output_service *service,
-                                              int shell_rank)
-{
-    if (idset_test (service->active_shells, shell_rank)
-        && idset_clear (service->active_shells, shell_rank) == 0)
-        output_service_decref (service);
-}
-
-static int output_service_write (struct output_service *service,
-                                 const char *type,
-                                 int shell_rank,
-                                 json_t *o)
-{
-    if (streq (type, "eof")) {
-        output_service_decref_shell_rank (service, shell_rank);
-        return 0;
-    }
-    return shell_output_write_entry (service->out, type, o);
+    if (flux_shell_remove_completion_ref (service->out->shell,
+                                          "output.service") < 0)
+        shell_log_errno ("flux_shell_remove_completion_ref");
+    shell_output_decref (service->out);
+    return 0;
 }
 
 static void output_service_write_cb (flux_t *h,
@@ -110,7 +89,7 @@ static void output_service_write_cb (flux_t *h,
                              "name", &type,
                              "shell_rank", &shell_rank,
                              "context", &o) < 0
-        || output_service_write (service, type, shell_rank, o) < 0)
+        || shell_output_write_entry (service->out, type, o) < 0)
         shell_log_errno ("error recording write data for rank %d", shell_rank);
 }
 
@@ -131,28 +110,6 @@ error:
         shell_log_errno ("error responding to write-getcredit");
 }
 
-static int shell_lost (flux_plugin_t *p,
-                       const char *topic,
-                       flux_plugin_arg_t *args,
-                       void *data)
-{
-    struct output_service *service = data;
-    int shell_rank;
-
-    /*  A shell has been lost. We need to decref the output refcount by 1
-     *  since we'll never hear from that shell to avoid rank 0 shell from
-     *  hanging.
-     */
-    if (flux_plugin_arg_unpack (args,
-                                FLUX_PLUGIN_ARG_IN,
-                                "{s:i}",
-                                "shell_rank", &shell_rank) < 0)
-        return shell_log_errno ("shell.lost: unpack of shell_rank failed");
-    output_service_decref_shell_rank (service, shell_rank);
-    shell_debug ("lost shell rank %d", shell_rank);
-    return 0;
-}
-
 struct output_service *output_service_create (struct shell_output *out,
                                               flux_plugin_t *p,
                                               int size)
@@ -162,19 +119,23 @@ struct output_service *output_service_create (struct shell_output *out,
     if (!(service = calloc (1, sizeof (*service))))
         return NULL;
 
-    /* Add a reference for each remote shell */
-    service->refcount = size - 1;
-
-    /* Nothing to do if refcount is zero. Just return empty service object
+    /* Nothing to do if there are no remote shells. Return an empty
+     * service object.
      */
-    if (service->refcount == 0)
+    if (size == 1)
         return service;
 
     service->out = out;
 
-    if (!(service->active_shells = idset_create (0, IDSET_FLAG_AUTOGROW))
-        || idset_range_set (service->active_shells, 0, size - 1) < 0
-        || flux_plugin_add_handler (p, "shell.lost", shell_lost, service) < 0
+    /* Keep the service and shell active until all tasks across all shells
+     * have completed, signaled by the shell.tasks-complete callback. The
+     * tasks-complete builtin accounts for lost shells, so no shell.lost
+     * handler is needed here.
+     */
+    if (flux_plugin_add_handler (p,
+                                 "shell.tasks-complete",
+                                 output_service_tasks_complete,
+                                 service) < 0
         || flux_shell_add_completion_ref (out->shell, "output.service") < 0
         || flux_shell_service_register (out->shell,
                                         "write",
