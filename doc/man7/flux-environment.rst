@@ -204,7 +204,7 @@ resource manager: :envvar:`FLUX_JOB_ID`, :envvar:`FLUX_JOB_SIZE`,
 :envvar:`FLUX_TASK_RANK`, :envvar:`FLUX_TASK_LOCAL_ID`,
 :envvar:`FLUX_KVS_NAMESPACE`, :envvar:`FLUX_PROXY_REMOTE`,
 :envvar:`FLUX_PMI_LIBRARY_PATH`, :envvar:`I_MPI_PMI_LIBRARY`,
-:envvar:`PMI_*`, :envvar:`SLURM_*`
+:envvar:`PMI_*`, :envvar:`SLURM_*`, :envvar:`PMIX_*`, :envvar:`PALS_*`.
 
 PMI CLIENT
 ==========

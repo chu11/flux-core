@@ -93,6 +93,7 @@ static const char *env_blocklist[] = {
     "I_MPI_PMI_LIBRARY",
     "SLURM_*",  // flux-framework/flux-core#5206
     "NOTIFY_SOCKET", // see systemd sd_notify(3)
+    "PALS_*", // flux-framework/flux-coral2#493
     NULL,
 };
 
