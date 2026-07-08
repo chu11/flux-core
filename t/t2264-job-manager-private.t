@@ -24,6 +24,12 @@ set_userid() {
 	export FLUX_HANDLE_ROLEMASK=0x2
 }
 
+# Simulate a guest that has been assigned the admin role (USER|ADMIN).
+set_admin() {
+	export FLUX_HANDLE_USERID=$1
+	export FLUX_HANDLE_ROLEMASK=0xa
+}
+
 unset_userid() {
 	unset FLUX_HANDLE_USERID
 	unset FLUX_HANDLE_ROLEMASK
@@ -131,6 +137,59 @@ test_expect_success FLUX_SECURITY 'private mode on: guest getattr on own job' '
 '
 test_expect_success 'private mode on: owner getattr succeeds' '
 	job_manager_getattr $(cat jobid_int.out) jobspec
+'
+test_expect_success 'private mode on: admin stats-get succeeds' '
+	set_admin $other_uid &&
+	test_when_finished unset_userid &&
+	flux module stats job-manager >/dev/null
+'
+test_expect_success 'private mode on: admin getinfo succeeds' '
+	set_admin $other_uid &&
+	test_when_finished unset_userid &&
+	job_manager_getinfo
+'
+test_expect_success 'private mode on: admin gets EINVAL for unknown job (not EPERM)' '
+	set_admin $other_uid &&
+	test_when_finished unset_userid &&
+	test_must_fail job_manager_getattr 1 jobspec 2>admin-unknown.err &&
+	grep -i "unknown job" admin-unknown.err
+'
+# The admin role only exempts a guest from private mode (listing and stats);
+# it does not grant read access to another user's job data.
+test_expect_success 'private mode on: admin cannot getattr another user job' '
+	set_admin $other_uid &&
+	test_when_finished unset_userid &&
+	test_must_fail job_manager_getattr $(cat jobid_int.out) jobspec
+'
+# The admin role confers elevated *visibility*, not write access: an admin
+# must not be able to mutate another user's job.  Use a running owner job so
+# the credential check is reached (inactive jobs fail earlier with ENOENT).
+test_expect_success 'submit a running owner job for admin mutate tests' '
+	sleepid=$(flux submit sleep 300) &&
+	flux job wait-event --timeout=20 $sleepid start
+'
+test_expect_success 'admin cannot cancel another user job' '
+	set_admin $other_uid &&
+	test_when_finished unset_userid &&
+	test_must_fail flux cancel $sleepid 2>admin-cancel.err &&
+	grep -i "not permitted\|only.*their own" admin-cancel.err
+'
+test_expect_success 'admin cannot change urgency of another user job' '
+	set_admin $other_uid &&
+	test_when_finished unset_userid &&
+	test_must_fail flux job urgency $sleepid 31 2>admin-urg.err &&
+	grep -i "not permitted\|only.*their own" admin-urg.err
+'
+test_expect_success 'admin cannot raise an exception on another user job' '
+	set_admin $other_uid &&
+	test_when_finished unset_userid &&
+	test_must_fail flux job raise --severity=0 --type=test $sleepid \
+		2>admin-raise.err &&
+	grep -i "not permitted\|only.*their own" admin-raise.err
+'
+test_expect_success 'cancel running owner job from admin mutate tests' '
+	flux cancel $sleepid &&
+	flux job wait-event --timeout=20 $sleepid clean
 '
 
 test_expect_success 'disable private mode' '

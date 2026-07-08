@@ -38,7 +38,7 @@ int job_auth_config_reload (struct job_auth *auth,
 
 /* Return true if request msg must be restricted to their own jobs:
  * i.e. private mode enabled and msg credential cannot be obtained or
- * lacks FLUX_ROLE_OWNER.
+ * lacks a privileged role (FLUX_ROLE_OWNER or FLUX_ROLE_ADMIN).
  */
 bool job_auth_msg_restricted (struct job_auth *auth, const flux_msg_t *msg);
 

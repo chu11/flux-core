@@ -1255,6 +1255,8 @@ static int roletostr (uint32_t role, const char *sep, char *buf, int buflen)
         n = snprintf (buf, buflen, "%suser", sep);
     else if (role == FLUX_ROLE_LOCAL)
         n = snprintf (buf, buflen, "%slocal", sep);
+    else if (role == FLUX_ROLE_ADMIN)
+        n = snprintf (buf, buflen, "%sadmin", sep);
     else
         n = snprintf (buf, buflen, "%s0x%x", sep, role);
     if (n >= buflen)

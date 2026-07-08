@@ -87,7 +87,10 @@ int job_auth_config_reload (struct job_auth *auth,
 static bool job_auth_restricted (struct job_auth *auth,
                                  struct flux_msg_cred cred)
 {
-    return auth->private_mode && !(cred.rolemask & FLUX_ROLE_OWNER);
+    /* Privileged roles (owner and admin) are exempt from private mode: both
+     * may view all users' jobs.  All other guests are limited to their own.
+     */
+    return auth->private_mode && !(cred.rolemask & FLUX_ROLE_PRIVILEGED);
 }
 
 bool job_auth_msg_restricted (struct job_auth *auth, const flux_msg_t *msg)

@@ -23,6 +23,9 @@ static struct flux_msg_cred owner = { .userid = 1000,
                                       .rolemask = FLUX_ROLE_OWNER };
 static struct flux_msg_cred guest = { .userid = 1234,
                                       .rolemask = FLUX_ROLE_USER };
+static struct flux_msg_cred admin = { .userid = 5678,
+                                      .rolemask = FLUX_ROLE_USER
+                                                | FLUX_ROLE_ADMIN };
 
 /* Verify constraint is {"userid":[<uid>]} */
 static int is_userid_constraint (json_t *c, int uid)
@@ -42,6 +45,7 @@ int main (int argc, char *argv[])
     struct match_ctx *mctx;
     flux_msg_t *msg_owner = NULL;
     flux_msg_t *msg_guest = NULL;
+    flux_msg_t *msg_admin = NULL;
     flux_conf_t *conf;
     flux_error_t error;
     json_t *o;
@@ -60,12 +64,14 @@ int main (int argc, char *argv[])
     ok (true, "job_auth_create works with no [access] config");
 
     if (!(msg_owner = flux_msg_create (FLUX_MSGTYPE_REQUEST))
-        || !(msg_guest = flux_msg_create (FLUX_MSGTYPE_REQUEST)))
+        || !(msg_guest = flux_msg_create (FLUX_MSGTYPE_REQUEST))
+        || !(msg_admin = flux_msg_create (FLUX_MSGTYPE_REQUEST)))
         BAIL_OUT ("flux_msg_create failed");
 
     ok (flux_msg_set_cred (msg_owner, owner) == 0
-        && flux_msg_set_cred (msg_guest, guest) == 0,
-        "add owner and guest credentials to test request messages");
+        && flux_msg_set_cred (msg_guest, guest) == 0
+        && flux_msg_set_cred (msg_admin, admin) == 0,
+        "add owner, guest, and admin credentials to test request messages");
 
     errno = 0;
     ok (job_auth_msg_restricted (auth, NULL) && errno == EINVAL,
@@ -76,6 +82,8 @@ int main (int argc, char *argv[])
         "job_auth_msg_restricted: owner not restricted when private mode off");
     ok (!job_auth_msg_restricted (auth, msg_guest),
         "job_auth_msg_restricted: guest not restricted when private mode off");
+    ok (!job_auth_msg_restricted (auth, msg_admin),
+        "job_auth_msg_restricted: admin not restricted when private mode off");
 
     o = (json_t *)&error; /* non-NULL sentinel */
     ok (job_auth_constraint (auth, msg_guest, &o, &error) == 0 && o == NULL,
@@ -114,10 +122,16 @@ int main (int argc, char *argv[])
         "job_auth_msg_restricted: owner allowed with private mode enabled");
     ok (job_auth_msg_restricted (auth, msg_guest),
         "job_auth_msg_restricted: guest restricted with private mode enabled");
+    ok (!job_auth_msg_restricted (auth, msg_admin),
+        "job_auth_msg_restricted: admin allowed with private mode enabled");
 
     o = (json_t *)&error; /* non-NULL sentinel */
     ok (job_auth_constraint (auth, msg_owner, &o, &error) == 0 && o == NULL,
         "owner gets no constraint when private mode is on");
+
+    o = (json_t *)&error; /* non-NULL sentinel */
+    ok (job_auth_constraint (auth, msg_admin, &o, &error) == 0 && o == NULL,
+        "admin gets no constraint when private mode is on");
 
     o = NULL;
     ok (job_auth_constraint (auth, msg_guest, &o, &error) == 0 && o != NULL,
@@ -132,9 +146,12 @@ int main (int argc, char *argv[])
         "job_auth_check_job: guest can see own job in private mode");
     ok (job_auth_check_job (auth, mctx, msg_guest, &owner_job, &error) == 0,
         "job_auth_check_job: guest cannot see other user's job in private mode");
+    ok (job_auth_check_job (auth, mctx, msg_admin, &owner_job, &error) == 1,
+        "job_auth_check_job: admin can see any job in private mode");
 
     flux_msg_destroy (msg_owner);
     flux_msg_destroy (msg_guest);
+    flux_msg_destroy (msg_admin);
     job_auth_destroy (auth);
     match_ctx_destroy (mctx);
     flux_close (h);

@@ -38,6 +38,11 @@ FLUX_ROLE_OWNER
 FLUX_ROLE_USER
    Requests from users / guests can be matched.
 
+FLUX_ROLE_ADMIN
+   Requests from guests assigned the admin role (see
+   :man5:`flux-config-access`) are matched.  This role confers elevated
+   privilege beyond FLUX_ROLE_USER but less than FLUX_ROLE_OWNER.
+
 FLUX_ROLE_LOCAL
    Requests from the same broker as the receiver are matched.
 

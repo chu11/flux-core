@@ -26,6 +26,12 @@ set_userid() {
 	export FLUX_HANDLE_ROLEMASK=0x2
 }
 
+# Simulate a guest that has been assigned the admin role (USER|ADMIN).
+set_admin() {
+	export FLUX_HANDLE_USERID=$1
+	export FLUX_HANDLE_ROLEMASK=0xa
+}
+
 unset_userid() {
 	unset FLUX_HANDLE_USERID
 	unset FLUX_HANDLE_ROLEMASK
@@ -108,6 +114,27 @@ test_expect_success 'private mode on: guest module stats fails (EPERM)' '
 test_expect_success 'private mode on: owner job-stats succeeds' '
 	flux jobs --stats >/dev/null &&
 	flux module stats job-list >/dev/null
+'
+test_expect_success 'private mode on: admin with non-owner uid sees all jobs' '
+	set_admin $other_uid &&
+	test_when_finished unset_userid &&
+	test $(count_jobs) -eq 2
+'
+test_expect_success 'private mode on: admin can list-id another user job' '
+	set_admin $other_uid &&
+	test_when_finished unset_userid &&
+	flux job list-ids $(cat ownerjob) >/dev/null
+'
+test_expect_success 'private mode on: admin job-stats succeeds' '
+	set_admin $other_uid &&
+	test_when_finished unset_userid &&
+	flux jobs --stats >/dev/null &&
+	flux module stats job-list >/dev/null
+'
+test_expect_success 'private mode on: admin --user=owner-uid returns owner jobs' '
+	set_admin $other_uid &&
+	test_when_finished unset_userid &&
+	test $(flux jobs -a -n -o "{id}" --user=$owner_uid | wc -l) -eq 2
 '
 test_expect_success 'disable private mode' '
 	disable_private_mode

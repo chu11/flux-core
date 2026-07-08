@@ -22,6 +22,8 @@ librouter_la_SOURCES = \
 	sendfd.c \
 	auth.c \
 	auth.h \
+	roleconf.c \
+	roleconf.h \
 	usock.c \
 	usock.h \
 	disconnect.h \
@@ -43,6 +45,7 @@ TESTS = \
 	test_sendfd.t \
         test_disconnect.t \
 	test_auth.t \
+	test_roleconf.t \
 	test_usock.t \
 	test_usock_echo.t \
 	test_usock_epipe.t \
@@ -53,6 +56,12 @@ TESTS = \
 	test_usock_service.t \
 	test_msg_hash.t \
 	test_rpc_track.t
+
+# test_roleconf_wrap uses ld --wrap to fake the passwd/group database, which
+# is not supported by all linkers (e.g. macos).  Built only where available.
+if HAVE_LD_WRAP
+TESTS += test_roleconf_wrap.t
+endif
 
 check_PROGRAMS = \
         $(TESTS)
@@ -98,6 +107,19 @@ test_auth_t_SOURCES = test/auth.c
 test_auth_t_CPPFLAGS = $(test_cppflags)
 test_auth_t_LDADD = $(test_ldadd)
 test_auth_t_LDFLAGS = $(test_ldflags)
+
+test_roleconf_t_SOURCES = test/roleconf.c
+test_roleconf_t_CPPFLAGS = $(test_cppflags)
+test_roleconf_t_LDADD = $(test_ldadd)
+test_roleconf_t_LDFLAGS = $(test_ldflags)
+
+if HAVE_LD_WRAP
+test_roleconf_wrap_t_SOURCES = test/roleconf_wrap.c
+test_roleconf_wrap_t_CPPFLAGS = $(test_cppflags)
+test_roleconf_wrap_t_LDADD = $(test_ldadd)
+test_roleconf_wrap_t_LDFLAGS = $(test_ldflags) \
+	-Wl,--wrap=getpwnam_r,--wrap=getpwuid_r,--wrap=getgrnam_r
+endif
 
 test_usock_t_SOURCES = test/usock.c
 test_usock_t_CPPFLAGS = $(test_cppflags)

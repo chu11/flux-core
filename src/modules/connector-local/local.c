@@ -33,6 +33,7 @@
 #include "src/common/libutil/errprintf.h"
 #include "src/common/librouter/usock.h"
 #include "src/common/librouter/router.h"
+#include "src/common/librouter/roleconf.h"
 #include "src/broker/module.h"
 
 enum {
@@ -47,6 +48,7 @@ struct connector_local {
     uid_t instance_owner;
     int allow_guest_user;
     int allow_root_owner;
+    struct roleconf *roleconf;
     flux_msg_handler_t **handlers;
 };
 
@@ -74,13 +76,16 @@ static int client_authenticate (struct connector_local *ctx,
         goto error;
     }
     /* Assign roles based on connecting uid and configured policy.
+     * The owner role confers maximum privilege, so supplemental roles from
+     * [access.roles] are only considered for guests.  This also keeps the
+     * common owner-connection path free of any name service lookups.
      */
     if (cuid == ctx->instance_owner)
         rolemask = FLUX_ROLE_OWNER;
     else if (ctx->allow_root_owner && cuid == 0)
         rolemask = FLUX_ROLE_OWNER;
     else if (ctx->allow_guest_user)
-        rolemask = FLUX_ROLE_USER;
+        rolemask = FLUX_ROLE_USER | roleconf_match (ctx->roleconf, cuid);
 
     if (rolemask == FLUX_ROLE_NONE) {
         flux_log (ctx->h,
@@ -209,6 +214,10 @@ error:
  * private-mode = true
  *   Restrict guests to viewing only their own jobs (consumed by job-list).
  *
+ * roles = { admin = { users = [...], groups = [...] } }
+ *   Assign supplemental roles (currently only FLUX_ROLE_ADMIN) to guests
+ *   based on uid and group membership.  Parsed by librouter/roleconf.
+ *
  * Missing [access] keys are interpreted as false.
  * [access] keys other than the above are not allowed.
  */
@@ -220,22 +229,34 @@ static int parse_config (struct connector_local *ctx,
     int allow_guest_user = 0;
     int allow_root_owner = 0;
     int private_mode = 0;       /* unused here; validated for job-list */
+    json_t *roles = NULL;
+    struct roleconf *roleconf;
 
     if (flux_conf_unpack (conf,
                           &error,
-                          "{s?{s?b s?b s?b !}}",
+                          "{s?{s?b s?b s?b s?o !}}",
                           "access",
                             "allow-guest-user",
                             &allow_guest_user,
                             "allow-root-owner",
                             &allow_root_owner,
                             "private-mode",
-                            &private_mode) < 0) {
+                            &private_mode,
+                            "roles",
+                            &roles) < 0) {
         errprintf (errp,
                    "error parsing [access] configuration: %s",
                    error.text);
         return -1;
     }
+    /* Build the new roleconf before committing any change, so a bad
+     * [access.roles] table leaves the running configuration untouched.
+     */
+    if (!(roleconf = roleconf_create (roles, flux_llog, ctx->h, errp)))
+        return -1;
+
+    roleconf_destroy (ctx->roleconf);
+    ctx->roleconf = roleconf;
     ctx->allow_guest_user = allow_guest_user;
     ctx->allow_root_owner = allow_root_owner;
     flux_log (ctx->h,
@@ -393,6 +414,7 @@ done:
     flux_msg_handler_delvec (ctx.handlers);
     usock_server_destroy (ctx.server); // destroy before router
     router_destroy (ctx.router);
+    roleconf_destroy (ctx.roleconf);
     return rc;
 }
 

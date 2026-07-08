@@ -411,6 +411,7 @@ dist_check_SCRIPTS = \
 	system/0005-exec.t \
 	system/0006-perilog.t \
 	system/0007-fsck.t \
+	system/0008-access-roles.t \
 	issues/t0441-kvs-put-get.sh \
 	issues/t0505-msg-handler-reg.lua \
 	issues/t0821-kvs-segfault.sh \
