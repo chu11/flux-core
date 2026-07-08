@@ -376,7 +376,7 @@ matrix.add_build(
     env=dict(
         TEST_INSTALL="t",
     ),
-    args="--with-flux-security",
+    args=common_args,
     docker_tag=True,
 )
 
