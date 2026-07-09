@@ -105,6 +105,7 @@
 #include "ccan/str/str.h"
 
 #include "job-exec.h"
+#include "namespace.h"
 #include "checkpoint.h"
 #include "exec_config.h"
 
@@ -909,11 +910,11 @@ void jobinfo_log_output (struct jobinfo *job,
                         data);
 }
 
-static void namespace_delete (flux_future_t *f, void *arg)
+static void ns_delete (flux_future_t *f, void *arg)
 {
     struct jobinfo *job = arg;
     flux_t *h = job->ctx->h;
-    flux_future_t *fnext = flux_kvs_namespace_remove (h, job->ns);
+    flux_future_t *fnext = namespace_remove (h, job->ns);
     if (!fnext)
         flux_future_continue_error (f, errno, NULL);
     else
@@ -921,24 +922,18 @@ static void namespace_delete (flux_future_t *f, void *arg)
     flux_future_destroy (f);
 }
 
-static void namespace_copy (flux_future_t *f, void *arg)
+static void ns_copy (flux_future_t *f, void *arg)
 {
     struct jobinfo *job = arg;
     flux_t *h = job->ctx->h;
-    flux_future_t *fnext = NULL;
-    char dst [256];
+    flux_future_t *fnext;
 
-    if (flux_job_kvs_key (dst, sizeof (dst), job->id, "guest") < 0) {
-        flux_log_error (h, "namespace_move: flux_job_kvs_key");
-        goto done;
-    }
-    if (!(fnext = flux_kvs_copy (h, job->ns, ".", NULL, dst, 0)))
-        flux_log_error (h, "namespace_move: flux_kvs_copy");
-done:
-    if (fnext)
-        flux_future_continue (f, fnext);
-    else
+    if (!(fnext = namespace_graft (h, job->id, job->ns))) {
+        flux_log_error (h, "ns_move: namespace_graft");
         flux_future_continue_error (f, errno, NULL);
+    }
+    else
+        flux_future_continue (f, fnext);
     flux_future_destroy (f);
 }
 
@@ -950,7 +945,7 @@ done:
  *   2. Copy the namespace into the primary
  *   3. Delete the guest namespace
  */
-static flux_future_t * namespace_move (struct jobinfo *job)
+static flux_future_t * ns_move (struct jobinfo *job)
 {
     flux_t *h = job->ctx->h;
     flux_future_t *f = NULL;
@@ -966,14 +961,14 @@ static flux_future_t * namespace_move (struct jobinfo *job)
      *   read-only.
      */
     if (!(f = eventlogger_commit (job->ev))) {
-        flux_log_error (h, "namespace_move: jobinfo_emit_event");
+        flux_log_error (h, "ns_move: jobinfo_emit_event");
         goto error;
     }
-    if (!(f1 = flux_future_and_then (f, namespace_copy, job))
-        || !(f1 = flux_future_or_then (f, namespace_copy, job))
-        || !(f2 = flux_future_and_then (f1, namespace_delete, job))
-        || !(f2 = flux_future_or_then (f1, namespace_delete, job))) {
-        flux_log_error (h, "namespace_move: flux_future_and_then");
+    if (!(f1 = flux_future_and_then (f, ns_copy, job))
+        || !(f1 = flux_future_or_then (f, ns_copy, job))
+        || !(f2 = flux_future_and_then (f1, ns_delete, job))
+        || !(f2 = flux_future_or_then (f1, ns_delete, job))) {
+        flux_log_error (h, "ns_move: flux_future_and_then");
         goto error;
     }
     return f2;
@@ -1019,7 +1014,7 @@ static int jobinfo_release (struct jobinfo *job)
     return rc;
 }
 
-static void namespace_move_cb (flux_future_t *f, void *arg)
+static void ns_move_cb (flux_future_t *f, void *arg)
 {
     struct jobinfo *job = arg;
     jobinfo_release (job);
@@ -1040,8 +1035,8 @@ static int jobinfo_finalize (struct jobinfo *job)
     job->finalizing = 1;
 
     if (job->has_namespace) {
-        if (!(f = namespace_move (job))
-            || flux_future_then (f, -1., namespace_move_cb, job) < 0)
+        if (!(f = ns_move (job))
+            || flux_future_then (f, -1., ns_move_cb, job) < 0)
             goto error;
     }
     else if (jobinfo_release (job) < 0)
@@ -1124,36 +1119,7 @@ done:
     flux_future_destroy (f);
 }
 
-static flux_future_t * jobinfo_link_guestns (struct jobinfo *job)
-{
-    int saved_errno;
-    flux_t *h = job->ctx->h;
-    flux_kvs_txn_t *txn = NULL;
-    flux_future_t *f = NULL;
-    char key [64];
-
-    if (flux_job_kvs_key (key, sizeof (key), job->id, "guest") < 0) {
-        flux_log_error (h, "link guestns: flux_job_kvs_key");
-        return NULL;
-    }
-    if (!(txn = flux_kvs_txn_create ())) {
-        flux_log_error (h, "link guestns: flux_kvs_txn_create");
-        return NULL;
-    }
-    if (flux_kvs_txn_symlink (txn, 0, key, job->ns, ".") < 0) {
-        flux_log_error (h, "link guestns: flux_kvs_txn_symlink");
-        goto out;
-    }
-    if (!(f = flux_kvs_commit (h, NULL, 0, txn)))
-        flux_log_error (h, "link_guestns: flux_kvs_commit");
-out:
-    saved_errno = errno;
-    flux_kvs_txn_destroy (txn);
-    errno = saved_errno;
-    return f;
-}
-
-static void namespace_link (flux_future_t *fprev, void *arg)
+static void ns_link (flux_future_t *fprev, void *arg)
 {
     int saved_errno;
     flux_t *h = flux_future_get_flux (fprev);
@@ -1162,7 +1128,7 @@ static void namespace_link (flux_future_t *fprev, void *arg)
     flux_future_t *f = NULL;
 
     if (!(cf = flux_future_wait_all_create ())) {
-        flux_log_error (h, "namespace_link: flux_future_wait_all_create");
+        flux_log_error (h, "ns_link: flux_future_wait_all_create");
         goto error;
     }
     flux_future_set_flux (cf, h);
@@ -1172,7 +1138,7 @@ static void namespace_link (flux_future_t *fprev, void *arg)
         || flux_future_push (cf, "emit event", f) < 0)
         goto error;
 
-    if (!(f = jobinfo_link_guestns (job))
+    if (!(f = namespace_symlink (h, job->id, job->ns))
         || flux_future_push (cf, "link guestns", f) < 0)
         goto error;
     flux_future_continue (fprev, cf);
@@ -1185,21 +1151,13 @@ error:
     flux_future_destroy (fprev);
 }
 
-static flux_future_t *ns_create_and_link (flux_t *h,
-                                          struct jobinfo *job,
-                                          int flags)
+static flux_future_t *ns_create_and_link (flux_t *h, struct jobinfo *job)
 {
     flux_future_t *f = NULL;
     flux_future_t *f2 = NULL;
+    const char *rootref = (job->reattach && job->rootref) ? job->rootref : NULL;
 
-    if (job->reattach && job->rootref)
-        f = flux_kvs_namespace_create_with (h,
-                                            job->ns,
-                                            job->rootref,
-                                            job->userid,
-                                            flags);
-    else
-        f = flux_kvs_namespace_create (h, job->ns, job->userid, flags);
+    f = namespace_create (h, job->ns, job->userid, rootref);
 
     /*  Set job->has_namespace flag immediately after sending the namespace
      *  create RPC. This avoids the potential to leave orphaned namespaces
@@ -1207,8 +1165,8 @@ static flux_future_t *ns_create_and_link (flux_t *h,
      */
     job->has_namespace = 1;
 
-    if (!f || !(f2 = flux_future_and_then (f, namespace_link, job))) {
-        flux_log_error (h, "namespace_move: flux_future_and_then");
+    if (!f || !(f2 = flux_future_and_then (f, ns_link, job))) {
+        flux_log_error (h, "ns_create_and_link: flux_future_and_then");
         flux_future_destroy (f);
         return NULL;
     }
@@ -1231,7 +1189,7 @@ static void get_rootref_cb (flux_future_t *fprev, void *arg)
                   idf58 (job->id));
 
     /* if rootref not found, still create namespace */
-    if (!(f = ns_create_and_link (h, job, 0)))
+    if (!(f = ns_create_and_link (h, job)))
         goto error;
 
     flux_future_continue (fprev, f);
@@ -1244,9 +1202,7 @@ error:
     flux_future_destroy (fprev);
 }
 
-static flux_future_t *ns_get_rootref (flux_t *h,
-                                      struct jobinfo *job,
-                                      int flags)
+static flux_future_t *ns_get_rootref (flux_t *h, struct jobinfo *job)
 {
     flux_future_t *f = NULL;
     flux_future_t *f2 = NULL;
@@ -1273,9 +1229,9 @@ static flux_future_t *jobinfo_start_init (struct jobinfo *job)
     flux_future_set_flux (f, job->ctx->h);
 
     if (job->reattach)
-        f_kvs = ns_get_rootref (h, job, 0);
+        f_kvs = ns_get_rootref (h, job);
     else
-        f_kvs = ns_create_and_link (h, job, 0);
+        f_kvs = ns_create_and_link (h, job);
 
     if (flux_future_push (f, "ns", f_kvs) < 0)
         goto err;

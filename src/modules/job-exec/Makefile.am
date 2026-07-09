@@ -19,6 +19,8 @@ noinst_LTLIBRARIES = \
 libjob_exec_la_SOURCES = \
 	job-exec.h \
 	job-exec.c \
+	namespace.h \
+	namespace.c \
 	checkpoint.h \
 	checkpoint.c \
 	exec_config.h \
@@ -45,7 +47,8 @@ test_cppflags = \
 	$(AM_CPPFLAGS)
 
 TESTS = \
-	test_rset.t
+	test_rset.t \
+	test_namespace.t
 
 check_PROGRAMS = \
 	$(TESTS)
@@ -57,4 +60,19 @@ test_rset_t_CPPFLAGS = \
 test_rset_t_LDADD = \
 	$(test_ldadd)
 test_rset_t_LDFLAGS = \
+	$(test_ldflags)
+
+test_namespace_t_SOURCES = \
+	test/namespace.c
+test_namespace_t_CPPFLAGS = \
+	$(test_cppflags)
+test_namespace_t_LDADD = \
+	$(builddir)/libjob-exec.la \
+	$(top_builddir)/src/common/librlist/librlist.la \
+	$(top_builddir)/src/common/libkvs/libkvs.la \
+	$(top_builddir)/src/common/libtap/libtap.la \
+	$(top_builddir)/src/common/libflux-core.la \
+	$(top_builddir)/src/common/libflux-internal.la \
+	$(LIBPTHREAD) $(JANSSON_LIBS)
+test_namespace_t_LDFLAGS = \
 	$(test_ldflags)
