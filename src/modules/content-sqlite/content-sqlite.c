@@ -160,26 +160,43 @@ static int set_config (char **conf, const char *val)
     return 0;
 }
 
+/* Fill 'errp' with the current sqlite error message so a handler can return
+ * it to the client, and return errp->text for convenient assignment.
+ * log_sqlite_error() formats the same text with a code-site prefix for the
+ * broker log.
+ */
+static const char *set_text_from_sqlite_error (struct content_sqlite *ctx,
+                                               flux_error_t *errp)
+{
+    if (!errp)
+        return NULL;
+    if (ctx->db) {
+        const char *errmsg = sqlite3_errmsg (ctx->db);
+        errprintf (errp,
+                   "%s(%d)",
+                   errmsg ? errmsg : "unknown error code",
+                   sqlite3_extended_errcode (ctx->db));
+    }
+    else
+        errprintf (errp, "unknown error, no sqlite3 handle");
+    return errp->text;
+}
+
 static void log_sqlite_error (struct content_sqlite *ctx, const char *fmt, ...)
 {
     char buf[64];
+    flux_error_t error;
     va_list ap;
 
     va_start (ap, fmt);
     (void)vsnprintf (buf, sizeof (buf), fmt, ap);
     va_end (ap);
 
-    if (ctx->db) {
-        const char *errmsg = sqlite3_errmsg (ctx->db);
-        flux_log (ctx->h,
-                  LOG_ERR,
-                  "%s: %s(%d)",
-                  buf,
-                  errmsg ? errmsg : "unknown error code",
-                  sqlite3_extended_errcode (ctx->db));
-    }
-    else
-        flux_log (ctx->h, LOG_ERR, "%s: unknown error, no sqlite3 handle", buf);
+    flux_log (ctx->h,
+              LOG_ERR,
+              "%s: %s",
+              buf,
+              set_text_from_sqlite_error (ctx, &error));
 }
 
 static void set_errno_from_sqlite_error (struct content_sqlite *ctx)
@@ -513,14 +530,16 @@ void checkpoint_get_cb (flux_t *h,
 {
     struct content_sqlite *ctx = arg;
     const char *errstr = NULL;
+    flux_error_t sql_error;
     json_t *a = NULL;
+    int rc;
 
     if (!(a = json_array ())) {
         errno = ENOMEM;
         goto error;
     }
 
-    while (sqlite3_step (ctx->checkpt_get_stmt) == SQLITE_ROW) {
+    while ((rc = sqlite3_step (ctx->checkpt_get_stmt)) == SQLITE_ROW) {
         const char *s;
         json_t *o = NULL;
         json_error_t error;
@@ -539,6 +558,15 @@ void checkpoint_get_cb (flux_t *h,
             errno = ENOMEM;
             goto error;
         }
+    }
+    /* A step error (e.g. I/O error) must not be mistaken for end-of-data,
+     * which would silently return a partial result or ENOENT.
+     */
+    if (rc != SQLITE_DONE) {
+        log_sqlite_error (ctx, "checkpt_get: executing stmt");
+        set_errno_from_sqlite_error (ctx);
+        errstr = set_text_from_sqlite_error (ctx, &sql_error);
+        goto error;
     }
 
     /* if no checkpoint entries, we return ENOENT */
@@ -573,6 +601,7 @@ void checkpoint_put_cb (flux_t *h,
     json_t *o;
     char *value = NULL;
     const char *errstr = NULL;
+    flux_error_t error;
 
     if (flux_request_unpack (msg,
                              NULL,
@@ -591,12 +620,14 @@ void checkpoint_put_cb (flux_t *h,
                            SQLITE_STATIC) != SQLITE_OK) {
         log_sqlite_error (ctx, "checkpt_put: binding value");
         set_errno_from_sqlite_error (ctx);
+        errstr = set_text_from_sqlite_error (ctx, &error);
         goto error;
     }
     if (sqlite3_step (ctx->checkpt_put_stmt) != SQLITE_DONE
                     && sqlite3_errcode (ctx->db) != SQLITE_CONSTRAINT) {
         log_sqlite_error (ctx, "checkpt_put: executing stmt");
         set_errno_from_sqlite_error (ctx);
+        errstr = set_text_from_sqlite_error (ctx, &error);
         goto error;
     }
     /* Update current_epoch to the id of the just-inserted checkpoint */
@@ -609,11 +640,14 @@ void checkpoint_put_cb (flux_t *h,
                           1,
                           ctx->max_checkpoints) != SQLITE_OK) {
         log_sqlite_error (ctx, "checkpt_prune: binding count");
+        set_errno_from_sqlite_error (ctx);
+        errstr = set_text_from_sqlite_error (ctx, &error);
         goto error;
     }
     if (sqlite3_step (ctx->checkpt_prune_stmt) != SQLITE_DONE) {
         log_sqlite_error (ctx, "checkpt_prune: executing stmt");
         set_errno_from_sqlite_error (ctx);
+        errstr = set_text_from_sqlite_error (ctx, &error);
         goto error;
     }
     if (flux_respond (h, msg, NULL) < 0)
@@ -630,17 +664,23 @@ error:
     free (value);
 }
 
-static json_t *stats_checkpoints (struct content_sqlite *ctx)
+/* On failure, returns NULL with errno set and 'errp' filled with a
+ * human-readable description for the client.
+ */
+static json_t *stats_checkpoints (struct content_sqlite *ctx,
+                                  flux_error_t *errp)
 {
     sqlite3_stmt *stmt = ctx->checkpt_get_all_stmt;
     json_t *checkpts = NULL;
+    int rc;
 
     if (!(checkpts = json_array ())) {
+        errprintf (errp, "checkpt_get_all: out of memory");
         errno = ENOMEM;
         return NULL;
     }
 
-    while (sqlite3_step (stmt) == SQLITE_ROW) {
+    while ((rc = sqlite3_step (stmt)) == SQLITE_ROW) {
         int id;
         const char *s;
         json_t *o, *value;
@@ -649,6 +689,7 @@ static json_t *stats_checkpoints (struct content_sqlite *ctx)
             || !(s = (const char *)sqlite3_column_text (stmt, 1))) {
             log_sqlite_error (ctx, "checkpt_get_all: getting values");
             set_errno_from_sqlite_error (ctx);
+            set_text_from_sqlite_error (ctx, errp);
             goto error;
         }
         if (!(value = json_loads (s, 0, NULL))) {
@@ -664,9 +705,19 @@ static json_t *stats_checkpoints (struct content_sqlite *ctx)
             || json_array_append_new (checkpts, o) < 0) {
             json_decref (value);
             // jansson decrefs the new object on failure
+            errprintf (errp, "checkpt_get_all: out of memory");
             errno = ENOMEM;
             goto error;
         }
+    }
+    /* A step error must not be mistaken for end-of-data (which would
+     * silently return a truncated checkpoint list in the stats output).
+     */
+    if (rc != SQLITE_DONE) {
+        log_sqlite_error (ctx, "checkpt_get_all: executing stmt");
+        set_errno_from_sqlite_error (ctx);
+        set_text_from_sqlite_error (ctx, errp);
+        goto error;
     }
 
     (void )sqlite3_reset (ctx->checkpt_get_all_stmt);
@@ -780,6 +831,7 @@ void stats_get_cb (flux_t *h,
     struct content_sqlite *ctx = arg;
     int64_t count;
     const char *errmsg = NULL;
+    flux_error_t error;
     json_t *load_time = NULL;
     json_t *store_time = NULL;
     json_t *checkpoints = NULL;
@@ -789,15 +841,17 @@ void stats_get_cb (flux_t *h,
                       set_count,
                       &count,
                       NULL) != SQLITE_OK) {
-        errmsg = sqlite3_errmsg (ctx->db);
+        errmsg = set_text_from_sqlite_error (ctx, &error);
         errno = EPERM;
         goto error;
     }
     if (!(load_time = pack_tstat (&ctx->stats.load))
         || !(store_time = pack_tstat (&ctx->stats.store)))
         goto error;
-    if (!(checkpoints = stats_checkpoints (ctx)))
+    if (!(checkpoints = stats_checkpoints (ctx, &error))) {
+        errmsg = error.text;
         goto error;
+    }
     if (flux_respond_pack (h,
                            msg,
                            "{s:I s:I s:I s:I s:O s:O s:{s:s s:s} s:O}",
@@ -890,6 +944,7 @@ static void mark_cb (flux_t *h,
     if (sqlite3_exec (ctx->db, "BEGIN", NULL, NULL, NULL) != SQLITE_OK) {
         log_sqlite_error (ctx, "mark: BEGIN");
         set_errno_from_sqlite_error (ctx);
+        errstr = set_text_from_sqlite_error (ctx, &error);
         goto error;
     }
     in_txn = true;
@@ -902,6 +957,7 @@ static void mark_cb (flux_t *h,
                             NULL) != SQLITE_OK) {
         log_sqlite_error (ctx, "mark: preparing statement");
         set_errno_from_sqlite_error (ctx);
+        errstr = set_text_from_sqlite_error (ctx, &error);
         goto error;
     }
 
@@ -931,18 +987,21 @@ static void mark_cb (flux_t *h,
         if (sqlite3_bind_int64 (stmt, 1, target_epoch) != SQLITE_OK) {
             log_sqlite_error (ctx, "mark: binding epoch");
             set_errno_from_sqlite_error (ctx);
+            errstr = set_text_from_sqlite_error (ctx, &error);
             goto error;
         }
 
         if (sqlite3_bind_text (stmt, 2, hash, hash_len, SQLITE_TRANSIENT) != SQLITE_OK) {
             log_sqlite_error (ctx, "mark: binding hash");
             set_errno_from_sqlite_error (ctx);
+            errstr = set_text_from_sqlite_error (ctx, &error);
             goto error;
         }
 
         if (sqlite3_step (stmt) != SQLITE_DONE) {
             log_sqlite_error (ctx, "mark: executing statement");
             set_errno_from_sqlite_error (ctx);
+            errstr = set_text_from_sqlite_error (ctx, &error);
             goto error;
         }
 
@@ -959,6 +1018,7 @@ static void mark_cb (flux_t *h,
     if (sqlite3_exec (ctx->db, "COMMIT", NULL, NULL, NULL) != SQLITE_OK) {
         log_sqlite_error (ctx, "mark: COMMIT");
         set_errno_from_sqlite_error (ctx);
+        errstr = set_text_from_sqlite_error (ctx, &error);
         goto error;
     }
     in_txn = false;
@@ -1019,6 +1079,8 @@ static void sweep_cb (flux_t *h,
     int n = 0;
     int i;
     int rc;
+    const char *errstr = NULL;
+    flux_error_t error;
 
     if (flux_request_unpack (msg,
                              NULL,
@@ -1058,6 +1120,7 @@ static void sweep_cb (flux_t *h,
             != SQLITE_OK) {
         log_sqlite_error (ctx, "sweep: preparing select");
         set_errno_from_sqlite_error (ctx);
+        errstr = set_text_from_sqlite_error (ctx, &error);
         goto error;
     }
     if (sqlite3_bind_int64 (select_stmt, 1, threshold_epoch) != SQLITE_OK
@@ -1066,6 +1129,7 @@ static void sweep_cb (flux_t *h,
         || sqlite3_bind_int (select_stmt, 4, delete_cap) != SQLITE_OK) {
         log_sqlite_error (ctx, "sweep: binding select");
         set_errno_from_sqlite_error (ctx);
+        errstr = set_text_from_sqlite_error (ctx, &error);
         goto error;
     }
     while ((rc = sqlite3_step (select_stmt)) == SQLITE_ROW)
@@ -1073,6 +1137,7 @@ static void sweep_cb (flux_t *h,
     if (rc != SQLITE_DONE) {
         log_sqlite_error (ctx, "sweep: executing select");
         set_errno_from_sqlite_error (ctx);
+        errstr = set_text_from_sqlite_error (ctx, &error);
         goto error;
     }
     sqlite3_finalize (select_stmt);
@@ -1083,11 +1148,13 @@ static void sweep_cb (flux_t *h,
             != SQLITE_OK) {
         log_sqlite_error (ctx, "sweep: preparing delete");
         set_errno_from_sqlite_error (ctx);
+        errstr = set_text_from_sqlite_error (ctx, &error);
         goto error;
     }
     if (sqlite3_exec (ctx->db, "BEGIN", NULL, NULL, NULL) != SQLITE_OK) {
         log_sqlite_error (ctx, "sweep: BEGIN");
         set_errno_from_sqlite_error (ctx);
+        errstr = set_text_from_sqlite_error (ctx, &error);
         goto error;
     }
     in_txn = true;
@@ -1096,6 +1163,7 @@ static void sweep_cb (flux_t *h,
             || sqlite3_step (delete_stmt) != SQLITE_DONE) {
             log_sqlite_error (ctx, "sweep: executing delete");
             set_errno_from_sqlite_error (ctx);
+            errstr = set_text_from_sqlite_error (ctx, &error);
             goto error;
         }
         deleted += sqlite3_changes (ctx->db);
@@ -1106,6 +1174,7 @@ static void sweep_cb (flux_t *h,
     if (sqlite3_exec (ctx->db, "COMMIT", NULL, NULL, NULL) != SQLITE_OK) {
         log_sqlite_error (ctx, "sweep: COMMIT");
         set_errno_from_sqlite_error (ctx);
+        errstr = set_text_from_sqlite_error (ctx, &error);
         goto error;
     }
     in_txn = false;
@@ -1137,7 +1206,7 @@ error:
     if (in_txn)
         sqlite3_exec (ctx->db, "ROLLBACK", NULL, NULL, NULL);
     free (rowids);
-    if (flux_respond_error (h, msg, errno, NULL) < 0)
+    if (flux_respond_error (h, msg, errno, errstr) < 0)
         flux_log_error (h, "sweep: flux_respond_error");
 }
 
@@ -1174,6 +1243,8 @@ static void gc_info_cb (flux_t *h,
     sqlite3_stmt *hw_stmt = NULL;
     int64_t candidates = 0;
     int64_t high_water = 0;
+    const char *errstr = NULL;
+    flux_error_t error;
 
     if (flux_request_unpack (msg,
                              NULL,
@@ -1188,6 +1259,7 @@ static void gc_info_cb (flux_t *h,
         || sqlite3_step (hw_stmt) != SQLITE_ROW) {
         log_sqlite_error (ctx, "gc-info: querying high_water");
         set_errno_from_sqlite_error (ctx);
+        errstr = set_text_from_sqlite_error (ctx, &error);
         goto error;
     }
     high_water = sqlite3_column_int64 (hw_stmt, 0);
@@ -1203,18 +1275,21 @@ static void gc_info_cb (flux_t *h,
                                 NULL) != SQLITE_OK) {
             log_sqlite_error (ctx, "gc-info: preparing statement");
             set_errno_from_sqlite_error (ctx);
+            errstr = set_text_from_sqlite_error (ctx, &error);
             goto error;
         }
 
         if (sqlite3_bind_int64 (stmt, 1, threshold_epoch) != SQLITE_OK) {
             log_sqlite_error (ctx, "gc-info: binding epoch");
             set_errno_from_sqlite_error (ctx);
+            errstr = set_text_from_sqlite_error (ctx, &error);
             goto error;
         }
 
         if (sqlite3_step (stmt) != SQLITE_ROW) {
             log_sqlite_error (ctx, "gc-info: executing statement");
             set_errno_from_sqlite_error (ctx);
+            errstr = set_text_from_sqlite_error (ctx, &error);
             goto error;
         }
 
@@ -1234,7 +1309,7 @@ static void gc_info_cb (flux_t *h,
     return;
 
 error:
-    if (flux_respond_error (h, msg, errno, NULL) < 0)
+    if (flux_respond_error (h, msg, errno, errstr) < 0)
         flux_log_error (h, "gc-info: flux_respond_error");
     if (hw_stmt)
         sqlite3_finalize (hw_stmt);

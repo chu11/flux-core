@@ -148,7 +148,7 @@ static void mark_reap (flux_future_t *f, void *arg)
     if (flux_rpc_get_unpack (f, "{s:i}", "marked", &marked) < 0) {
         if (m->errnum == 0)
             m->errnum = errno;
-        log_err ("mark failed: %s", future_strerror (f, errno));
+        log_msg ("mark failed: %s", future_strerror (f, errno));
     }
     else {
         m->marked += marked;
@@ -591,7 +591,7 @@ static int mark_all_roots (flux_t *h, json_t *roots_array, int64_t *markedp)
             log_msg ("marking from root %s", rootref);
 
         if (mark_root (&m, rootref) < 0) {
-            log_err ("failed to mark from root %s: %s", rootref, strerror (errno));
+            log_err ("failed to mark from root %s", rootref);
             goto done;
         }
     }
