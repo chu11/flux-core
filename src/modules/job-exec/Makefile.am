@@ -21,8 +21,6 @@ libjob_exec_la_SOURCES = \
 	job-exec.c \
 	namespace.h \
 	namespace.c \
-	checkpoint.h \
-	checkpoint.c \
 	exec_config.h \
 	exec_config.c \
 	rset.c \
