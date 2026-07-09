@@ -937,31 +937,30 @@ static void ns_copy (flux_future_t *f, void *arg)
     flux_future_destroy (f);
 }
 
-/*  Move the guest namespace for `job` into the primary namespace first
- *   issuing the `done` terminating event into the exec.eventlog.
+/*  Graft the guest namespace for `job` into the primary namespace and
+ *   remove it, first quiescing the exec.eventlog.  If `event` is non-NULL
+ *   it is posted to the exec.eventlog as the final entry (e.g. "done" on
+ *   job completion); pass NULL to preserve a still-running job across a
+ *   restart without terminating its eventlog.
  *
- *  The process is split into a chained future of 3 parts:
- *   1. Issue the final write into the exec.eventlog
- *   2. Copy the namespace into the primary
- *   3. Delete the guest namespace
+ *  The process is a chained future of 3 parts:
+ *   1. Post the final event (if any) and commit the exec.eventlog, so its
+ *      buffered entries are flushed to the guest namespace before it is
+ *      grafted and becomes read-only.
+ *   2. Graft the namespace into the primary namespace.
+ *   3. Remove the guest namespace.
  */
-static flux_future_t * ns_move (struct jobinfo *job)
+static flux_future_t * ns_move (struct jobinfo *job, const char *event)
 {
     flux_t *h = job->ctx->h;
     flux_future_t *f = NULL;
     flux_future_t *f1 = NULL;
     flux_future_t *f2 = NULL;
 
-    if (jobinfo_emit_event_pack_nowait (job, "done", NULL) < 0)
+    if (event && jobinfo_emit_event_pack_nowait (job, event, NULL) < 0)
         flux_log_error (h, "emit_event");
-    /*
-     *  Ensure the final eventlog entry ("done", from above), is committed
-     *   to then eventlog before performing the next steps. This ensures
-     *   the eventlog is quiesced before the namespace is moved and becomes
-     *   read-only.
-     */
     if (!(f = eventlogger_commit (job->ev))) {
-        flux_log_error (h, "ns_move: jobinfo_emit_event");
+        flux_log_error (h, "ns_move: eventlogger_commit");
         goto error;
     }
     if (!(f1 = flux_future_and_then (f, ns_copy, job))
@@ -1035,7 +1034,7 @@ static int jobinfo_finalize (struct jobinfo *job)
     job->finalizing = 1;
 
     if (job->has_namespace) {
-        if (!(f = ns_move (job))
+        if (!(f = ns_move (job, "done"))
             || flux_future_then (f, -1., ns_move_cb, job) < 0)
             goto error;
     }
@@ -1672,7 +1671,14 @@ static int configure_implementations (flux_t *h, int argc, char **argv)
     return 0;
 }
 
-static int remove_running_ns (struct job_exec_ctx *ctx)
+/*  On module unload, graft each running job's guest namespace into the
+ *   primary namespace (as a dirref at job.<id>.guest) and remove it, so the
+ *   namespace is preserved across a restart: its content is reachable from
+ *   the primary root, protected by KVS garbage collection and captured by
+ *   the shutdown content dump.  No terminating event is posted since the
+ *   jobs are still running and will be reattached.
+ */
+static int graft_running_ns (struct job_exec_ctx *ctx)
 {
     struct jobinfo *job = zhashx_first (ctx->jobs);
     flux_future_t *fall = NULL;
@@ -1686,7 +1692,7 @@ static int remove_running_ns (struct job_exec_ctx *ctx)
                     goto cleanup;
                 flux_future_set_flux (fall, ctx->h);
             }
-            if (!(f = flux_kvs_namespace_remove (ctx->h, job->ns)))
+            if (!(f = ns_move (job, NULL)))
                 goto cleanup;
             if (flux_future_push (fall, job->ns, f) < 0)
                 goto cleanup;
@@ -1712,9 +1718,14 @@ static int unload_implementations (struct job_exec_ctx *ctx)
     struct exec_implementation *impl;
     int i = 0;
     if (ctx && ctx->jobs) {
+        /* Preserve running jobs' guest namespaces across restart via the
+         * graft in job.<id>.guest.  The legacy checkpoint is still written
+         * here; the read path is switched to the graft in a follow-on
+         * commit, after which the checkpoint is removed.
+         */
         checkpoint_running (ctx->h, ctx->jobs);
-        if (remove_running_ns (ctx) < 0)
-            flux_log_error (ctx->h, "failed to remove guest namespaces");
+        if (graft_running_ns (ctx) < 0)
+            flux_log_error (ctx->h, "failed to graft guest namespaces");
     }
     while ((impl = implementations[i]) && impl->name) {
         if (impl->unload)
