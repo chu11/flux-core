@@ -514,13 +514,14 @@ void checkpoint_get_cb (flux_t *h,
     struct content_sqlite *ctx = arg;
     const char *errstr = NULL;
     json_t *a = NULL;
+    int rc;
 
     if (!(a = json_array ())) {
         errno = ENOMEM;
         goto error;
     }
 
-    while (sqlite3_step (ctx->checkpt_get_stmt) == SQLITE_ROW) {
+    while ((rc = sqlite3_step (ctx->checkpt_get_stmt)) == SQLITE_ROW) {
         const char *s;
         json_t *o = NULL;
         json_error_t error;
@@ -539,6 +540,14 @@ void checkpoint_get_cb (flux_t *h,
             errno = ENOMEM;
             goto error;
         }
+    }
+    /* A step error (e.g. I/O error) must not be mistaken for end-of-data,
+     * which would silently return a partial result or ENOENT.
+     */
+    if (rc != SQLITE_DONE) {
+        log_sqlite_error (ctx, "checkpt_get: executing stmt");
+        set_errno_from_sqlite_error (ctx);
+        goto error;
     }
 
     /* if no checkpoint entries, we return ENOENT */
@@ -609,6 +618,7 @@ void checkpoint_put_cb (flux_t *h,
                           1,
                           ctx->max_checkpoints) != SQLITE_OK) {
         log_sqlite_error (ctx, "checkpt_prune: binding count");
+        set_errno_from_sqlite_error (ctx);
         goto error;
     }
     if (sqlite3_step (ctx->checkpt_prune_stmt) != SQLITE_DONE) {
@@ -634,13 +644,14 @@ static json_t *stats_checkpoints (struct content_sqlite *ctx)
 {
     sqlite3_stmt *stmt = ctx->checkpt_get_all_stmt;
     json_t *checkpts = NULL;
+    int rc;
 
     if (!(checkpts = json_array ())) {
         errno = ENOMEM;
         return NULL;
     }
 
-    while (sqlite3_step (stmt) == SQLITE_ROW) {
+    while ((rc = sqlite3_step (stmt)) == SQLITE_ROW) {
         int id;
         const char *s;
         json_t *o, *value;
@@ -667,6 +678,14 @@ static json_t *stats_checkpoints (struct content_sqlite *ctx)
             errno = ENOMEM;
             goto error;
         }
+    }
+    /* A step error must not be mistaken for end-of-data (which would
+     * silently return a truncated checkpoint list in the stats output).
+     */
+    if (rc != SQLITE_DONE) {
+        log_sqlite_error (ctx, "checkpt_get_all: executing stmt");
+        set_errno_from_sqlite_error (ctx);
+        goto error;
     }
 
     (void )sqlite3_reset (ctx->checkpt_get_all_stmt);
