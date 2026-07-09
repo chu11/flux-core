@@ -22,6 +22,7 @@
 #include "src/common/libcontent/content.h"
 #include "src/common/libczmqcontainers/czmq_containers.h"
 #include "ccan/str/str.h"
+#include "ccan/array_size/array_size.h"
 
 #include "treeobj.h"
 #include "kvs_treewalk.h"
@@ -565,6 +566,37 @@ static void test_valref_noload (flux_t *h, struct blobstore *bs)
     free (rootref);
 }
 
+/* kvs_treewalk_strerror() returns a non-empty static string for each defined
+ * error category and a generic "unknown error" for an out-of-range value.
+ */
+static void test_strerror (void)
+{
+    enum kvs_treewalk_error errors[] = {
+        KVS_TREEWALK_ERROR_INVALID,
+        KVS_TREEWALK_ERROR_BADCOUNT,
+        KVS_TREEWALK_ERROR_LOAD,
+        KVS_TREEWALK_ERROR_DECODE,
+        KVS_TREEWALK_ERROR_NOTDIR,
+    };
+    const char *s;
+
+    for (int i = 0; i < ARRAY_SIZE (errors); i++) {
+        s = kvs_treewalk_strerror (errors[i]);
+        ok (s != NULL
+            && strlen (s) > 0
+            && !streq (s, "unknown error"),
+            "kvs_treewalk_strerror (%d) returns a non-empty string",
+            errors[i]);
+    }
+
+    s = kvs_treewalk_strerror (-1);
+    ok (s != NULL && streq (s, "unknown error"),
+        "kvs_treewalk_strerror (-1) returns \"unknown error\"");
+    s = kvs_treewalk_strerror (12345);
+    ok (s != NULL && streq (s, "unknown error"),
+        "kvs_treewalk_strerror (out of range) returns \"unknown error\"");
+}
+
 static void test_invalid_args (flux_t *h)
 {
     struct collector c;
@@ -608,6 +640,7 @@ int main (int argc, char *argv[])
     test_missing_dirref (h, &bs);
     test_missing_valref_blob (h, &bs);
     test_request_failure (h, &bs);
+    test_strerror ();
 
     if (test_server_stop (h) < 0)
         BAIL_OUT ("test_server_stop failed");

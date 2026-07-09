@@ -87,6 +87,23 @@ static void treewalk_fatal (struct kvs_treewalk *tw, int errnum)
         tw->errnum = errnum;
 }
 
+const char *kvs_treewalk_strerror (enum kvs_treewalk_error error)
+{
+    switch (error) {
+        case KVS_TREEWALK_ERROR_INVALID:
+            return "invalid tree object";
+        case KVS_TREEWALK_ERROR_BADCOUNT:
+            return "dirref blobref count is not 1";
+        case KVS_TREEWALK_ERROR_LOAD:
+            return "could not load content";
+        case KVS_TREEWALK_ERROR_DECODE:
+            return "could not decode tree object";
+        case KVS_TREEWALK_ERROR_NOTDIR:
+            return "dirref references non-directory";
+    }
+    return "unknown error";
+}
+
 static void report_error (struct kvs_treewalk *tw,
                           const char *path,
                           enum kvs_treewalk_error error,

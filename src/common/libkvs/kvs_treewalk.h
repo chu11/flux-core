@@ -143,6 +143,11 @@ int kvs_treewalk_run (struct kvs_treewalk *tw);
 
 void kvs_treewalk_destroy (struct kvs_treewalk *tw);
 
+/* Return a static human-readable string describing a kvs_treewalk_error
+ * value.  An unrecognized value returns "unknown error".
+ */
+const char *kvs_treewalk_strerror (enum kvs_treewalk_error error);
+
 #endif /* !_KVS_TREEWALK_H */
 
 /*
