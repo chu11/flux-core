@@ -264,27 +264,27 @@ primary, such as an operator's own :option:`flux kvs copy`.
 Relationship to preserving running jobs
 ----------------------------------------
 
-Today private namespaces are created and destroyed by job-exec per job; on
-destroy, the namespace root is grafted into the primary tree, and while a job
-runs a primary-tree symlink points at its private namespace. Running jobs are
-not yet preserved across a restart, but will need to be.
+Private namespaces are created and destroyed by job-exec per job; on destroy,
+the namespace root is grafted into the primary tree, and while a job runs a
+primary-tree symlink points at its private namespace.
 
-GC is intentionally decoupled from that effort. GC's only requirement is that
-**a running job's namespace root is enumerable as a live root whenever the
-instance considers that job active.** It reads roots from the running KVS at
-mark time and does not care how — or whether — they are persisted. However the
-preserve-running-jobs design eventually reconstitutes running namespaces after
-a restart (re-checkpointing them, persisting per-job state, re-creating them
-from job-exec, etc.), they will reappear as live roots in ``kvsroot_mgr`` and
-GC will mark them with no change to this plan. This is why the checkpoint
-format is deliberately left untouched here: persisting private namespaces is
-that effort's decision to make, not GC's.
+GC is intentionally decoupled from job execution. GC's only requirement is that
+**a running job's namespace root is either enumerable as a live root or
+reachable from the primary root whenever the instance considers that job
+active.** It reads live roots from the running KVS at mark time and marks the
+primary tree; it does not care how a namespace is persisted.
 
-One existing code path to revisit under that effort is ``checkpoint_running()``
-in ``job-exec/checkpoint.c``, which records running jobs' rootrefs as an opaque
-value in ``job-exec.kvs-namespaces`` that GC does not traverse, so
-reconstituting a namespace from it must re-establish the live root before the
-namespace stops being enumerable.
+To preserve running jobs across a restart, job-exec grafts each running job's
+guest namespace into the primary tree at ``job.<id>.guest`` as a dirref on
+shutdown — the same representation used for a completed job — rather than
+recording an opaque root reference that GC cannot traverse. Because the dirref
+is a real edge in the object graph, the guest content is reachable from the
+primary root and is marked by GC (and captured by the shutdown content dump)
+with no change to this plan. On restart, job-exec recovers the rootref from the
+dirref and recreates the namespace, which reappears as a live root in
+``kvsroot_mgr``. (This graft replaced an earlier opaque
+``job-exec.kvs-namespaces`` checkpoint that GC did not traverse; see flux-core
+#4201.)
 
 Backing store primitives
 =========================
