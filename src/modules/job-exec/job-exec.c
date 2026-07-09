@@ -106,7 +106,6 @@
 
 #include "job-exec.h"
 #include "namespace.h"
-#include "checkpoint.h"
 #include "exec_config.h"
 
 static double max_start_delay_percent;
@@ -1178,16 +1177,25 @@ static void get_rootref_cb (flux_future_t *fprev, void *arg)
     flux_t *h = flux_future_get_flux (fprev);
     struct jobinfo *job = arg;
     flux_future_t *f = NULL;
+    const char *treeobj_str;
 
-    if (!(job->rootref = checkpoint_find_rootref (fprev,
-                                                  job->id,
-                                                  job->userid)))
+    /*  Recover the guest namespace rootref from the dirref grafted at
+     *   job.<id>.guest on the last clean shutdown.  If it cannot be
+     *   recovered (e.g. the key is still a symlink after an unclean
+     *   shutdown), fail the job rather than reattaching to a fresh, empty
+     *   namespace and silently losing the job's KVS data.
+     */
+    if (flux_kvs_lookup_get_treeobj (fprev, &treeobj_str) < 0
+        || !(job->rootref = namespace_rootref (treeobj_str))) {
+        saved_errno = errno;
         flux_log (job->h,
-                  LOG_DEBUG,
-                  "checkpoint rootref not found: %s",
+                  LOG_ERR,
+                  "could not recover guest namespace for %s",
                   idf58 (job->id));
+        errno = saved_errno;
+        goto error;
+    }
 
-    /* if rootref not found, still create namespace */
     if (!(f = ns_create_and_link (h, job)))
         goto error;
 
@@ -1206,11 +1214,11 @@ static flux_future_t *ns_get_rootref (flux_t *h, struct jobinfo *job)
     flux_future_t *f = NULL;
     flux_future_t *f2 = NULL;
 
-    if (!(f = checkpoint_get_rootrefs (h))) {
-        flux_log_error (h, "ns_get_rootref: checkpoint_get_rootrefs");
+    if (!(f = namespace_lookup (h, job->id))) {
+        flux_log_error (h, "ns_get_rootref: namespace_lookup");
         return NULL;
     }
-    if (!f || !(f2 = flux_future_and_then (f, get_rootref_cb, job))) {
+    if (!(f2 = flux_future_and_then (f, get_rootref_cb, job))) {
         flux_log_error (h, "ns_get_rootref: flux_future_and_then");
         flux_future_destroy (f);
         return NULL;
@@ -1719,11 +1727,8 @@ static int unload_implementations (struct job_exec_ctx *ctx)
     int i = 0;
     if (ctx && ctx->jobs) {
         /* Preserve running jobs' guest namespaces across restart via the
-         * graft in job.<id>.guest.  The legacy checkpoint is still written
-         * here; the read path is switched to the graft in a follow-on
-         * commit, after which the checkpoint is removed.
+         * graft in job.<id>.guest, from which reattach recovers them.
          */
-        checkpoint_running (ctx->h, ctx->jobs);
         if (graft_running_ns (ctx) < 0)
             flux_log_error (ctx->h, "failed to graft guest namespaces");
     }
