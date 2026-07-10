@@ -1040,8 +1040,8 @@ static int jobinfo_finalize (struct jobinfo *job)
     job->finalizing = 1;
 
     if (job->has_namespace) {
-        flux_future_t *f = namespace_move (job);
-        if (!f || flux_future_then (f, -1., namespace_move_cb, job) < 0)
+        if (!(f = namespace_move (job))
+            || flux_future_then (f, -1., namespace_move_cb, job) < 0)
             goto error;
     }
     else if (jobinfo_release (job) < 0)
