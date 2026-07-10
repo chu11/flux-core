@@ -690,6 +690,72 @@ MONITORING
 
     $ flux run -o sysmon -o sysmon.period=5s myapp
 
+COPROCESS
+=========
+
+.. option:: coprocess=OBJECT
+
+  Launch one or more helper processes ("co-processes") that run alongside the
+  job for its duration. This is intended for tools such as node monitoring
+  or profiling utilities.
+
+  The option value is a JSON object keyed by co-process name. Each named
+  entry is itself an object with the following keys:
+
+  **command**
+    (array of strings, required) The argv of the helper command. Each argument
+    may contain shell mustache tags, which are expanded before the helper
+    is launched (see the MUSTACHE TEMPLATES section in :man1:`flux-submit`).
+    For example, ``"--jobid={{id}}"`` expands to the F58 job ID.
+
+  **output**
+    (string, optional) A template for the output file that captures
+    the helper's combined stdout and stderr. If unset, it defaults to
+    ``coproc-<name>-{{id}}.log`` (a single aggregated file per co-process).
+    The template is rendered with shell mustache tags (see the MUSTACHE
+    TEMPLATES section in :man1:`flux-submit`); useful tags include ``{{id}}``
+    (the F58 job ID, matching :man1:`flux-jobs`), ``{{node.id}}`` (shell
+    rank), and ``{{node.name}}`` (node hostname). Each shell renders the
+    template for its own rank, so a template with a per-node tag names a
+    distinct file on each node.
+
+  **ranks**
+    (string, optional) An RFC 22 idset of shell ranks on which to launch
+    the co-process, or ``"all"``. Default: ``"all"`` (one helper per shell,
+    i.e.  per node).
+
+  Each participating shell launches its own copy of the helper. When the
+  ``output`` template expands to the same path on every shell (a per-job
+  file), follower shells forward their output to the leader shell, which
+  writes the single aggregated file. When the template expands to a distinct
+  path per shell (it contains ``{{node.id}}`` or ``{{node.name}}``), each
+  shell writes its own file directly, avoiding any forwarding to the leader.
+
+  Co-processes are sent ``SIGTERM`` when all tasks complete, escalating to
+  ``SIGKILL`` if they do not exit within ``coprocess-kill-timeout``.
+
+  This option is typically set from a drop-in Lua rc file rather than on the
+  command line. For example, a site could provide
+  ``/etc/flux/shell/lua.d/vmstat.lua`` that sets the option when
+  ``-o vmstat`` is given:
+
+  .. code-block:: lua
+
+    if shell.options["vmstat"] then
+        shell.options["coprocess"] = {
+            vmstat = {
+                command = {"vmstat", "5"},
+                output  = "vmstat-{{id}}.log",
+            }
+        }
+    end
+
+.. option:: coprocess-kill-timeout=FSD
+
+  Time to wait after co-processes are sent ``SIGTERM`` (when all tasks
+  complete) before escalating to ``SIGKILL``. Accepts Flux Standard Duration.
+  Default: ``10s``.
+
 REXEC OPTIONS
 =============
 

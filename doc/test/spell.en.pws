@@ -846,8 +846,11 @@ kbd
 adminarch
 AiVi
 auth
+coproc
+coprocess
 coredump
 coredumpctl
+vmstat
 fatnode
 fubar
 javascript
