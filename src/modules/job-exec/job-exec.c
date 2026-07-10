@@ -105,7 +105,7 @@
 #include "ccan/str/str.h"
 
 #include "job-exec.h"
-#include "checkpoint.h"
+#include "namespace.h"
 #include "exec_config.h"
 
 static double max_start_delay_percent;
@@ -909,11 +909,11 @@ void jobinfo_log_output (struct jobinfo *job,
                         data);
 }
 
-static void namespace_delete (flux_future_t *f, void *arg)
+static void ns_delete (flux_future_t *f, void *arg)
 {
     struct jobinfo *job = arg;
     flux_t *h = job->ctx->h;
-    flux_future_t *fnext = flux_kvs_namespace_remove (h, job->ns);
+    flux_future_t *fnext = namespace_remove (h, job->ns);
     if (!fnext)
         flux_future_continue_error (f, errno, NULL);
     else
@@ -921,59 +921,52 @@ static void namespace_delete (flux_future_t *f, void *arg)
     flux_future_destroy (f);
 }
 
-static void namespace_copy (flux_future_t *f, void *arg)
+static void ns_copy (flux_future_t *f, void *arg)
 {
     struct jobinfo *job = arg;
     flux_t *h = job->ctx->h;
-    flux_future_t *fnext = NULL;
-    char dst [256];
+    flux_future_t *fnext;
 
-    if (flux_job_kvs_key (dst, sizeof (dst), job->id, "guest") < 0) {
-        flux_log_error (h, "namespace_move: flux_job_kvs_key");
-        goto done;
-    }
-    if (!(fnext = flux_kvs_copy (h, job->ns, ".", NULL, dst, 0)))
-        flux_log_error (h, "namespace_move: flux_kvs_copy");
-done:
-    if (fnext)
-        flux_future_continue (f, fnext);
-    else
+    if (!(fnext = namespace_graft (h, job->id, job->ns))) {
+        flux_log_error (h, "ns_move: namespace_graft");
         flux_future_continue_error (f, errno, NULL);
+    }
+    else
+        flux_future_continue (f, fnext);
     flux_future_destroy (f);
 }
 
-/*  Move the guest namespace for `job` into the primary namespace first
- *   issuing the `done` terminating event into the exec.eventlog.
+/*  Graft the guest namespace for `job` into the primary namespace and
+ *   remove it, first quiescing the exec.eventlog.  If `event` is non-NULL
+ *   it is posted to the exec.eventlog as the final entry (e.g. "done" on
+ *   job completion); pass NULL to preserve a still-running job across a
+ *   restart without terminating its eventlog.
  *
- *  The process is split into a chained future of 3 parts:
- *   1. Issue the final write into the exec.eventlog
- *   2. Copy the namespace into the primary
- *   3. Delete the guest namespace
+ *  The process is a chained future of 3 parts:
+ *   1. Post the final event (if any) and commit the exec.eventlog, so its
+ *      buffered entries are flushed to the guest namespace before it is
+ *      grafted and becomes read-only.
+ *   2. Graft the namespace into the primary namespace.
+ *   3. Remove the guest namespace.
  */
-static flux_future_t * namespace_move (struct jobinfo *job)
+static flux_future_t * ns_move (struct jobinfo *job, const char *event)
 {
     flux_t *h = job->ctx->h;
     flux_future_t *f = NULL;
     flux_future_t *f1 = NULL;
     flux_future_t *f2 = NULL;
 
-    if (jobinfo_emit_event_pack_nowait (job, "done", NULL) < 0)
+    if (event && jobinfo_emit_event_pack_nowait (job, event, NULL) < 0)
         flux_log_error (h, "emit_event");
-    /*
-     *  Ensure the final eventlog entry ("done", from above), is committed
-     *   to then eventlog before performing the next steps. This ensures
-     *   the eventlog is quiesced before the namespace is moved and becomes
-     *   read-only.
-     */
     if (!(f = eventlogger_commit (job->ev))) {
-        flux_log_error (h, "namespace_move: jobinfo_emit_event");
+        flux_log_error (h, "ns_move: eventlogger_commit");
         goto error;
     }
-    if (!(f1 = flux_future_and_then (f, namespace_copy, job))
-        || !(f1 = flux_future_or_then (f, namespace_copy, job))
-        || !(f2 = flux_future_and_then (f1, namespace_delete, job))
-        || !(f2 = flux_future_or_then (f1, namespace_delete, job))) {
-        flux_log_error (h, "namespace_move: flux_future_and_then");
+    if (!(f1 = flux_future_and_then (f, ns_copy, job))
+        || !(f1 = flux_future_or_then (f, ns_copy, job))
+        || !(f2 = flux_future_and_then (f1, ns_delete, job))
+        || !(f2 = flux_future_or_then (f1, ns_delete, job))) {
+        flux_log_error (h, "ns_move: flux_future_and_then");
         goto error;
     }
     return f2;
@@ -1019,7 +1012,7 @@ static int jobinfo_release (struct jobinfo *job)
     return rc;
 }
 
-static void namespace_move_cb (flux_future_t *f, void *arg)
+static void ns_move_cb (flux_future_t *f, void *arg)
 {
     struct jobinfo *job = arg;
     jobinfo_release (job);
@@ -1040,8 +1033,8 @@ static int jobinfo_finalize (struct jobinfo *job)
     job->finalizing = 1;
 
     if (job->has_namespace) {
-        flux_future_t *f = namespace_move (job);
-        if (!f || flux_future_then (f, -1., namespace_move_cb, job) < 0)
+        if (!(f = ns_move (job, "done"))
+            || flux_future_then (f, -1., ns_move_cb, job) < 0)
             goto error;
     }
     else if (jobinfo_release (job) < 0)
@@ -1124,36 +1117,7 @@ done:
     flux_future_destroy (f);
 }
 
-static flux_future_t * jobinfo_link_guestns (struct jobinfo *job)
-{
-    int saved_errno;
-    flux_t *h = job->ctx->h;
-    flux_kvs_txn_t *txn = NULL;
-    flux_future_t *f = NULL;
-    char key [64];
-
-    if (flux_job_kvs_key (key, sizeof (key), job->id, "guest") < 0) {
-        flux_log_error (h, "link guestns: flux_job_kvs_key");
-        return NULL;
-    }
-    if (!(txn = flux_kvs_txn_create ())) {
-        flux_log_error (h, "link guestns: flux_kvs_txn_create");
-        return NULL;
-    }
-    if (flux_kvs_txn_symlink (txn, 0, key, job->ns, ".") < 0) {
-        flux_log_error (h, "link guestns: flux_kvs_txn_symlink");
-        goto out;
-    }
-    if (!(f = flux_kvs_commit (h, NULL, 0, txn)))
-        flux_log_error (h, "link_guestns: flux_kvs_commit");
-out:
-    saved_errno = errno;
-    flux_kvs_txn_destroy (txn);
-    errno = saved_errno;
-    return f;
-}
-
-static void namespace_link (flux_future_t *fprev, void *arg)
+static void ns_link (flux_future_t *fprev, void *arg)
 {
     int saved_errno;
     flux_t *h = flux_future_get_flux (fprev);
@@ -1162,7 +1126,7 @@ static void namespace_link (flux_future_t *fprev, void *arg)
     flux_future_t *f = NULL;
 
     if (!(cf = flux_future_wait_all_create ())) {
-        flux_log_error (h, "namespace_link: flux_future_wait_all_create");
+        flux_log_error (h, "ns_link: flux_future_wait_all_create");
         goto error;
     }
     flux_future_set_flux (cf, h);
@@ -1172,7 +1136,7 @@ static void namespace_link (flux_future_t *fprev, void *arg)
         || flux_future_push (cf, "emit event", f) < 0)
         goto error;
 
-    if (!(f = jobinfo_link_guestns (job))
+    if (!(f = namespace_symlink (h, job->id, job->ns))
         || flux_future_push (cf, "link guestns", f) < 0)
         goto error;
     flux_future_continue (fprev, cf);
@@ -1185,21 +1149,13 @@ error:
     flux_future_destroy (fprev);
 }
 
-static flux_future_t *ns_create_and_link (flux_t *h,
-                                          struct jobinfo *job,
-                                          int flags)
+static flux_future_t *ns_create_and_link (flux_t *h, struct jobinfo *job)
 {
     flux_future_t *f = NULL;
     flux_future_t *f2 = NULL;
+    const char *rootref = (job->reattach && job->rootref) ? job->rootref : NULL;
 
-    if (job->reattach && job->rootref)
-        f = flux_kvs_namespace_create_with (h,
-                                            job->ns,
-                                            job->rootref,
-                                            job->userid,
-                                            flags);
-    else
-        f = flux_kvs_namespace_create (h, job->ns, job->userid, flags);
+    f = namespace_create (h, job->ns, job->userid, rootref);
 
     /*  Set job->has_namespace flag immediately after sending the namespace
      *  create RPC. This avoids the potential to leave orphaned namespaces
@@ -1207,8 +1163,8 @@ static flux_future_t *ns_create_and_link (flux_t *h,
      */
     job->has_namespace = 1;
 
-    if (!f || !(f2 = flux_future_and_then (f, namespace_link, job))) {
-        flux_log_error (h, "namespace_move: flux_future_and_then");
+    if (!f || !(f2 = flux_future_and_then (f, ns_link, job))) {
+        flux_log_error (h, "ns_create_and_link: flux_future_and_then");
         flux_future_destroy (f);
         return NULL;
     }
@@ -1221,17 +1177,26 @@ static void get_rootref_cb (flux_future_t *fprev, void *arg)
     flux_t *h = flux_future_get_flux (fprev);
     struct jobinfo *job = arg;
     flux_future_t *f = NULL;
+    const char *treeobj_str;
 
-    if (!(job->rootref = checkpoint_find_rootref (fprev,
-                                                  job->id,
-                                                  job->userid)))
+    /*  Recover the guest namespace rootref from the dirref grafted at
+     *   job.<id>.guest on the last clean shutdown.  If it cannot be
+     *   recovered (e.g. the key is still a symlink after an unclean
+     *   shutdown), fail the job rather than reattaching to a fresh, empty
+     *   namespace and silently losing the job's KVS data.
+     */
+    if (flux_kvs_lookup_get_treeobj (fprev, &treeobj_str) < 0
+        || !(job->rootref = namespace_rootref (treeobj_str))) {
+        saved_errno = errno;
         flux_log (job->h,
-                  LOG_DEBUG,
-                  "checkpoint rootref not found: %s",
+                  LOG_ERR,
+                  "could not recover guest namespace for %s",
                   idf58 (job->id));
+        errno = saved_errno;
+        goto error;
+    }
 
-    /* if rootref not found, still create namespace */
-    if (!(f = ns_create_and_link (h, job, 0)))
+    if (!(f = ns_create_and_link (h, job)))
         goto error;
 
     flux_future_continue (fprev, f);
@@ -1244,18 +1209,16 @@ error:
     flux_future_destroy (fprev);
 }
 
-static flux_future_t *ns_get_rootref (flux_t *h,
-                                      struct jobinfo *job,
-                                      int flags)
+static flux_future_t *ns_get_rootref (flux_t *h, struct jobinfo *job)
 {
     flux_future_t *f = NULL;
     flux_future_t *f2 = NULL;
 
-    if (!(f = checkpoint_get_rootrefs (h))) {
-        flux_log_error (h, "ns_get_rootref: checkpoint_get_rootrefs");
+    if (!(f = namespace_lookup (h, job->id))) {
+        flux_log_error (h, "ns_get_rootref: namespace_lookup");
         return NULL;
     }
-    if (!f || !(f2 = flux_future_and_then (f, get_rootref_cb, job))) {
+    if (!(f2 = flux_future_and_then (f, get_rootref_cb, job))) {
         flux_log_error (h, "ns_get_rootref: flux_future_and_then");
         flux_future_destroy (f);
         return NULL;
@@ -1273,9 +1236,9 @@ static flux_future_t *jobinfo_start_init (struct jobinfo *job)
     flux_future_set_flux (f, job->ctx->h);
 
     if (job->reattach)
-        f_kvs = ns_get_rootref (h, job, 0);
+        f_kvs = ns_get_rootref (h, job);
     else
-        f_kvs = ns_create_and_link (h, job, 0);
+        f_kvs = ns_create_and_link (h, job);
 
     if (flux_future_push (f, "ns", f_kvs) < 0)
         goto err;
@@ -1716,7 +1679,14 @@ static int configure_implementations (flux_t *h, int argc, char **argv)
     return 0;
 }
 
-static int remove_running_ns (struct job_exec_ctx *ctx)
+/*  On module unload, graft each running job's guest namespace into the
+ *   primary namespace (as a dirref at job.<id>.guest) and remove it, so the
+ *   namespace is preserved across a restart: its content is reachable from
+ *   the primary root, protected by KVS garbage collection and captured by
+ *   the shutdown content dump.  No terminating event is posted since the
+ *   jobs are still running and will be reattached.
+ */
+static int graft_running_ns (struct job_exec_ctx *ctx)
 {
     struct jobinfo *job = zhashx_first (ctx->jobs);
     flux_future_t *fall = NULL;
@@ -1730,7 +1700,7 @@ static int remove_running_ns (struct job_exec_ctx *ctx)
                     goto cleanup;
                 flux_future_set_flux (fall, ctx->h);
             }
-            if (!(f = flux_kvs_namespace_remove (ctx->h, job->ns)))
+            if (!(f = ns_move (job, NULL)))
                 goto cleanup;
             if (flux_future_push (fall, job->ns, f) < 0)
                 goto cleanup;
@@ -1756,9 +1726,11 @@ static int unload_implementations (struct job_exec_ctx *ctx)
     struct exec_implementation *impl;
     int i = 0;
     if (ctx && ctx->jobs) {
-        checkpoint_running (ctx->h, ctx->jobs);
-        if (remove_running_ns (ctx) < 0)
-            flux_log_error (ctx->h, "failed to remove guest namespaces");
+        /* Preserve running jobs' guest namespaces across restart via the
+         * graft in job.<id>.guest, from which reattach recovers them.
+         */
+        if (graft_running_ns (ctx) < 0)
+            flux_log_error (ctx->h, "failed to graft guest namespaces");
     }
     while ((impl = implementations[i]) && impl->name) {
         if (impl->unload)

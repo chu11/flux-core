@@ -127,6 +127,7 @@ job_exec_la_LIBADD = \
 	$(builddir)/job-exec/libjob-exec.la \
 	$(top_builddir)/src/common/libjob/libjob.la \
 	$(top_builddir)/src/common/libsubprocess/libsubprocess.la \
+	$(top_builddir)/src/common/libkvs/libkvs.la \
 	$(top_builddir)/src/common/libflux-internal.la \
 	$(top_builddir)/src/common/libflux-core.la \
 	$(top_builddir)/src/common/libflux/libflux.la \
