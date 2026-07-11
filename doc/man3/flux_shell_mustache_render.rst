@@ -22,6 +22,9 @@ SYNOPSIS
                                           flux_shell_task_t *task,
                                           const char *fmt);
 
+   bool flux_shell_mustache_is_per_rank (flux_shell_t *shell,
+                                         const char *fmt);
+
 DESCRIPTION
 ===========
 
@@ -38,11 +41,20 @@ task specified by :var:`task`.
 These functions are useful for expanding job-specific templates in environment
 variables, command arguments, or plugin configurations.
 
+:func:`flux_shell_mustache_is_per_rank` returns ``true`` if :var:`fmt` renders
+to a different result across shell ranks or tasks, i.e. it contains a per-rank
+or per-task tag such as ``{{node.id}}``, ``{{node.name}}``, ``{{task.id}}``, or
+``{{tmpdir}}``. This is useful for deciding whether a templated output path
+yields a distinct file per shell.
+
 RETURN VALUE
 ============
 
-These functions return an allocated string on success which the caller must
-free, or NULL on failure with :var:`errno` set.
+The render functions return an allocated string on success which the caller
+must free, or NULL on failure with :var:`errno` set.
+
+:func:`flux_shell_mustache_is_per_rank` returns ``true`` or ``false``, setting
+:var:`errno` to :var:`EINVAL` and returning ``false`` on invalid arguments.
 
 
 ERRORS

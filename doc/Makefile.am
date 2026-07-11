@@ -189,6 +189,7 @@ MAN3_FILES_SECONDARY = \
 	man3/flux_shell_task_cmd.3 \
 	man3/flux_shell_rank_mustache_render.3 \
 	man3/flux_shell_task_mustache_render.3 \
+	man3/flux_shell_mustache_is_per_rank.3 \
 	man3/flux_service_unregister.3 \
 	man3/flux_send_new.3 \
 	man3/flux_clone.3 \
