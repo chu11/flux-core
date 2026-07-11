@@ -11,6 +11,7 @@
 #ifndef FLUX_SHELL_H
 #define FLUX_SHELL_H
 
+#include <stdbool.h>
 #include <flux/core.h>
 #include <flux/taskmap.h>
 #include <flux/hostlist.h>
@@ -438,6 +439,14 @@ char *flux_shell_rank_mustache_render (flux_shell_t *shell,
 char *flux_shell_task_mustache_render (flux_shell_t *shell,
                                        flux_shell_task_t *task,
                                        const char *fmt);
+
+/*  Return true if mustache template 'fmt' renders to a different result
+ *  across shell ranks or tasks (i.e. it contains a per-rank or per-task tag
+ *  such as {{node.id}}, {{node.name}}, {{task.id}}, or {{tmpdir}}). This is
+ *  useful for deciding whether a templated output path yields a distinct file
+ *  per shell. Returns false (with errno set to EINVAL) on invalid arguments.
+ */
+bool flux_shell_mustache_is_per_rank (flux_shell_t *shell, const char *fmt);
 
 #ifdef __cplusplus
 }
