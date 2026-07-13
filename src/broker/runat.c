@@ -381,6 +381,12 @@ static flux_subprocess_t *start_command (struct runat *r,
 
     if (runat_command_setenv (cmd, env_blocklist, r->local_uri, r->jobid) < 0)
         return NULL;
+    /* Label the subprocess with the runat entry name (rc1, rc2, cleanup,
+     * etc.) so it is identifiable in 'flux sproc ps'.  Commands within an
+     * entry run sequentially, so the name is unique among live processes.
+     */
+    if (flux_cmd_set_label (cmd->cmd, entry->name) < 0)
+        return NULL;
     if (!(cmd->flags & FLUX_SUBPROCESS_FLAGS_STDIO_FALLTHROUGH)) {
         ops.on_stdout = stdio_cb;
         ops.on_stderr = stdio_cb;
