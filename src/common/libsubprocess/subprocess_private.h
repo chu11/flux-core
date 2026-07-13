@@ -117,9 +117,11 @@ struct flux_subprocess {
     int signal_pending;         /* signal sent while starting */
 
     /* server */
-    bool bg;                    /* if flags & SUBPROCESS_REXEC_BACKGROUND */
+    bool bg;                    /* started in background (immutable) */
     bool waitable;              /* if flags & SUBPROCESS_REXEC_WAITABLE */
     const flux_msg_t *waiter;   /* subprocess wait request */
+    int rexec_flags;            /* RFC 42 exec 'flags' proc was started with */
+    bool attached;              /* a client is attached to this bg process */
 };
 
 void subprocess_check_completed (flux_subprocess_t *p);
