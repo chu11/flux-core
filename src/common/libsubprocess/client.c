@@ -40,6 +40,7 @@ struct rexec_response {
     const char *type;
     pid_t pid;
     int status;
+    json_t *cmd;            /* command object, "attached" response only */
     struct rexec_io io;
     json_t *channels;
 };
@@ -60,6 +61,8 @@ static void rexec_response_clear (struct rexec_response *resp)
     free (resp->io.data);
     json_decref (resp->channels);
     resp->channels = NULL;
+    json_decref (resp->cmd);
+    resp->cmd = NULL;
 
     memset (resp, 0, sizeof (*resp));
 
@@ -95,7 +98,10 @@ static struct rexec_ctx *rexec_ctx_create (flux_cmd_t *cmd,
     }
     if (!(ctx = calloc (1, sizeof (*ctx))))
         return NULL;
-    if (!(ctx->cmd = cmd_tojson (cmd))
+    /* cmd is NULL for attach requests, which identify the target by
+     * pid/label rather than carrying a command object.
+     */
+    if ((cmd && !(ctx->cmd = cmd_tojson (cmd)))
         || !(ctx->service_name = strdup (service_name)))
         goto error;
     ctx->flags = flags;
@@ -287,6 +293,76 @@ error:
     return NULL;
 }
 
+flux_future_t *subprocess_rexec_attach (flux_t *h,
+                                        const char *service_name,
+                                        uint32_t rank,
+                                        pid_t pid,
+                                        const char *label,
+                                        int flags,
+                                        int local_flags)
+{
+    flux_future_t *f = NULL;
+    struct rexec_ctx *ctx;
+    char *topic;
+    bool sign = false;
+
+    if (!h || !service_name || (pid <= 0 && !label)) {
+        errno = EINVAL;
+        return NULL;
+    }
+    if (asprintf (&topic, "%s.attach", service_name) < 0)
+        return NULL;
+    /* No command object for attach; the target is identified by pid/label.
+     */
+    if (!(ctx = rexec_ctx_create (NULL, service_name, rank, 0)))
+        goto error;
+#if HAVE_FLUX_SECURITY
+    if (local_flags & FLUX_SUBPROCESS_FLAGS_SIGN) {
+        local_flags &= ~FLUX_SUBPROCESS_FLAGS_SIGN;
+        ctx->sign = sign = true;
+    }
+#endif
+    /* The attach flags select which output streams the server forwards
+     * (stdout, stderr, and/or auxiliary channels).
+     */
+    if (label)
+        f = rpc_pack_signed (h,
+                             sign,
+                             topic,
+                             rank,
+                             FLUX_RPC_STREAMING,
+                             false,
+                             "{s:i s:s s:i}",
+                             "pid", (int)pid,
+                             "label", label,
+                             "flags", flags);
+    else
+        f = rpc_pack_signed (h,
+                             sign,
+                             topic,
+                             rank,
+                             FLUX_RPC_STREAMING,
+                             false,
+                             "{s:i s:i}",
+                             "pid", (int)pid,
+                             "flags", flags);
+    if (!f
+        || flux_future_aux_set (f,
+                                "flux::rexec",
+                                ctx,
+                                (flux_free_f)rexec_ctx_destroy) < 0) {
+        rexec_ctx_destroy (ctx);
+        goto error;
+    }
+    ctx->matchtag = flux_rpc_get_matchtag (f);
+    free (topic);
+    return f;
+error:
+    ERRNO_SAFE_WRAP (free, topic);
+    flux_future_destroy (f);
+    return NULL;
+}
+
 flux_future_t *subprocess_rexec_bg (flux_t *h,
                                     const char *service_name,
                                     uint32_t rank,
@@ -353,12 +429,13 @@ int subprocess_rexec_get (flux_future_t *f)
     }
     rexec_response_clear (&ctx->response);
     if (flux_rpc_get_unpack (f,
-                             "{s:s s?i s?i s?O s?O}",
+                             "{s:s s?i s?i s?O s?O s?O}",
                              "type", &ctx->response.type,
                              "pid", &ctx->response.pid,
                              "status", &ctx->response.status,
                              "io", &ctx->response.io.obj,
-                             "channels", &ctx->response.channels) < 0)
+                             "channels", &ctx->response.channels,
+                             "cmd", &ctx->response.cmd) < 0)
         return -1;
     if (streq (ctx->response.type, "output")) {
         if (iodecode (ctx->response.io.obj,
@@ -387,11 +464,29 @@ int subprocess_rexec_get (flux_future_t *f)
     }
     else if (!streq (ctx->response.type, "started")
         && !streq (ctx->response.type, "stopped")
-        && !streq (ctx->response.type, "finished")) {
+        && !streq (ctx->response.type, "finished")
+        && !streq (ctx->response.type, "attached")) {
         errno = EPROTO;
         return -1;
     }
     return 0;
+}
+
+bool subprocess_rexec_is_attached (flux_future_t *f,
+                                   pid_t *pid,
+                                   json_t **cmd)
+{
+    struct rexec_ctx *ctx;
+    if ((ctx = flux_future_aux_get (f, "flux::rexec"))
+        && ctx->response.type != NULL
+        && streq (ctx->response.type, "attached")) {
+        if (pid)
+            *pid = ctx->response.pid;
+        if (cmd)
+            *cmd = ctx->response.cmd;
+        return true;
+    }
+    return false;
 }
 
 bool subprocess_rexec_is_started (flux_future_t *f, pid_t *pid)

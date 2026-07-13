@@ -55,7 +55,22 @@ flux_future_t *subprocess_rexec_bg (flux_t *h,
                                     const flux_cmd_t *cmd,
                                     int local_flags);
 
+/* Attach to an existing background subprocess identified by pid or label
+ * (label takes precedence if non-NULL).  Returns a streaming future whose
+ * first response is "attached".
+ */
+flux_future_t *subprocess_rexec_attach (flux_t *h,
+                                        const char *service_name,
+                                        uint32_t rank,
+                                        pid_t pid,
+                                        const char *label,
+                                        int flags,
+                                        int local_flags);
+
 int subprocess_rexec_get (flux_future_t *f);
+bool subprocess_rexec_is_attached (flux_future_t *f,
+                                   pid_t *pid,
+                                   json_t **cmd);
 bool subprocess_rexec_is_started (flux_future_t *f, pid_t *pid);
 bool subprocess_rexec_is_stopped (flux_future_t *f);
 bool subprocess_rexec_is_finished (flux_future_t *f, int *status);
