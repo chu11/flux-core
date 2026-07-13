@@ -15,7 +15,15 @@
 
 int subprocess_remote_setup (flux_subprocess_t *p, const char *service_name);
 
+/* Set only the service name, deferring I/O channel setup.  Used by attach,
+ * which sets up channels from the command received in the attach response.
+ */
+int subprocess_setup_service_name (flux_subprocess_t *p,
+                                   const char *service_name);
+
 int remote_exec (flux_subprocess_t *p);
+
+int remote_attach (flux_subprocess_t *p, pid_t pid, const char *label);
 
 flux_future_t *remote_kill (flux_subprocess_t *p, int signum);
 

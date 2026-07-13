@@ -397,13 +397,33 @@ static int remote_setup_channels (flux_subprocess_t *p)
     return 0;
 }
 
-int subprocess_remote_setup (flux_subprocess_t *p, const char *service_name)
+/* Set up the client-side I/O channels (stdio + auxiliary channels) from
+ * p->cmd.  Channel buffering options are read from the command, so p->cmd
+ * must be the actual command before this is called.  For attach this is
+ * deferred until the command is received in the attach response.
+ */
+int remote_setup_io (flux_subprocess_t *p)
 {
     if (remote_setup_stdio (p) < 0)
         return -1;
     if (remote_setup_channels (p) < 0)
         return -1;
+    return 0;
+}
+
+int subprocess_setup_service_name (flux_subprocess_t *p,
+                                   const char *service_name)
+{
     if (!(p->service_name = strdup (service_name)))
+        return -1;
+    return 0;
+}
+
+int subprocess_remote_setup (flux_subprocess_t *p, const char *service_name)
+{
+    if (remote_setup_io (p) < 0)
+        return -1;
+    if (subprocess_setup_service_name (p, service_name) < 0)
         return -1;
     return 0;
 }
@@ -519,6 +539,7 @@ static void rexec_continuation (flux_future_t *f, void *arg)
     json_t *channels = NULL;
     int len;
     bool eof;
+    json_t *attach_cmd = NULL;
 
     if (subprocess_rexec_get (f) < 0) {
         if (errno == ENODATA) {
@@ -542,7 +563,36 @@ static void rexec_continuation (flux_future_t *f, void *arg)
         set_failed (p, "%s", future_strerror (f, errno));
         goto error;
     }
-    if (subprocess_rexec_is_started (f, &p->pid)) {
+    if (subprocess_rexec_is_attached (f, &p->pid, &attach_cmd)) {
+        /* Successful attach to an already-running background subprocess.
+         * The attach request carried no command, so the I/O channels are set
+         * up now from the command object returned in the attach response.
+         * This reconstructs the original channel names and buffering options,
+         * so the reattached subprocess behaves like the original.  Output
+         * only begins after this response, so deferring channel setup to here
+         * is safe.
+         *
+         * The client requested forwarding for exactly the streams it has
+         * output callbacks for (see remote_attach()), and the server honors
+         * that, so the read channels set up here match the forwarded streams
+         * and their EOFs; no reconciliation is needed.
+         */
+        flux_cmd_t *cmd;
+        if (!attach_cmd || !(cmd = cmd_fromjson (attach_cmd, NULL))) {
+            errno = EPROTO;
+            set_failed (p, "attach response missing valid command");
+            goto error;
+        }
+        flux_cmd_destroy (p->cmd);
+        p->cmd = cmd;
+        if (remote_setup_io (p) < 0) {
+            set_failed (p, "error setting up attach I/O: %s", strerror (errno));
+            goto error;
+        }
+        p->pid_set = true;
+        process_new_state (p, FLUX_SUBPROCESS_RUNNING);
+    }
+    else if (subprocess_rexec_is_started (f, &p->pid)) {
         p->pid_set = true;
         process_new_state (p, FLUX_SUBPROCESS_RUNNING);
     }
@@ -604,6 +654,47 @@ int remote_exec (flux_subprocess_t *p)
         || flux_future_then (f, -1., rexec_continuation, p) < 0) {
         llog_debug (p,
                     "error sending rexec.exec request: %s",
+                    strerror (errno));
+        flux_future_destroy (f);
+        return -1;
+    }
+    p->f = f;
+    return 0;
+}
+
+int remote_attach (flux_subprocess_t *p, pid_t pid, const char *label)
+{
+    flux_future_t *f;
+    int flags = 0;
+    int local_flags = p->flags;
+
+    /* Select which streams the server should forward based on which output
+     * callbacks the caller registered, as remote_exec() does.  Auxiliary
+     * channels are requested with the channel flag; the specific channels
+     * come from the command returned in the attach response.
+     */
+    if (p->ops.on_stdout)
+        flags |= SUBPROCESS_REXEC_STDOUT;
+    if (p->ops.on_stderr)
+        flags |= SUBPROCESS_REXEC_STDERR;
+    if (p->ops.on_channel_out)
+        flags |= SUBPROCESS_REXEC_CHANNEL;
+
+    /* Clear LOCAL_UNBUF for the remote subprocess object.
+     */
+    local_flags &= ~FLUX_SUBPROCESS_FLAGS_LOCAL_UNBUF;
+
+    if (!(f = subprocess_rexec_attach (p->h,
+                                       p->service_name,
+                                       p->rank,
+                                       pid,
+                                       label,
+                                       flags,
+                                       local_flags))
+        || flux_future_then (f, -1., rexec_continuation, p) < 0) {
+        llog_debug (p,
+                    "error sending %s.attach request: %s",
+                    p->service_name,
                     strerror (errno));
         flux_future_destroy (f);
         return -1;

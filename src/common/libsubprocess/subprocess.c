@@ -699,6 +699,80 @@ flux_subprocess_t *flux_rexec (flux_t *h,
     return flux_rexec_ex (h, "rexec", rank, flags, cmd, ops, NULL, NULL);
 }
 
+flux_subprocess_t *flux_rexec_attach (flux_t *h,
+                                      const char *service_name,
+                                      int rank,
+                                      int flags,
+                                      pid_t pid,
+                                      const char *label,
+                                      const flux_subprocess_ops_t *ops)
+{
+    flux_subprocess_t *p = NULL;
+    flux_cmd_t *cmd = NULL;
+    flux_reactor_t *r;
+    int valid_flags = FLUX_SUBPROCESS_FLAGS_LOCAL_UNBUF
+                    | FLUX_SUBPROCESS_FLAGS_SIGN;
+
+    if (!h
+        || (rank < 0
+            && rank != FLUX_NODEID_ANY
+            && rank != FLUX_NODEID_UPSTREAM)
+        || (pid <= 0 && !label)
+        || !service_name) {
+        errno = EINVAL;
+        return NULL;
+    }
+    if (flags & ~valid_flags) {
+        errno = EINVAL;
+        return NULL;
+    }
+    if (!(r = flux_get_reactor (h)))
+        return NULL;
+
+    /* An attach carries no command; the target is identified by pid/label.
+     * subprocess_create() still requires a cmd object for its channel setup,
+     * so use an empty one.
+     */
+    if (!(cmd = flux_cmd_create (0, NULL, NULL)))
+        return NULL;
+
+    if (!(p = subprocess_create (h,
+                                 r,
+                                 flags,
+                                 cmd,
+                                 ops,
+                                 NULL,
+                                 rank,
+                                 false,
+                                 NULL,
+                                 NULL)))
+        goto error;
+
+    /* Defer I/O channel setup: it is done from the command received in the
+     * attach response (see rexec_continuation()).  Only the service name is
+     * needed now to send the attach request.
+     */
+    if (subprocess_setup_service_name (p, service_name) < 0)
+        goto error;
+
+    if (subprocess_setup_state_change (p) < 0)
+        goto error;
+
+    if (subprocess_setup_completed (p) < 0)
+        goto error;
+
+    if (remote_attach (p, pid, label) < 0)
+        goto error;
+
+    flux_cmd_destroy (cmd);
+    return p;
+
+error:
+    subprocess_decref (p);
+    flux_cmd_destroy (cmd);
+    return NULL;
+}
+
 void flux_subprocess_stream_start (flux_subprocess_t *p, const char *stream)
 {
     struct subprocess_channel *c;
