@@ -576,4 +576,137 @@ test_expect_success 'rexec: failed processes are not kept as zombies' '
 	test_debug "cat failed-zombie.out" &&
 	test_must_fail grep nonexistent failed-zombie.out
 '
+#
+# attach (RFC 42)
+#
+test_expect_success 'rexec: --attach requires a target argument' '
+	test_must_fail flux exec -r 0 --attach
+'
+test_expect_success 'rexec: --attach takes a single argument' '
+	test_must_fail flux exec -r 0 --attach x y
+'
+test_expect_success 'rexec: --attach cannot be combined with --bg' '
+	test_must_fail flux exec -r 0 --attach --bg x
+'
+# A pid is only meaningful on one rank, so attaching by pid to the default
+# (all-ranks) target set must be rejected.  Label attach is not restricted.
+test_expect_success 'rexec: --attach by pid to multiple ranks fails' '
+	test_must_fail flux exec -r 0-1 --attach 123456 2>attach_multi.err &&
+	grep "single target rank" attach_multi.err
+'
+# A value that overflows pid_t must be treated as a label, not truncated
+# into a valid pid.  The error wording distinguishes the two.
+test_expect_success 'rexec: --attach pid overflow is treated as a label' '
+	test_expect_code 127 flux exec -r 0 --attach 4294967297 2>attach_ovf.err &&
+	grep "label 4294967297" attach_ovf.err
+'
+# N.B. flux-exec maps the ENOENT attach failure to exit code 127
+test_expect_success 'rexec: --attach to nonexistent label fails' '
+	test_expect_code 127 flux exec -r 0 --attach nosuchlabel
+'
+test_expect_success 'rexec: --attach to nonexistent pid fails' '
+	test_expect_code 127 flux exec -r 0 --attach 123456
+'
+test_expect_success 'rexec: attach to running background process by label' '
+	flux exec -r 0 --bg --label=att-run sh -c "sleep 3; exit 4" &&
+	test_expect_code 4 flux exec -r 0 --attach att-run
+'
+test_expect_success 'rexec: attach to running background process by pid' '
+	IFS=": " read -r rank pid <<-EOF &&
+	$(flux exec -r0 --bg sh -c "sleep 3; exit 5")
+	EOF
+	test_debug "echo attaching to pid $pid on rank $rank" &&
+	test_expect_code 5 flux exec -r 0 --attach $pid
+'
+test_expect_success 'rexec: attach to already-exited waitable zombie returns status' '
+	flux exec -r 0 --bg --waitable --label=att-zombie sh -c "exit 7" &&
+	$rps | grep att-zombie &&
+	test_expect_code 7 flux exec -r 0 --attach att-zombie
+'
+test_expect_success 'rexec: attach reaps zombie (second attach fails)' '
+	flux exec -r 0 --bg --waitable --label=att-reap true &&
+	flux exec -r 0 --attach att-reap &&
+	test_expect_code 127 flux exec -r 0 --attach att-reap
+'
+test_expect_success 'rexec: second concurrent attach fails with EBUSY' '
+	flux exec -r 0 --bg --label=att-busy sleep 30 &&
+	{ flux exec -r 0 --attach att-busy >busy1.out 2>&1 & apid=$!; } &&
+	test_when_finished "kill $apid 2>/dev/null; $rkill -r 0 9 att-busy 2>/dev/null; true" &&
+	sleep 1 &&
+	test_must_fail flux exec -r 0 --attach att-busy 2>busy2.err &&
+	test_debug "cat busy2.err" &&
+	grep "already has a client attached" busy2.err
+'
+test_expect_success 'rexec: client disconnect reverts attach to background' '
+	flux exec -r 0 --bg --label=att-revert \
+	    sh -c "for i in \$(seq 30); do echo tick >&2; sleep 0.2; done; exit 6" &&
+	{ flux exec -r 0 --attach att-revert >revert.out 2>&1 & apid=$!; } &&
+	test_when_finished "$rkill -r 0 9 att-revert 2>/dev/null; true" &&
+	$waitfile --timeout=30 --pattern=tick revert.out &&
+	{ kill -KILL $apid 2>/dev/null; true; } &&
+	{ wait $apid 2>/dev/null; true; } &&
+	$rps | grep att-revert
+'
+# In attach mode SIGINT detaches (leaving the process running) and prints a
+# hint, rather than forwarding the signal to the process.  The process emits
+# output continuously so the attaching client can confirm it is attached
+# (via waitfile) before the signal is sent, avoiding a race.  Ticks go to
+# stderr because the client's stdout is block-buffered when redirected to a
+# file, so stdout ticks would not reach the file until the process exited.
+test_expect_success 'rexec: SIGINT detaches from attached process' '
+	flux exec -r 0 --bg --label=att-detach \
+	    sh -c "for i in \$(seq 50); do echo tick >&2; sleep 0.2; done; exit 3" &&
+	{ flux exec -r 0 --attach att-detach >att-detach.out 2>&1 & apid=$!; } &&
+	test_when_finished "$rkill -r 0 9 att-detach 2>/dev/null; true" &&
+	$waitfile --timeout=30 --pattern=tick att-detach.out &&
+	kill -INT $apid &&
+	wait $apid &&
+	test_debug "cat att-detach.out" &&
+	grep "detached" att-detach.out &&
+	grep "flux sproc kill att-detach" att-detach.out &&
+	$rps | grep att-detach
+'
+# wait and attach both consume the exit status, so a wait is rejected while
+# a client is attached (EBUSY).  N.B. the attached client is backgrounded
+# and its forwarded output is fully buffered to the file, so waitfile cannot
+# be used to confirm attachment; a short sleep lets the attach establish.
+test_expect_success 'rexec: wait fails while a client is attached' '
+	flux exec -r 0 --bg --waitable --label=att-wait sleep 30 &&
+	{ flux exec -r 0 --attach att-wait >att-wait.out 2>&1 & apid=$!; } &&
+	test_when_finished "kill -INT $apid 2>/dev/null; $rkill -r 0 9 att-wait 2>/dev/null; true" &&
+	sleep 1 &&
+	test_must_fail $rwait -r 0 att-wait 2>att-wait.err &&
+	test_debug "cat att-wait.err" &&
+	grep -i "client attached" att-wait.err
+'
+# A stream that reaches EOF while the process is in background mode produces
+# no EOF at that time (background output is not forwarded).  Per RFC 42 the
+# server must synthesize the EOF on attach so the client can complete.  Here
+# the process closes stdout before the attach.
+test_expect_success 'rexec: attach recovers status when stream closed in bg' '
+	flux exec -r 0 --bg --label=att-closed \
+	    sh -c "echo hi; exec 1>&-; sleep 2; exit 9" &&
+	$rps | grep att-closed &&
+	test_expect_code 9 flux exec -r 0 --attach att-closed
+'
+# A background process logs its output to the broker log throughout its life,
+# so the log has no gap while a client is attached.  The attached client only
+# receives lines emitted *during* the attach; assert those same lines are also
+# in the broker log (without the fix they would be missing = a gap).
+test_expect_success 'rexec: background output is logged while attached' '
+	flux dmesg -C &&
+	flux exec -r 0 --bg --label=att-log \
+	    sh -c "i=0; while true; do echo line\$i; i=\$((i+1)); sleep 0.2; done" &&
+	{ flux exec -r 0 --attach att-log >att-log.out 2>&1 & apid=$!; } &&
+	test_when_finished "$rkill -r 0 9 att-log 2>/dev/null; true" &&
+	sleep 1.5 &&
+	kill -INT $apid &&
+	wait $apid &&
+	flux dmesg >att-log.dmesg &&
+	test_debug "echo CLIENT SAW:; cat att-log.out; echo DMESG:; grep att-log att-log.dmesg" &&
+	seen=$(grep -o "line[0-9]*" att-log.out | tail -1) &&
+	test -n "$seen" &&
+	test_debug "echo checking that attach-seen line \$seen is logged" &&
+	grep "att-log.*$seen\$" att-log.dmesg
+'
 test_done
