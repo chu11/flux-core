@@ -120,6 +120,23 @@ void test_corner_cases (flux_reactor_t *r)
     ok (flux_rexec_wait (h, NULL, -42, 1234, NULL) == NULL && errno == EINVAL,
         "flux_rexec_wait fails with EINVAL with invalid rank");
 
+    ok (flux_rexec_attach (NULL, "rexec", 0, 0, 1234, NULL, NULL) == NULL
+        && errno == EINVAL,
+        "flux_rexec_attach fails with EINVAL with NULL handle");
+    ok (flux_rexec_attach (h, NULL, 0, 0, 1234, NULL, NULL) == NULL
+        && errno == EINVAL,
+        "flux_rexec_attach fails with EINVAL with NULL service_name");
+    ok (flux_rexec_attach (h, "rexec", 0, 0, -1, NULL, NULL) == NULL
+        && errno == EINVAL,
+        "flux_rexec_attach fails with EINVAL with neither pid nor label");
+    ok (flux_rexec_attach (h, "rexec", -42, 0, 1234, NULL, NULL) == NULL
+        && errno == EINVAL,
+        "flux_rexec_attach fails with EINVAL with invalid rank");
+    ok (flux_rexec_attach (h, "rexec", 0, FLUX_SUBPROCESS_FLAGS_FORK_EXEC,
+                           1234, NULL, NULL) == NULL
+        && errno == EINVAL,
+        "flux_rexec_attach fails with EINVAL with invalid flag");
+
     ok (flux_local_exec (r, 0, cmd, NULL) == NULL
         && errno == EINVAL,
         "flux_local_exec fails with cmd with zero args");

@@ -526,6 +526,134 @@ static void test_signed_kill_succeeds (flux_t *h)
     flux_subprocess_destroy (p);
 }
 
+/* Start a signed, labeled, waitable background 'sleep 300' so it can be
+ * attached to.  Returns the pid.
+ */
+static pid_t start_bg_sleep (flux_t *h, const char *label)
+{
+    char *av[] = { "sleep", "300", NULL };
+    flux_cmd_t *cmd;
+    flux_future_t *f;
+    int pid;
+
+    if (!(cmd = flux_cmd_create (2, av, environ))
+        || flux_cmd_set_label (cmd, label) < 0)
+        BAIL_OUT ("flux_cmd_create failed");
+    f = flux_rexec_bg (h,
+                       SERVER_NAME,
+                       FLUX_NODEID_ANY,
+                       FLUX_SUBPROCESS_FLAGS_WAITABLE
+                       | FLUX_SUBPROCESS_FLAGS_SIGN,
+                       cmd);
+    if (!f)
+        BAIL_OUT ("flux_rexec_bg failed");
+    if (flux_rpc_get_unpack (f, "{s:i}", "pid", &pid) < 0)
+        BAIL_OUT ("signed background exec failed: %s",
+                  future_strerror (f, errno));
+    flux_future_destroy (f);
+    flux_cmd_destroy (cmd);
+    return pid;
+}
+
+struct attach_ctx {
+    flux_t *h;
+    bool running;
+    bool failed;
+    int fail_errno;
+};
+
+static void attach_state_cb (flux_subprocess_t *p, flux_subprocess_state_t state)
+{
+    struct attach_ctx *ctx = flux_subprocess_aux_get (p, "ctx");
+
+    diag ("attach state: %s", flux_subprocess_state_string (state));
+    if (state == FLUX_SUBPROCESS_RUNNING) {
+        ctx->running = true;
+        flux_reactor_stop (flux_get_reactor (ctx->h));
+    }
+    else if (state == FLUX_SUBPROCESS_FAILED) {
+        ctx->failed = true;
+        ctx->fail_errno = flux_subprocess_fail_errno (p);
+        flux_reactor_stop (flux_get_reactor (ctx->h));
+    }
+}
+
+static flux_subprocess_ops_t attach_ops = {
+    .on_state_change = attach_state_cb,
+    .on_stdout       = discard_output_cb,
+    .on_stderr       = discard_output_cb,
+};
+
+/* An unsigned attach to a sign-required server must be rejected with EPERM. */
+static void test_unsigned_attach_rejected (flux_t *h)
+{
+    struct attach_ctx ctx = { .h = h };
+    flux_subprocess_t *p;
+    flux_future_t *f;
+    pid_t pid;
+
+    pid = start_bg_sleep (h, "att-unsigned");
+
+    p = flux_rexec_attach (h,
+                           SERVER_NAME,
+                           FLUX_NODEID_ANY,
+                           0,
+                           -1,
+                           "att-unsigned",
+                           &attach_ops);
+    if (!p)
+        BAIL_OUT ("flux_rexec_attach failed");
+    if (flux_subprocess_aux_set (p, "ctx", &ctx, NULL) < 0)
+        BAIL_OUT ("flux_subprocess_aux_set failed");
+    if (flux_reactor_run (flux_get_reactor (h), 0) < 0)
+        BAIL_OUT ("flux_reactor_run failed");
+    ok (ctx.failed && ctx.fail_errno == EPERM,
+        "unsigned attach to sign-required server gets EPERM");
+    flux_subprocess_destroy (p);
+
+    /* Clean up the background process with a signed kill. */
+    f = subprocess_kill (h, SERVER_NAME, FLUX_NODEID_ANY, pid, SIGKILL, true);
+    if (f)
+        (void)flux_future_get (f, NULL);
+    flux_future_destroy (f);
+}
+
+/* A signed attach to a sign-required server must succeed. */
+static void test_signed_attach_succeeds (flux_t *h)
+{
+    struct attach_ctx ctx = { .h = h };
+    flux_subprocess_t *p;
+    flux_future_t *f;
+    pid_t pid;
+
+    pid = start_bg_sleep (h, "att-signed");
+
+    p = flux_rexec_attach (h,
+                           SERVER_NAME,
+                           FLUX_NODEID_ANY,
+                           FLUX_SUBPROCESS_FLAGS_SIGN,
+                           -1,
+                           "att-signed",
+                           &attach_ops);
+    if (!p)
+        BAIL_OUT ("flux_rexec_attach failed");
+    if (flux_subprocess_aux_set (p, "ctx", &ctx, NULL) < 0)
+        BAIL_OUT ("flux_subprocess_aux_set failed");
+    if (flux_reactor_run (flux_get_reactor (h), 0) < 0)
+        BAIL_OUT ("flux_reactor_run failed");
+    ok (ctx.running && !ctx.failed,
+        "signed attach to sign-required server succeeds");
+
+    /* Kill (signed) so the attached streaming process completes. */
+    f = subprocess_kill (h, SERVER_NAME, FLUX_NODEID_ANY, pid, SIGKILL, true);
+    if (f)
+        (void)flux_future_get (f, NULL);
+    flux_future_destroy (f);
+    if (flux_reactor_run (flux_get_reactor (h), 0) < 0)
+        BAIL_OUT ("flux_reactor_run failed");
+    flux_subprocess_destroy (p);
+}
+
 static bool sign_wrap_works (void)
 {
     flux_security_t *sec = flux_security_create (0);
@@ -588,6 +716,12 @@ int main (int argc, char *argv[])
 
     diag ("test_signed_kill_succeeds");
     test_signed_kill_succeeds (h);
+
+    diag ("test_unsigned_attach_rejected");
+    test_unsigned_attach_rejected (h);
+
+    diag ("test_signed_attach_succeeds");
+    test_signed_attach_succeeds (h);
 
     test_server_stop (h);
     flux_close (h);
