@@ -981,14 +981,29 @@ static json_t *process_info (flux_subprocess_t *p)
     json_t *info = NULL;
     const char *label;
     const char *state;
+    const char *name;
+    char cmdbuf[64];
 
     if (!(cmd = flux_subprocess_get_cmd (p)))
         return NULL;
     label = flux_cmd_get_label (cmd);
     state = flux_subprocess_active (p) ? "R" : "Z";
+    /* "flux" as argv[0] is uninformative since every flux command begins
+     * with it, so append the subcommand argv[1] in that case, e.g.
+     * "flux module-exec".  Truncated to fit cmdbuf.
+     */
+    name = flux_cmd_arg (cmd, 0);
+    if (streq (name, "flux") && flux_cmd_argc (cmd) > 1) {
+        snprintf (cmdbuf,
+                  sizeof (cmdbuf),
+                  "%s %s",
+                  name,
+                  flux_cmd_arg (cmd, 1));
+        name = cmdbuf;
+    }
     if (!(info = json_pack ("{s:i s:s s:s s:s}",
                             "pid", flux_subprocess_pid (p),
-                            "cmd", flux_cmd_arg (cmd, 0),
+                            "cmd", name,
                             "label", label ? label : "",
                             "state", state))) {
         errno = ENOMEM;
