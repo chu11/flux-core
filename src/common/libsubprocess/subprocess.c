@@ -19,6 +19,7 @@
 #include <errno.h>
 #include <signal.h>
 #include <assert.h>
+#include <stdint.h>
 
 #include <flux/core.h>
 
@@ -150,6 +151,11 @@ static void subprocess_free (flux_subprocess_t *p)
         flux_watcher_destroy (p->state_idle_w);
         flux_watcher_destroy (p->state_check_w);
 
+        zlist_destroy (&p->sigchlds);
+        flux_watcher_destroy (p->sigchld_prep_w);
+        flux_watcher_destroy (p->sigchld_idle_w);
+        flux_watcher_destroy (p->sigchld_check_w);
+
         flux_watcher_destroy (p->completed_prep_w);
         flux_watcher_destroy (p->completed_idle_w);
         flux_watcher_destroy (p->completed_check_w);
@@ -214,7 +220,8 @@ static flux_subprocess_t *subprocess_create (
 #endif
 
     if (!(p->channels = zhash_new ())
-        || !(p->msgchans = zhash_new ()))
+        || !(p->msgchans = zhash_new ())
+        || !(p->sigchlds = zlist_new ()))
         goto error;
 
     p->state = FLUX_SUBPROCESS_INIT;
@@ -419,6 +426,114 @@ static int subprocess_setup_state_change (flux_subprocess_t *p)
     return 0;
 }
 
+/* The fifo stores sigchlds directly as (void *) values rather than
+ * allocating storage.  The value is offset by +1 so that a legitimate
+ * sigchld of 0 is distinct from a NULL returned by zlist_pop() on
+ * an empty queue.
+ */
+void sigchld_append (flux_subprocess_t *p,
+                     flux_subprocess_sigchld_t sigchld)
+{
+    void *entry = (void *)(intptr_t)(sigchld + 1);
+
+    if (!p->ops.on_sigchld)
+        return;
+
+    /* zlist_append() internally aborts on malloc failure, so the only
+     * other failure is a NULL item, which cannot happen here (entry is
+     * always >= 1).  Ignore the return value.
+     */
+    (void)zlist_append (p->sigchlds, entry);
+}
+
+/* Pop the next sigchld off the fifo */
+flux_subprocess_sigchld_t sigchld_pop (flux_subprocess_t *p)
+{
+    void *entry = zlist_pop (p->sigchlds);
+    assert (entry != NULL);
+    return (flux_subprocess_sigchld_t)((intptr_t)entry - 1);
+}
+
+void sigchld_notify_start (flux_subprocess_t *p)
+{
+    if (p->ops.on_sigchld) {
+        flux_watcher_start (p->sigchld_prep_w);
+        flux_watcher_start (p->sigchld_check_w);
+    }
+}
+
+static void sigchld_change_prep_cb (flux_reactor_t *r,
+                                    flux_watcher_t *w,
+                                    int revents,
+                                    void *arg)
+{
+    flux_subprocess_t *p = arg;
+
+    if (zlist_size (p->sigchlds) > 0)
+        flux_watcher_start (p->sigchld_idle_w);
+    else {
+        /* nothing left to report, stop watching */
+        flux_watcher_stop (p->sigchld_prep_w);
+        flux_watcher_stop (p->sigchld_check_w);
+    }
+}
+
+static void sigchld_change_check_cb (flux_reactor_t *r,
+                                     flux_watcher_t *w,
+                                     int revents,
+                                     void *arg)
+{
+    flux_subprocess_t *p = arg;
+
+    flux_watcher_stop (p->sigchld_idle_w);
+
+    /* always a chance caller may destroy subprocess in callback */
+    subprocess_incref (p);
+
+    /* Report at most one sigchld per check.  Any remaining entries
+     * will be reported on subsequent reactor iterations.  The prep
+     * watcher only lets us run when the queue is non-empty, so a pop
+     * here always has an entry.
+     */
+    if (zlist_size (p->sigchlds) > 0)
+        (*p->ops.on_sigchld) (p, sigchld_pop (p));
+
+    subprocess_decref (p);
+}
+
+static int subprocess_setup_sigchld_change (flux_subprocess_t *p)
+{
+    if (p->ops.on_sigchld) {
+        p->sigchld_prep_w =
+            flux_prepare_watcher_create (p->reactor,
+                                         sigchld_change_prep_cb,
+                                         p);
+        if (!p->sigchld_prep_w) {
+            log_err ("flux_prepare_watcher_create");
+            return -1;
+        }
+
+        p->sigchld_idle_w =
+            flux_idle_watcher_create (p->reactor,
+                                      NULL,
+                                      p);
+        if (!p->sigchld_idle_w) {
+            log_err ("flux_idle_watcher_create");
+            return -1;
+        }
+
+        p->sigchld_check_w =
+            flux_check_watcher_create (p->reactor,
+                                       sigchld_change_check_cb,
+                                       p);
+        if (!p->sigchld_check_w) {
+            log_err ("flux_check_watcher_create");
+            return -1;
+        }
+    }
+    return 0;
+}
+
 static void completed_prep_cb (flux_reactor_t *r,
                                flux_watcher_t *w,
                                int revents,
@@ -545,6 +660,9 @@ flux_subprocess_t *flux_local_exec_ex (flux_reactor_t *r,
         goto error;
 
     state_change_start (p);
+
+    if (subprocess_setup_sigchld_change (p) < 0)
+        goto error;
 
     if (subprocess_setup_completed (p) < 0)
         goto error;
@@ -677,6 +795,9 @@ flux_subprocess_t *flux_rexec_ex (flux_t *h,
         goto error;
 
     if (subprocess_setup_state_change (p) < 0)
+        goto error;
+
+    if (subprocess_setup_sigchld_change (p) < 0)
         goto error;
 
     if (subprocess_setup_completed (p) < 0)
@@ -1249,6 +1370,17 @@ const char *flux_subprocess_state_string (flux_subprocess_state_t state)
         return "Failed";
     case FLUX_SUBPROCESS_STOPPED:
         return "Stopped";
+    }
+    return NULL;
+}
+
+const char *
+flux_subprocess_sigchld_string (flux_subprocess_sigchld_t sigchld)
+{
+    switch (sigchld)
+    {
+    case FLUX_SUBPROCESS_SIGCHLD_UNKNOWN:
+        return "Unknown";
     }
     return NULL;
 }

@@ -95,6 +95,11 @@ struct flux_subprocess {
     flux_watcher_t *state_idle_w;
     flux_watcher_t *state_check_w;
 
+    zlist_t *sigchlds;       /* fifo of sigchlds for on_sigchld */
+    flux_watcher_t *sigchld_prep_w;
+    flux_watcher_t *sigchld_idle_w;
+    flux_watcher_t *sigchld_check_w;
+
     bool completed;             /* process has exited and i/o is complete */
     flux_watcher_t *completed_prep_w;
     flux_watcher_t *completed_idle_w;
@@ -130,6 +135,13 @@ struct flux_subprocess {
 void subprocess_check_completed (flux_subprocess_t *p);
 
 void state_change_start (flux_subprocess_t *p);
+
+void sigchld_append (flux_subprocess_t *p,
+                     flux_subprocess_sigchld_t sigchld);
+
+flux_subprocess_sigchld_t sigchld_pop (flux_subprocess_t *p);
+
+void sigchld_notify_start (flux_subprocess_t *p);
 
 void channel_destroy (void *arg);
 
