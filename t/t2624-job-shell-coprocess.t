@@ -280,4 +280,45 @@ test_expect_success 'non-object coprocess option is rejected' '
 	grep -i "non-empty object" notobj.err
 '
 
+#  coprocess.define() Lua helper: a drop-in registers a co-process by name
+#  that the user enables with -o <name> (defaults) or -o <name>.<key>=<val>
+#  (overrides).
+test_expect_success 'write coprocess.define rc file' '
+	cat >def.lua <<-EOF
+	coprocess.define {
+	    name = "mon",
+	    command = {"sh", "-c", "echo DEFINED; sleep 30"},
+	    output = "def-{{id}}.log",
+	}
+	EOF
+'
+
+test_expect_success "coprocess.define is inert unless enabled" '
+	flux run -o verbose=2 -o userrc=$(pwd)/def.lua true 2>def-off.err &&
+	test_must_fail grep -i "mon: launched" def-off.err
+'
+
+test_expect_success "coprocess.define enabled with -o mon uses defaults" '
+	submit_and_wait -o userrc=$(pwd)/def.lua -o mon sleep 1 &&
+	test -f def-${f58}.log &&
+	grep DEFINED def-${f58}.log
+'
+
+test_expect_success "coprocess.define -o mon.output overrides the default" '
+	submit_and_wait -o userrc=$(pwd)/def.lua \
+		-o mon.output=override.log sleep 1 &&
+	grep DEFINED override.log
+'
+
+#  A missing name raises a Lua error while loading the rc file, which
+#  terminates the shell by signal rather than exiting nonzero.
+test_expect_success "coprocess.define without a name is an error" '
+	cat >noname.lua <<-EOF &&
+	coprocess.define { command = {"true"} }
+	EOF
+	test_must_fail_or_be_terminated \
+		flux run -o userrc=$(pwd)/noname.lua -o mon true 2>noname.err &&
+	grep -i "missing required .name" noname.err
+'
+
 test_done
