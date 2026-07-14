@@ -21,6 +21,8 @@
 #include "src/common/libtap/tap.h"
 #include "src/common/libtestutil/util.h"
 #include "src/common/libsubprocess/server.h"
+#include "src/common/libsubprocess/client.h"
+#include "src/common/libsubprocess/command_private.h"
 #include "src/common/libioencode/ioencode.h"
 #include "src/common/libutil/stdlog.h"
 
@@ -816,11 +818,66 @@ void background_waitable_test (flux_t *h)
     char *cmd_true[] = { "true", NULL };
     char *cmd_false[] = { "false", NULL };
     char *cmd_sleep[] = { "sleep", "30", NULL };
+    /* cat reads stdin until EOF then exits 0.  A background subprocess's
+     * stdin is at EOF (RFC 42), so cat exits 0 rather than blocking; if it
+     * blocked, the wait below would hang.
+     */
+    char *cmd_cat[] = { "cat", NULL };
     bg_test (h, "noexist", 1, cmd_noexist, -ENOENT, false);
     bg_test (h, "success", 1, cmd_true, 0, false);
     bg_test (h, NULL, 1, cmd_true, 0, false);
     bg_test (h, "failure", 1, cmd_false, 256, false);
     bg_test (h, "sleep", 2, cmd_sleep, 15, true);
+    bg_test (h, "stdin-eof", 1, cmd_cat, 0, false);
+}
+
+/* Per RFC 42, the write-credit and stdio-fallthrough flags request input
+ * handling and are not permitted in background mode.  Send raw exec RPCs to
+ * verify each is rejected.
+ */
+void background_input_reject_test (flux_t *h)
+{
+    flux_cmd_t *cmd;
+    json_t *cmd_obj = NULL;
+    char *topic;
+    flux_future_t *f;
+    char *av[] = { "true", NULL };
+
+    if (!(cmd = flux_cmd_create (1, av, environ))
+        || !(cmd_obj = cmd_tojson (cmd)))
+        BAIL_OUT ("background_input_reject_test: cmd setup");
+    if (asprintf (&topic, "%s.exec", SERVER_NAME) < 0)
+        BAIL_OUT ("background_input_reject_test: asprintf");
+
+    /* Non-streaming (background) + write-credit flag -> EINVAL */
+    f = flux_rpc_pack (h, topic, FLUX_NODEID_ANY, 0,
+                       "{s:O s:i s:i}",
+                       "cmd", cmd_obj,
+                       "flags", SUBPROCESS_REXEC_WRITE_CREDIT,
+                       "local_flags", 0);
+    ok (f != NULL,
+        "sent background exec request");
+    errno = 0;
+    ok (flux_rpc_get (f, NULL) < 0 && errno == EINVAL,
+        "background exec with write-credit flag fails with EINVAL");
+    flux_future_destroy (f);
+
+    /* Non-streaming (background) + stdio-fallthrough local flag -> EINVAL */
+    f = flux_rpc_pack (h, topic, FLUX_NODEID_ANY, 0,
+                       "{s:O s:i s:i}",
+                       "cmd", cmd_obj,
+                       "flags", 0,
+                       "local_flags", FLUX_SUBPROCESS_FLAGS_STDIO_FALLTHROUGH);
+    ok (f != NULL,
+        "sent background exec request");
+    errno = 0;
+    ok (flux_rpc_get (f, NULL) < 0 && errno == EINVAL,
+        "background exec with stdio-fallthrough flag fails with EINVAL");
+    flux_future_destroy (f);
+
+    free (topic);
+    json_decref (cmd_obj);
+    flux_cmd_destroy (cmd);
 }
 
 int main (int argc, char *argv[])
@@ -845,6 +902,8 @@ int main (int argc, char *argv[])
     sigstop_test (h);
     diag ("background_test");
     background_waitable_test (h);
+    diag ("background_input_reject_test");
+    background_input_reject_test (h);
 
     test_server_stop (h);
     flux_close (h);

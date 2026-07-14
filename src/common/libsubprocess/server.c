@@ -684,6 +684,26 @@ error:
     proc_internal_fatal (p);
 }
 
+/* Per RFC 42, a background subprocess's standard input and any writable
+ * auxiliary channels are at end-of-file.  Close the write side of each
+ * writable channel so the subprocess reads EOF rather than blocking.
+ */
+static int background_close_input (flux_subprocess_t *p)
+{
+    const char *name;
+    struct subprocess_channel *c;
+
+    c = zhash_first (p->channels);
+    while (c) {
+        name = zhash_cursor (p->channels);
+        if ((c->flags & CHANNEL_WRITE)
+            && flux_subprocess_close (p, name) < 0)
+            return -1;
+        c = zhash_next (p->channels);
+    }
+    return 0;
+}
+
 static void server_exec_cb (flux_t *h,
                             flux_msg_handler_t *mh,
                             const flux_msg_t *msg,
@@ -725,6 +745,20 @@ static void server_exec_cb (flux_t *h,
     if (s->shutdown) {
         errmsg = "subprocess server is shutting down";
         errno = ENOSYS;
+        goto error;
+    }
+    /* Per RFC 42, a background subprocess's standard input and writable
+     * auxiliary channels are at end-of-file, so flags that request input
+     * handling are not permitted in background mode.
+     */
+    if (background && (flags & SUBPROCESS_REXEC_WRITE_CREDIT)) {
+        errmsg = "write-credit flag is not allowed in background mode";
+        errno = EINVAL;
+        goto error;
+    }
+    if (background && (local_flags & FLUX_SUBPROCESS_FLAGS_STDIO_FALLTHROUGH)) {
+        errmsg = "stdio-fallthrough flag is not allowed in background mode";
+        errno = EINVAL;
         goto error;
     }
     if (!(flags & SUBPROCESS_REXEC_CHANNEL))
@@ -791,6 +825,14 @@ static void server_exec_cb (flux_t *h,
     }
 
     p->bg = background;
+
+    /* Per RFC 42, a background subprocess's input is at end-of-file.
+     */
+    if (p->bg && background_close_input (p) < 0) {
+        errprintf (&error, "error closing input: %s", strerror (errno));
+        errmsg = error.text;
+        goto error;
+    }
 
     /* Waitable flag only allowed in background mode:
      */
