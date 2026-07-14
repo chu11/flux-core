@@ -857,6 +857,14 @@ void test_state_strings (void)
         "Stopped");
 }
 
+void test_sigstatus_strings (void)
+{
+    is (flux_subprocess_sigstatus_string (FLUX_SUBPROCESS_SIGSTATUS_UNKNOWN),
+        "Unknown");
+    ok (!flux_subprocess_sigstatus_string (100),
+        "flux_subprocess_sigstatus_string returns NULL on bad sigstatus");
+}
+
 void test_exec_fail (flux_reactor_t *r)
 {
     char path [4096];
@@ -1308,6 +1316,8 @@ int main (int argc, char *argv[])
     test_state_change_stopped (r);
     diag ("state_strings");
     test_state_strings ();
+    diag ("sigstatus_strings");
+    test_sigstatus_strings ();
     diag ("exec_fail");
     test_exec_fail (r);
     diag ("context");
