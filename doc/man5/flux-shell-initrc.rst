@@ -346,6 +346,44 @@ This allows version specific mpi plugins to be placed in
 ``$rcpath/mpi/name@version.lua`` and selected via ``-o mpi=name@version``.
 
 
+coprocess.define(spec)
+----------------------
+
+Define a co-process that a user may enable by name. ``spec`` is a table
+describing the co-process for the ``coprocess`` shell plugin (see the
+COPROCESS section of :man7:`flux-shell-options`). It must contain a ``name``
+plus the usual coprocess keys such as ``command``, ``output``, and ``ranks``.
+
+The co-process is enabled only if the shell option matching ``name`` is set,
+following the usual scalar-or-object option convention: ``-o <name>`` enables
+it with the defaults in ``spec``, while ``-o <name>.<key>=<val>`` enables it
+with ``spec.<key>`` overridden (the bare and dotted forms are alternatives,
+not combined). The resulting definition is merged into the ``coprocess`` shell
+option consumed by the coprocess plugin.
+
+This is typically called from a drop-in rc file under
+``$rcpath/lua.d/*.lua``. For example, ``/etc/flux/shell/lua.d/vmstat.lua``:
+
+.. code-block:: lua
+
+  coprocess.define {
+      name = "vmstat",
+      command = {"vmstat", "5"},
+      output = "vmstat-{{id}}.log",
+  }
+
+lets a user run ``flux run -o vmstat ...`` to sample memory and CPU stats
+alongside the job, or ``-o vmstat.output=stat.log`` to override the output
+file.
+
+.. note::
+  When the ``output`` template resolves to the same path on every shell, all
+  co-process output is forwarded to and written by the leader shell. In the
+  case of high output volume, a per-shell output template should be preferred
+  (i.e. on that includes ``{{node.id}}`` or `{{node.name}}``) to avoid
+  overwhelming the leader.
+
+
 SHELL INFORMATION
 =================
 

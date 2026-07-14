@@ -735,20 +735,17 @@ COPROCESS
   ``SIGKILL`` if they do not exit within ``coprocess-kill-timeout``.
 
   This option is typically set from a drop-in Lua rc file rather than on the
-  command line. For example, a site could provide
-  ``/etc/flux/shell/lua.d/vmstat.lua`` that sets the option when
-  ``-o vmstat`` is given:
+  command line, using the ``coprocess.define`` helper (see
+  :man5:`flux-shell-initrc`). For example, a site could provide
+  ``/etc/flux/shell/lua.d/vmstat.lua`` so that ``-o vmstat`` launches it:
 
   .. code-block:: lua
 
-    if shell.options["vmstat"] then
-        shell.options["coprocess"] = {
-            vmstat = {
-                command = {"vmstat", "5"},
-                output  = "vmstat-{{id}}.log",
-            }
-        }
-    end
+    coprocess.define {
+        name = "vmstat",
+        command = {"vmstat", "5"},
+        output = "vmstat-{{id}}.log",
+    }
 
 .. option:: coprocess-kill-timeout=FSD
 
