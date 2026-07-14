@@ -48,6 +48,13 @@ typedef enum {
 } flux_subprocess_state_t;
 
 /*
+ * Subprocess sigstatus, reported via the on_sigstatus callback below.
+ */
+typedef enum {
+    FLUX_SUBPROCESS_SIGSTATUS_UNKNOWN = 0, /* placeholder, none reported */
+} flux_subprocess_sigstatus_t;
+
+/*
  * Subprocess flags
  */
 enum {
@@ -95,6 +102,9 @@ typedef void (*flux_subprocess_state_f) (flux_subprocess_t *p,
 typedef void (*flux_subprocess_credit_f) (flux_subprocess_t *p,
                                           const char *stream,
                                           int bytes);
+typedef void (*flux_subprocess_sigstatus_f) (
+    flux_subprocess_t *p,
+    flux_subprocess_sigstatus_t sigstatus);
 typedef void (*flux_subprocess_hook_f) (flux_subprocess_t *p, void *arg);
 
 /*
@@ -118,6 +128,7 @@ typedef struct {
     flux_subprocess_output_f on_stdout; /* Read of stdout is ready           */
     flux_subprocess_output_f on_stderr; /* Read of stderr is ready           */
     flux_subprocess_credit_f on_credit; /* Write buffer space available      */
+    flux_subprocess_sigstatus_f on_sigstatus; /* Process sigstatus info      */
 } flux_subprocess_ops_t;
 
 /*
@@ -374,6 +385,11 @@ flux_subprocess_state_t flux_subprocess_state (flux_subprocess_t *p);
 /*  Return string value of state of subprocess
  */
 const char *flux_subprocess_state_string (flux_subprocess_state_t state);
+
+/*  Return string value of sigstatus of subprocess
+ */
+const char *
+flux_subprocess_sigstatus_string (flux_subprocess_sigstatus_t sigstatus);
 
 /*  Return true if subprocess p is still active, i.e. it is waiting to
  *  start, still running, or waiting for eof on all streams.

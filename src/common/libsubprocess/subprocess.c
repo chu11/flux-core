@@ -19,6 +19,7 @@
 #include <errno.h>
 #include <signal.h>
 #include <assert.h>
+#include <stdint.h>
 
 #include <flux/core.h>
 
@@ -150,6 +151,11 @@ static void subprocess_free (flux_subprocess_t *p)
         flux_watcher_destroy (p->state_idle_w);
         flux_watcher_destroy (p->state_check_w);
 
+        zlist_destroy (&p->sigstatuses);
+        flux_watcher_destroy (p->sigstatus_prep_w);
+        flux_watcher_destroy (p->sigstatus_idle_w);
+        flux_watcher_destroy (p->sigstatus_check_w);
+
         flux_watcher_destroy (p->completed_prep_w);
         flux_watcher_destroy (p->completed_idle_w);
         flux_watcher_destroy (p->completed_check_w);
@@ -212,7 +218,8 @@ static flux_subprocess_t *subprocess_create (
 #endif
 
     if (!(p->channels = zhash_new ())
-        || !(p->msgchans = zhash_new ()))
+        || !(p->msgchans = zhash_new ())
+        || !(p->sigstatuses = zlist_new ()))
         goto error;
 
     p->state = FLUX_SUBPROCESS_INIT;
@@ -417,6 +424,114 @@ static int subprocess_setup_state_change (flux_subprocess_t *p)
     return 0;
 }
 
+/* The fifo stores sigstatuses directly as (void *) values rather than
+ * allocating storage.  The value is offset by +1 so that a legitimate
+ * sigstatus of 0 is distinct from a NULL returned by zlist_pop() on
+ * an empty queue.
+ */
+void sigstatus_append (flux_subprocess_t *p,
+                       flux_subprocess_sigstatus_t sigstatus)
+{
+    void *entry = (void *)(intptr_t)(sigstatus + 1);
+
+    if (!p->ops.on_sigstatus)
+        return;
+
+    /* zlist_append() internally aborts on malloc failure, so the only
+     * other failure is a NULL item, which cannot happen here (entry is
+     * always >= 1).  Ignore the return value.
+     */
+    (void)zlist_append (p->sigstatuses, entry);
+}
+
+/* Pop the next sigstatus off the fifo */
+flux_subprocess_sigstatus_t sigstatus_pop (flux_subprocess_t *p)
+{
+    void *entry = zlist_pop (p->sigstatuses);
+    assert (entry != NULL);
+    return (flux_subprocess_sigstatus_t)((intptr_t)entry - 1);
+}
+
+void sigstatus_notify_start (flux_subprocess_t *p)
+{
+    if (p->ops.on_sigstatus) {
+        flux_watcher_start (p->sigstatus_prep_w);
+        flux_watcher_start (p->sigstatus_check_w);
+    }
+}
+
+static void sigstatus_change_prep_cb (flux_reactor_t *r,
+                                      flux_watcher_t *w,
+                                      int revents,
+                                      void *arg)
+{
+    flux_subprocess_t *p = arg;
+
+    if (zlist_size (p->sigstatuses) > 0)
+        flux_watcher_start (p->sigstatus_idle_w);
+    else {
+        /* nothing left to report, stop watching */
+        flux_watcher_stop (p->sigstatus_prep_w);
+        flux_watcher_stop (p->sigstatus_check_w);
+    }
+}
+
+static void sigstatus_change_check_cb (flux_reactor_t *r,
+                                       flux_watcher_t *w,
+                                       int revents,
+                                       void *arg)
+{
+    flux_subprocess_t *p = arg;
+
+    flux_watcher_stop (p->sigstatus_idle_w);
+
+    /* always a chance caller may destroy subprocess in callback */
+    subprocess_incref (p);
+
+    /* Report at most one sigstatus per check.  Any remaining entries
+     * will be reported on subsequent reactor iterations.  The prep
+     * watcher only lets us run when the queue is non-empty, so a pop
+     * here always has an entry.
+     */
+    if (zlist_size (p->sigstatuses) > 0)
+        (*p->ops.on_sigstatus) (p, sigstatus_pop (p));
+
+    subprocess_decref (p);
+}
+
+static int subprocess_setup_sigstatus_change (flux_subprocess_t *p)
+{
+    if (p->ops.on_sigstatus) {
+        p->sigstatus_prep_w =
+            flux_prepare_watcher_create (p->reactor,
+                                         sigstatus_change_prep_cb,
+                                         p);
+        if (!p->sigstatus_prep_w) {
+            log_err ("flux_prepare_watcher_create");
+            return -1;
+        }
+
+        p->sigstatus_idle_w =
+            flux_idle_watcher_create (p->reactor,
+                                      NULL,
+                                      p);
+        if (!p->sigstatus_idle_w) {
+            log_err ("flux_idle_watcher_create");
+            return -1;
+        }
+
+        p->sigstatus_check_w =
+            flux_check_watcher_create (p->reactor,
+                                       sigstatus_change_check_cb,
+                                       p);
+        if (!p->sigstatus_check_w) {
+            log_err ("flux_check_watcher_create");
+            return -1;
+        }
+    }
+    return 0;
+}
+
 static void completed_prep_cb (flux_reactor_t *r,
                                flux_watcher_t *w,
                                int revents,
@@ -543,6 +658,9 @@ flux_subprocess_t *flux_local_exec_ex (flux_reactor_t *r,
         goto error;
 
     state_change_start (p);
+
+    if (subprocess_setup_sigstatus_change (p) < 0)
+        goto error;
 
     if (subprocess_setup_completed (p) < 0)
         goto error;
@@ -675,6 +793,9 @@ flux_subprocess_t *flux_rexec_ex (flux_t *h,
         goto error;
 
     if (subprocess_setup_state_change (p) < 0)
+        goto error;
+
+    if (subprocess_setup_sigstatus_change (p) < 0)
         goto error;
 
     if (subprocess_setup_completed (p) < 0)
@@ -1247,6 +1368,17 @@ const char *flux_subprocess_state_string (flux_subprocess_state_t state)
         return "Failed";
     case FLUX_SUBPROCESS_STOPPED:
         return "Stopped";
+    }
+    return NULL;
+}
+
+const char *
+flux_subprocess_sigstatus_string (flux_subprocess_sigstatus_t sigstatus)
+{
+    switch (sigstatus)
+    {
+    case FLUX_SUBPROCESS_SIGSTATUS_UNKNOWN:
+        return "Unknown";
     }
     return NULL;
 }
