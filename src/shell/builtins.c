@@ -59,6 +59,7 @@ extern struct shell_builtin builtin_hwloc;
 extern struct shell_builtin builtin_rexec;
 extern struct shell_builtin builtin_env_expand;
 extern struct shell_builtin builtin_sysmon;
+extern struct shell_builtin builtin_coprocess;
 
 static struct shell_builtin * builtins [] = {
     &builtin_tmpdir,
@@ -92,6 +93,7 @@ static struct shell_builtin * builtins [] = {
     &builtin_rexec,
     &builtin_env_expand,
     &builtin_sysmon,
+    &builtin_coprocess,
     &builtin_list_end,
 };
 

@@ -299,6 +299,7 @@ man_pages = [
     ('man3/flux_shell_mustache_render', 'flux_shell_mustache_render', 'expand mustache templates in shell plugins', [author], 3),
     ('man3/flux_shell_mustache_render', 'flux_shell_rank_mustache_render', 'expand mustache templates in shell plugins', [author], 3),
     ('man3/flux_shell_mustache_render', 'flux_shell_task_mustache_render', 'expand mustache templates in shell plugins', [author], 3),
+    ('man3/flux_shell_mustache_render', 'flux_shell_mustache_is_per_rank', 'expand mustache templates in shell plugins', [author], 3),
     ('man3/flux_signal_watcher_create', 'flux_signal_watcher_get_signum', 'create signal watcher', [author], 3),
     ('man3/flux_signal_watcher_create', 'flux_signal_watcher_create', 'create signal watcher', [author], 3),
     ('man3/flux_stat_watcher_create', 'flux_stat_watcher_get_rstat', 'create stat watcher', [author], 3),

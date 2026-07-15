@@ -258,6 +258,7 @@ TESTSCRIPTS = \
 	t2621-job-shell-plugin-fork.t \
 	t2622-job-shell-sysmon.t \
 	t2623-job-shell-oom.t \
+	t2624-job-shell-coprocess.t \
 	t2710-python-cli-submit.t \
 	t2711-python-cli-run.t \
 	t2713-python-cli-bulksubmit.t \

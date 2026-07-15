@@ -101,5 +101,53 @@ function shell.source_rcpath_option (opt)
         end
     end
 end
+
+coprocess = {}
+
+--- Define a co-process that a user may enable by name.
+--
+--  `spec` is a table describing the co-process for the "coprocess" shell
+--  plugin (see flux-shell-options(7)). It must contain a `name` and the
+--  usual coprocess keys such as `command`, `output`, and `ranks`.
+--
+--  The co-process is enabled only if the shell option matching `name` is set,
+--  following the usual scalar-or-object option convention:
+--
+--    -o <name>              enable with the defaults in `spec`
+--    -o <name>.<key>=<val>  enable, overriding `spec.<key>` (repeatable)
+--
+--  (as with other shell options, the bare and dotted forms are alternatives,
+--  not combined). When enabled, the resulting definition is merged into the
+--  "coprocess" shell option for the coprocess plugin to launch.
+--
+--  Typically called from a drop-in rc file under shell.rcpath/lua.d, e.g.
+--  /etc/flux/shell/lua.d/gpumon.lua:
+--
+--    coprocess.define {
+--        name = "gpumon",
+--        command = {"nvidia-smi", "dmon", "-s", "pucvmet", "-d", "5"},
+--        output = "gpumon-{{id}}.log",
+--    }
+--
+function coprocess.define (spec)
+    local name = spec.name
+    if not name then
+        error ("coprocess.define: spec is missing required 'name'")
+    end
+    local opt = shell.options[name]
+    if opt == nil then          -- not enabled by the user
+        return
+    end
+    spec.name = nil             -- strip helper-only key from the definition
+    if type (opt) == "table" then
+        -- -o <name>.<key>=<val> overrides of the spec defaults
+        for k, v in pairs (opt) do
+            spec[k] = v
+        end
+    end
+    local coproc = shell.options["coprocess"] or {}
+    coproc[name] = spec
+    shell.options["coprocess"] = coproc
+end
 -- vi: ts=4 sw=4 expandtab
--- 
+--

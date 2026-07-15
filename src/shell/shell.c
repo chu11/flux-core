@@ -1119,6 +1119,43 @@ char *flux_shell_mustache_render (flux_shell_t *shell, const char *fmt)
     return do_mustache_render (shell, -1, NULL, fmt);
 }
 
+bool flux_shell_mustache_is_per_rank (flux_shell_t *shell, const char *fmt)
+{
+    bool result = false;
+    char *s0 = NULL;
+    char *s1 = NULL;
+    char *st = NULL;
+    flux_shell_task_t *task;
+
+    if (!shell || !fmt) {
+        errno = EINVAL;
+        return false;
+    }
+    /* If shell size is 1, then return false immediately since per-rank
+     * template can't be true:
+     */
+    if (shell->info->shell_size == 1)
+        return false;
+    /* {{tmpdir}} is per-rank but renders identically across ranks here, so
+     * special-case it.
+     */
+    if (strstr (fmt, "{{tmpdir}}"))
+        return true;
+    /* Render for shell rank 0, rank 1, and the first task on this rank and
+     * compare.  If any differ, the template is per-rank (or per-task).
+     */
+    task = flux_shell_task_first (shell);
+    if ((s0 = flux_shell_rank_mustache_render (shell, 0, fmt))
+        && (s1 = flux_shell_rank_mustache_render (shell, 1, fmt))
+        && (st = flux_shell_task_mustache_render (shell, task, fmt))
+        && (!streq (s0, s1) || !streq (s0, st)))
+        result = true;
+    free (s0);
+    free (s1);
+    free (st);
+    return result;
+}
+
 /* Render "node.*" specific tags using the rank_info object for the
  * requested shell rank. The part after `node.` will be fetched directly
  * from the rank_info object.
