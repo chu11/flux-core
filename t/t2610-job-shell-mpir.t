@@ -125,7 +125,7 @@ test_expect_success 'mpir: tool tasks are killed after rexec-shutdown-timeout' '
 	chmod +x mpir-catch-sigterm.sh &&
 	chmod +x wait-for-ready.sh &&
 	id=$(flux submit -N2 -n2 -o stop-tasks-in-exec \
-	     -o rexec-shutdown-timeout=0.5s \
+	     -o rexec-shutdown-timeout=2.5s \
 	     ./wait-for-ready.sh) &&
 	flux job wait-event -vt 5 -p exec -m sync=true $id shell.start &&
 	shell_rank=$(shell_leader_rank $id) &&
