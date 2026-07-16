@@ -18,6 +18,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <flux/core.h>
 #include <flux/optparse.h>
 #include <signal.h>
@@ -59,6 +60,10 @@ static struct optparse_option cmdopts[] = {
     { .name = "waitable",
       .has_arg = 0,
       .usage = "Process remains a zombie until exit status is collected",
+    },
+    { .name = "attach",
+      .has_arg = 0,
+      .usage = "Attach to a running background process (arg is pid or label)",
     },
     { .name = "label",
       .has_arg = 1,
@@ -164,6 +169,33 @@ int sigint_count = 0;
 
 bool use_imp = false;
 const char *imp_path = NULL;
+
+/* attach mode: SIGINT detaches (leaves the background process running) rather
+ * than forwarding the signal.  These describe the attach target for the
+ * detach hint.
+ */
+bool attach = false;
+const char *attach_label = NULL;
+pid_t attach_pid = -1;
+
+/* Return a human-readable name for the target of this invocation, used in
+ * diagnostics.  For a normal exec this is the command name (argv[0]); in
+ * attach mode there is no command, so describe the attach target by pid or
+ * label instead.  Uses a static buffer; the result is only valid until the
+ * next call.
+ */
+static const char *target_name (flux_cmd_t *cmd)
+{
+    static char buf[128];
+    if (attach) {
+        if (attach_label)
+            snprintf (buf, sizeof (buf), "label %s", attach_label);
+        else
+            snprintf (buf, sizeof (buf), "pid %ld", (long)attach_pid);
+        return buf;
+    }
+    return flux_cmd_arg (cmd, 0);
+}
 
 void output_exitsets (const char *key, void *item)
 {
@@ -305,7 +337,7 @@ void state_cb (flux_subprocess_t *p, flux_subprocess_state_t state)
          */
         log_msg ("Error: rank %d: %s: %s",
                  flux_subprocess_rank (p),
-                 flux_cmd_arg (cmd, 0),
+                 target_name (cmd),
                  errmsg);
 
         /* bash standard, 126 for permission/access denied, 127 for
@@ -451,6 +483,23 @@ static void killall (zlistx_t *l, int signum)
 
 static void signal_cb (int signum)
 {
+    /* In attach mode, Ctrl-C detaches from the background process rather than
+     * signaling it: exiting the client drops the connection, and the server
+     * reverts the process to background (it keeps running).  To signal the
+     * process instead, the user runs 'flux sproc kill'.  SIGTERM still passes
+     * through (forwarded below).
+     */
+    if (signum == SIGINT && attach) {
+        if (attach_label)
+            fprintf (stderr,
+                     "detached; use 'flux sproc kill %s' to signal it\n",
+                     attach_label);
+        else
+            fprintf (stderr,
+                     "detached; use 'flux sproc kill %ld' to signal it\n",
+                     (long)attach_pid);
+        exit (0);
+    }
     if (signum == SIGINT) {
         if (sigint_count >= 2) {
             double since_last = monotime_since (last);
@@ -783,15 +832,45 @@ int main (int argc, char *argv[])
     if ((optindex = optparse_parse_args (opts, argc, argv)) < 0)
         exit (1);
 
-    if (optindex == argc) {
+    attach = optparse_hasopt (opts, "attach");
+
+    if (attach) {
+        /* --attach takes a single argument identifying an already-running
+         * background process, and no command-oriented options.  The target
+         * is a pid if it parses as a positive integer, otherwise a label
+         * (mirroring flux-sproc(1)).
+         */
+        if (optindex == argc)
+            log_msg_exit ("--attach requires a pid or label argument");
+        if (optindex + 1 != argc)
+            log_msg_exit ("--attach takes a single pid or label argument");
+        if (optparse_hasopt (opts, "bg")
+            || optparse_hasopt (opts, "waitable"))
+            log_msg_exit ("--attach cannot be used with --bg or --waitable");
+        const char *target = argv[optindex];
+        char *endptr;
+        long val;
+        errno = 0;
+        val = strtol (target, &endptr, 10);
+        if (errno != 0 || *endptr != '\0' || val <= 0 || val > INT_MAX) {
+            attach_pid = -1;
+            attach_label = target;
+        }
+        else
+            attach_pid = val;
+    }
+    else if (optindex == argc) {
         optparse_print_usage (opts);
         exit (1);
     }
 
-    if (!(cmd = flux_cmd_create (argc - optindex, &argv[optindex], environ)))
+    if (!(cmd = flux_cmd_create (attach ? 0 : argc - optindex,
+                                 attach ? NULL : &argv[optindex],
+                                 environ)))
         log_err_exit ("flux_cmd_create");
 
-    if (optparse_getopt (opts, "label", &optargp) > 0
+    if (!attach
+        && optparse_getopt (opts, "label", &optargp) > 0
         && flux_cmd_set_label (cmd, optargp) < 0)
         log_err_exit ("failed to set label");
 
@@ -803,28 +882,30 @@ int main (int argc, char *argv[])
 
     flux_cmd_unsetenv (cmd, "FLUX_PROXY_REMOTE");
 
-    if (optparse_getopt (opts, "dir", &optargp) > 0) {
-        if (!(cwd = strdup (optargp)))
-            log_err_exit ("strdup");
-    }
-    else {
-        if (!(cwd = get_current_dir_name ()))
-            log_err_exit ("get_current_dir_name");
-    }
+    if (!attach) {
+        if (optparse_getopt (opts, "dir", &optargp) > 0) {
+            if (!(cwd = strdup (optargp)))
+                log_err_exit ("strdup");
+        }
+        else {
+            if (!(cwd = get_current_dir_name ()))
+                log_err_exit ("get_current_dir_name");
+        }
 
-    if (!streq (cwd, "none")) {
-        if (flux_cmd_setcwd (cmd, cwd) < 0)
-            log_err_exit ("flux_cmd_setcwd");
-    }
-    if (optparse_hasopt (opts, "setopt")) {
-        const char *arg;
-        optparse_getopt_iterator_reset (opts, "setopt");
-        while ((arg = optparse_getopt_next (opts, "setopt"))) {
-            const char *value;
-            char *name = split_opt (arg, '=', &value);
-            if (!name || flux_cmd_setopt (cmd, name, value) < 0)
-                log_err_exit ("error handling '%s' option", arg);
-            free (name);
+        if (!streq (cwd, "none")) {
+            if (flux_cmd_setcwd (cmd, cwd) < 0)
+                log_err_exit ("flux_cmd_setcwd");
+        }
+        if (optparse_hasopt (opts, "setopt")) {
+            const char *arg;
+            optparse_getopt_iterator_reset (opts, "setopt");
+            while ((arg = optparse_getopt_next (opts, "setopt"))) {
+                const char *value;
+                char *name = split_opt (arg, '=', &value);
+                if (!name || flux_cmd_setopt (cmd, name, value) < 0)
+                    log_err_exit ("error handling '%s' option", arg);
+                free (name);
+            }
         }
     }
 
@@ -846,18 +927,20 @@ int main (int argc, char *argv[])
     if (flux_get_size (h, &rank_range) < 0)
         log_err_exit ("flux_get_size");
 
-    if (optparse_hasopt (opts, "with-imp")) {
-        if (!(imp_path = get_flux_imp_path (h)))
-            log_err_exit ("--with-imp: exec.imp path not found in config");
-        use_imp = true;
-        if (flux_cmd_argv_insert (cmd, 0, "run") < 0
-            || flux_cmd_argv_insert (cmd, 0, imp_path) < 0)
-            log_err_exit ("failed to prepend 'flux-imp run' to command");
-    }
-    else {
-        use_imp = check_for_imp_run (argc - optindex,
-                                     &argv[optindex],
-                                     &imp_path);
+    if (!attach) {
+        if (optparse_hasopt (opts, "with-imp")) {
+            if (!(imp_path = get_flux_imp_path (h)))
+                log_err_exit ("--with-imp: exec.imp path not found in config");
+            use_imp = true;
+            if (flux_cmd_argv_insert (cmd, 0, "run") < 0
+                || flux_cmd_argv_insert (cmd, 0, imp_path) < 0)
+                log_err_exit ("failed to prepend 'flux-imp run' to command");
+        }
+        else {
+            use_imp = check_for_imp_run (argc - optindex,
+                                         &argv[optindex],
+                                         &imp_path);
+        }
     }
 
     /* Allow systemd commands to work on flux systemd instance by
@@ -909,6 +992,14 @@ int main (int argc, char *argv[])
     rank_count = idset_count (targets);
     if (rank_count == 0)
         log_msg_exit ("No targets specified");
+    /* A process ID is only meaningful on a single rank, so attaching by pid
+     * to more than one rank cannot work.  (A label may legitimately match a
+     * background process on every rank, so label attach is not restricted.)
+     * The default target set is all ranks, so require --rank to narrow it.
+     */
+    if (attach && attach_pid > 0 && rank_count > 1)
+        log_msg_exit ("--attach by pid requires a single target rank "
+                      "(use --rank)");
     if (!(hanging = idset_copy (targets)))
         log_err_exit ("idset_copy");
 
@@ -924,7 +1015,7 @@ int main (int argc, char *argv[])
 
     monotime (&t0);
     if (optparse_getopt (opts, "verbose", NULL) > 0) {
-        const char *argv0 = flux_cmd_arg (cmd, 0);
+        const char *argv0 = target_name (cmd);
         char *nodeset = idset_encode (targets,
                                       IDSET_FLAG_RANGE | IDSET_FLAG_BRACKETS);
         if (!nodeset)
@@ -970,15 +1061,27 @@ int main (int argc, char *argv[])
     while (rank != IDSET_INVALID_ID) {
         flux_subprocess_t *p;
         struct subproc_credit *spcred;
-        if (!(p = flux_rexec_ex (h,
-                                 service_name,
-                                 rank,
-                                 flags,
-                                 cmd,
-                                 &ops,
-                                 NULL,
-                                 NULL)))
-            log_err_exit ("flux_rexec");
+        if (attach) {
+            if (!(p = flux_rexec_attach (h,
+                                         service_name,
+                                         rank,
+                                         flags,
+                                         attach_pid,
+                                         attach_label,
+                                         &ops)))
+                log_err_exit ("flux_rexec_attach");
+        }
+        else {
+            if (!(p = flux_rexec_ex (h,
+                                     service_name,
+                                     rank,
+                                     flags,
+                                     cmd,
+                                     &ops,
+                                     NULL,
+                                     NULL)))
+                log_err_exit ("flux_rexec");
+        }
         if (!(spcred = calloc (1, sizeof (*spcred))))
             log_err_exit ("calloc");
         if (!zlistx_add_end (subprocesses, p))
