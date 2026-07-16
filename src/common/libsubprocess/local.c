@@ -496,8 +496,6 @@ static void sigchld_cb (pid_t pid, int status, void *arg)
     p->status = status;
 
     if (WIFSTOPPED (p->status)) {
-        if (p->ops.on_state_change)
-            (*p->ops.on_state_change) (p, FLUX_SUBPROCESS_STOPPED);
         sigstatus_append (p, FLUX_SUBPROCESS_SIGSTATUS_STOPPED);
         sigstatus_notify_start (p);
     }
