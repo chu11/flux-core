@@ -5,7 +5,7 @@ flux-exec(1)
 SYNOPSIS
 ========
 
-**flux** **exec** [*--noinput*] [*--label-io*] [*—dir=DIR*] [*--rank=IDSET*] [*--verbose*] *COMMAND...*
+**flux** **exec** [*OPTIONS*] [*--rank=IDSET*] [*--bg*] *COMMAND...*
 
 DESCRIPTION
 ===========
