@@ -84,6 +84,7 @@ struct shell_pmi {
     json_t *pending;// pending to be exchanged
     json_t *locals;  // never exchanged
     struct pmi_exchange *exchange;
+    bool abort;     // an abort exception has been raised
 };
 
 /* pmi_simple_ops->warn() signature */
@@ -98,10 +99,17 @@ static void shell_pmi_abort (void *arg,
                              int exit_code,
                              const char *msg)
 {
+    struct shell_pmi *pmi = arg;
+
     /*  Attempt to raise job exception and return to the shell's reactor.
      *   This allows the shell to continue to process events and stdio
      *   until the exec system terminates the job due to the exception.
+     *
+     *  Note that the job is now being torn down. Flag that an abort was
+     *   raised so that PMI protocol errors from the other tasks as they are
+     *   killed are not treated as a fatal shell error (see pmi_fd_cb()).
      */
+    pmi->abort = true;
     flux_shell_raise ("exec",
                       0,
                       "PMI_Abort%s%s",
@@ -246,8 +254,13 @@ static void pmi_fd_cb (flux_shell_task_t *task,
     rc = pmi_simple_server_request (pmi->server, line, task, task->rank);
     if (rc < 0) {
         shell_trace ("%d: S: pmi request error", task->rank);
-        shell_die (1, "PMI-1 wire protocol error");
-
+        /*  If an abort exception was already raised, the job is being torn
+         *   down and protocol errors from the tasks being killed are
+         *   expected. Don't let them override the abort exit status with a
+         *   fatal shell error (flux-framework/flux-core#7406).
+         */
+        if (!pmi->abort)
+            shell_die (1, "PMI-1 wire protocol error");
     }
     if (rc == 1) {
         shell_trace ("%d: S: pmi finalized", task->rank);
