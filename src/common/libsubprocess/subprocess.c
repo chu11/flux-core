@@ -460,6 +460,30 @@ void sigstatus_notify_start (flux_subprocess_t *p)
     }
 }
 
+static void sigstatus_purge_check (flux_subprocess_t *p)
+{
+    /* N.B. no more sigstatus reports after EXITED or FAILED */
+    flux_subprocess_state_t state =
+        p->ops.on_state_change ? p->state_reported : p->state;
+
+    if (state == FLUX_SUBPROCESS_EXITED
+        || state == FLUX_SUBPROCESS_FAILED)
+        zlist_purge (p->sigstatuses);
+}
+
+/* True when a queued sigstatus must not yet be delivered because the
+ * caller has an on_state_change callback and the RUNNING state has not
+ * been reported to them (see issue #5083).  While deferred we leave the
+ * idle watcher stopped so the reactor is not spun; the state-change
+ * machinery keeps the reactor live until RUNNING is reported, and the
+ * prep watcher re-evaluates each iteration.
+ */
+static bool sigstatus_deferred (flux_subprocess_t *p)
+{
+    return p->ops.on_state_change
+        && p->state_reported < FLUX_SUBPROCESS_RUNNING;
+}
+
 static void sigstatus_change_prep_cb (flux_reactor_t *r,
                                       flux_watcher_t *w,
                                       int revents,
@@ -467,13 +491,15 @@ static void sigstatus_change_prep_cb (flux_reactor_t *r,
 {
     flux_subprocess_t *p = arg;
 
-    if (zlist_size (p->sigstatuses) > 0)
-        flux_watcher_start (p->sigstatus_idle_w);
-    else {
+    sigstatus_purge_check (p);
+
+    if (zlist_size (p->sigstatuses) == 0) {
         /* nothing left to report, stop watching */
         flux_watcher_stop (p->sigstatus_prep_w);
         flux_watcher_stop (p->sigstatus_check_w);
     }
+    else if (!sigstatus_deferred (p))
+        flux_watcher_start (p->sigstatus_idle_w);
 }
 
 static void sigstatus_change_check_cb (flux_reactor_t *r,
@@ -488,14 +514,23 @@ static void sigstatus_change_check_cb (flux_reactor_t *r,
     /* always a chance caller may destroy subprocess in callback */
     subprocess_incref (p);
 
+    sigstatus_purge_check (p);
+
     /* Report at most one sigstatus per check.  Any remaining entries
      * will be reported on subsequent reactor iterations.  The prep
      * watcher only lets us run when the queue is non-empty, so a pop
      * here always has an entry.
      */
-    if (zlist_size (p->sigstatuses) > 0)
+    if (zlist_size (p->sigstatuses) > 0) {
+        /* N.B. See issue #5083.  We do not want to report any signal
+         * status until after the job is reported as RUNNING.
+         */
+        if (sigstatus_deferred (p))
+            goto out;
         (*p->ops.on_sigstatus) (p, sigstatus_pop (p));
+    }
 
+out:
     subprocess_decref (p);
 }
 
@@ -1377,8 +1412,8 @@ flux_subprocess_sigstatus_string (flux_subprocess_sigstatus_t sigstatus)
 {
     switch (sigstatus)
     {
-    case FLUX_SUBPROCESS_SIGSTATUS_UNKNOWN:
-        return "Unknown";
+    case FLUX_SUBPROCESS_SIGSTATUS_STOPPED:
+        return "Stopped";
     }
     return NULL;
 }

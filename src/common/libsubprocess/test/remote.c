@@ -718,6 +718,70 @@ void sigstop_test (flux_t *h)
     flux_cmd_destroy (cmd);
 }
 
+/* Like sigstop_test, but verifies the on_sigstatus callback is invoked
+ * with FLUX_SUBPROCESS_SIGSTATUS_STOPPED when the subprocess is stopped.
+ */
+
+static int sigstatus_stopped_count;
+
+static void sigstatus_stop_cb (flux_subprocess_t *p,
+                               flux_subprocess_sigstatus_t sigstatus)
+{
+    diag ("sigstatus callback sigstatus=%s",
+          flux_subprocess_sigstatus_string (sigstatus));
+    ok (sigstatus == FLUX_SUBPROCESS_SIGSTATUS_STOPPED,
+        "sigstatus callback sigstatus == STOPPED");
+    ok (flux_subprocess_state (p) == FLUX_SUBPROCESS_RUNNING,
+        "sigstatus returned when job was running");
+    sigstatus_stopped_count++;
+}
+
+flux_subprocess_ops_t sigstatus_stoptest_ops = {
+    .on_state_change    = stop_state_cb,
+    .on_stdout          = stop_output_cb,
+    .on_stderr          = stop_output_cb,
+    .on_sigstatus       = sigstatus_stop_cb,
+};
+
+void sigstatus_sigstop_test (flux_t *h)
+{
+    char *av[] = { "/bin/cat", NULL };
+    flux_subprocess_t *p;
+    flux_cmd_t *cmd;
+    int rc;
+
+    cmd = flux_cmd_create (ARRAY_SIZE (av) - 1, av, environ);
+    if (!cmd)
+        BAIL_OUT ("flux_cmd_create failed");
+
+    sigstatus_stopped_count = 0;
+
+    p = flux_rexec_ex (h,
+                       SERVER_NAME,
+                       FLUX_NODEID_ANY,
+                       0,
+                       cmd,
+                       &sigstatus_stoptest_ops,
+                       tap_logger,
+                       NULL);
+    ok (p != NULL,
+        "sigstatus stoptest: created subprocess");
+    if (flux_subprocess_aux_set (p, "reactor", flux_get_reactor (h), NULL) < 0)
+        BAIL_OUT ("could not stash reactor in subprocess aux container");
+
+    rc = flux_reactor_run (flux_get_reactor (h), 0);
+    ok (rc >= 0,
+        "sigstatus stoptest: reactor ran successfully");
+    /* N.B. count is 2 due to legacy FLUX_SUBPROCESS_STOPPED
+     * state still being handled.  This will be rectified in a later commit.
+     */
+    ok (sigstatus_stopped_count == 2,
+        "sigstatus stoptest: on_sigstatus called once with STOPPED");
+
+    flux_subprocess_destroy (p);
+    flux_cmd_destroy (cmd);
+}
+
 void bg_kill (flux_t *h, const char *label)
 {
     flux_future_t *f;
@@ -1080,6 +1144,8 @@ int main (int argc, char *argv[])
     local_unbuf_multiline_test (h);
     diag ("sigstop_test");
     sigstop_test (h);
+    diag ("sigstatus_sigstop_test");
+    sigstatus_sigstop_test (h);
     diag ("background_test");
     background_waitable_test (h);
     diag ("background_input_reject_test");
