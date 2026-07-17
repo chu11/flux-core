@@ -208,32 +208,38 @@ test_expect_success NO_CHAIN_LINT 'flux-top can call itself recursively' '
 	$runpty -o recurse.log --input=recurse.in flux top &&
 	grep -q $(echo $(cat expected.id) | sed "s/ƒ//") recurse.log
 '
-# note that FLUX_URI_RESOLVE_LOCAL=t is intentionally not set on
-# the runpty line below, as we're using a fake ssh
+# note that FLUX_URI_RESOLVE_LOCAL is intentionally unset on the runpty
+# line below, as we are using a fake ssh.
+#
+# Input is driven by expect patterns rather than fixed timestamps to
+# avoid raciness: send "k" to select the batch.sh job (the last entry,
+# reached by wrapping backwards from no selection), press enter once it
+# is highlighted to recurse into it, dismiss the resulting error popup
+# with any key ("x"), then quit with "q" once the popup dismissal has
+# forced a redraw.  flux-top is expected to exit normally, demonstrating
+# that it did not exit abnormally when the recursive connection failed.
+#
+# N.B. the unset of FLUX_URI_RESOLVE_LOCAL is scoped to a subshell so it
+# cannot leak into subsequent tests if runpty exits nonzero.
 test_expect_success NO_CHAIN_LINT 'flux-top does not exit on recursive failure' '
 	cat <<-EOF1 >ssh-fail &&
 	#!/bin/sh
 	printf "ssh failure\n" >&2
 	EOF1
 	chmod +x ssh-fail &&
-	SHELL=/bin/sh &&
-	flux jobs &&
-	flux proxy $(cat jobid2) flux jobs -c1 -no {id} >expected.id &&
-	cat <<-EOF >recurse-fail.in &&
-	{ "version": 2 }
-	[0.5, "i", "j"]
-	[1.0, "i", "j"]
-	[1.5, "i", "j"]
-	[2.0, "i", "k"]
-	[2.5, "i", "\n"]
-	[3.25, "i", "x"]
-	[3.75, "i", "q"]
+	cat <<-EOF >recurse-fail-expect.json &&
+	[
+	  { "expect": "batch.sh",                 "send": "k" },
+	  { "expect": "batch.sh",                 "send": "\n" },
+	  { "expect": "error connecting to Flux", "send": "x" },
+	  { "expect": ".",                        "send": "q" }
+	]
 	EOF
-	unset FLUX_URI_RESOLVE_LOCAL &&
-	FLUX_SSH=$(pwd)/ssh-fail \
-	    $runpty -f asciicast -o recurse-fail.log \
-	        --input=recurse-fail.in flux top &&
-	export FLUX_URI_RESOLVE_LOCAL=t
+	( unset FLUX_URI_RESOLVE_LOCAL &&
+	  FLUX_SSH=$(pwd)/ssh-fail \
+	      $runpty -f asciicast -o recurse-fail.log \
+	          --expect recurse-fail-expect.json \
+	          --timeout=60 flux top ) &&
 	grep -qi "error connecting to Flux" recurse-fail.log
 '
 test_expect_success 'cleanup running jobs' '
