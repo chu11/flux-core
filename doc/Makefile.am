@@ -520,6 +520,7 @@ EXTRA_DIST = \
 	guide/kvs_gc.rst \
 	guide/broker.rst \
 	guide/systemd.rst \
+	guide/vendors.rst \
 	guide/sdbus.rst \
 	guide/sdexec.rst \
 	guide/libsdexec.rst \
