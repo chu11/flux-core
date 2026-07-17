@@ -453,7 +453,13 @@ def main():
 
         signal(SIGALRM, sigalrm_handler)
 
+        # Set when an expect entry with "exit": true matches, so that
+        # runpty exits successfully after the reactor stops regardless of
+        # the child's exit status.
+        exit_requested = False
+
         def read_tty():
+            nonlocal exit_requested
             buf.read()
             if expect.match(buf.peek()):
                 send_data, command, should_exit = expect.pop()
@@ -463,12 +469,18 @@ def main():
                     os.system(command)
                 if should_exit:
                     # Pattern matched and exit requested - terminate child
-                    # and exit successfully regardless of child exit status
+                    # and exit successfully regardless of child exit status.
+                    # Stop the reactor deterministically here rather than
+                    # racing a delayed exit against the pty EOF that results
+                    # from killing the child (which would otherwise fall
+                    # through to the child's exit status below).
                     try:
                         os.kill(pid, SIGTERM)
                     except ProcessLookupError:
                         pass
-                    loop.call_later(0.1, sys.exit, 0)
+                    exit_requested = True
+                    loop.remove_reader(fd)
+                    loop.stop()
                     return
             buf.send_data(ofile.write_entry)
             if buf.eof:
@@ -480,6 +492,11 @@ def main():
 
         loop.add_reader(fd, read_tty)
         loop.run_forever()
+
+        # Exit successfully if an expect entry requested it, without
+        # waiting on (or reporting) the child's exit status.
+        if exit_requested:
+            sys.exit(0)
 
         (pid, status) = os.waitpid(pid, 0)
         sys.exit(status_to_exitcode(status))
