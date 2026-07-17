@@ -10,3 +10,4 @@ Resources for Flux Developers
    kvs_gc
    broker
    systemd
+   vendors
