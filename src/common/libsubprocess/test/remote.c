@@ -850,7 +850,10 @@ void background_input_reject_test (flux_t *h)
         BAIL_OUT ("background_input_reject_test: asprintf");
 
     /* Non-streaming (background) + write-credit flag -> EINVAL */
-    f = flux_rpc_pack (h, topic, FLUX_NODEID_ANY, 0,
+    f = flux_rpc_pack (h,
+                       topic,
+                       FLUX_NODEID_ANY,
+                       0,
                        "{s:O s:i s:i}",
                        "cmd", cmd_obj,
                        "flags", SUBPROCESS_REXEC_WRITE_CREDIT,
@@ -863,7 +866,10 @@ void background_input_reject_test (flux_t *h)
     flux_future_destroy (f);
 
     /* Non-streaming (background) + stdio-fallthrough local flag -> EINVAL */
-    f = flux_rpc_pack (h, topic, FLUX_NODEID_ANY, 0,
+    f = flux_rpc_pack (h,
+                       topic,
+                       FLUX_NODEID_ANY,
+                       0,
                        "{s:O s:i s:i}",
                        "cmd", cmd_obj,
                        "flags", 0,
