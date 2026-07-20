@@ -192,6 +192,22 @@ flux_subprocess_t *flux_rexec_ex (flux_t *h,
                                   subprocess_log_f log_fn,
                                   void *log_data);
 
+/* Attach to an existing background subprocess on rank, identified by
+ * process id or command label (when specifying a label, set pid = -1;
+ * label takes precedence if both are given).  The returned subprocess
+ * enters the RUNNING state.  Output forwarding follows the flags the
+ * subprocess was originally started with.
+ *
+ * Valid flags: FLUX_SUBPROCESS_FLAGS_LOCAL_UNBUF, FLUX_SUBPROCESS_FLAGS_SIGN.
+ */
+flux_subprocess_t *flux_rexec_attach (flux_t *h,
+                                      const char *service_name,
+                                      int rank,
+                                      int flags,
+                                      pid_t pid,
+                                      const char *label,
+                                      const flux_subprocess_ops_t *ops);
+
 /* Like flux_rexec(3), but run process in background.
  *
  * If service_name is NULL, then default to `rexec`.

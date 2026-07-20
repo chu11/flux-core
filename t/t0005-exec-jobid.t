@@ -217,6 +217,25 @@ test_expect_success SIGN_WRAP 'create kill-signed.py' '
 	EOF
 	chmod +x kill-signed.py
 '
+# flux exec --attach plumbs FLUX_SUBPROCESS_FLAGS_SIGN through to
+# flux_rexec_attach(3).  Exercise that seam through the CLI: a signed attach
+# to a sign-required server succeeds, while an unsigned attach is rejected.
+test_expect_success SIGN_WRAP 'signed attach to sign-required server works' '
+	flux exec --bg --waitable --label=att-sign --sign \
+		--jobid=$sign_jobid sh -c "sleep 3; exit 4" &&
+	test_expect_code 4 \
+		flux exec --attach --sign --jobid=$sign_jobid att-sign
+'
+test_expect_success SIGN_WRAP 'unsigned attach to sign-required server is rejected' '
+	flux exec --bg --waitable --label=att-unsign --sign \
+		--jobid=$sign_jobid sleep inf &&
+	test_must_fail flux exec --attach --jobid=$sign_jobid att-unsign \
+		2>attach-unsigned.err &&
+	test_debug "cat attach-unsigned.err" &&
+	grep "request signature required" attach-unsigned.err &&
+	SIGN_SERVICE=$sign_service SIGN_RANK=$sign_rank \
+		flux python kill-signed.py att-unsign
+'
 test_expect_success SIGN_WRAP 'kill background process' '
 	SIGN_SERVICE=$sign_service SIGN_RANK=$sign_rank \
 	    flux python kill-signed.py test

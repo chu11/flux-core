@@ -5,7 +5,8 @@ flux-exec(1)
 SYNOPSIS
 ========
 
-**flux** **exec** [*--noinput*] [*--label-io*] [*—dir=DIR*] [*--rank=IDSET*] [*--verbose*] *COMMAND...*
+| **flux** **exec** [*OPTIONS*] [*--rank=IDSET*] [*--bg*] *COMMAND...*
+| **flux** **exec** [*OPTIONS*] [*--rank=IDSET*] *--attach* *PID|LABEL*
 
 DESCRIPTION
 ===========
@@ -126,6 +127,23 @@ OPTIONS
    in subsequent operations. The label appears in process list responses
    and must be unique across all processes managed by the subprocess server.
 
+.. option:: --attach
+
+   Attach to a running background process identified by the free argument
+   (PID or label).  While attached, program output is copied to
+   :program:`flux exec` without interrupting background logging.
+
+   If the remote process terminates while attached, :program:`flux exec`
+   terminates and reports its exit status the same way it would for a
+   foreground process.
+
+   In attach mode :kbd:`Control-C` (SIGINT) detaches from the process
+   without forwarding the signal.  SIGTERM, on the other hand, is forwarded.
+
+   Attaching to a waitable background process that has already exited
+   reports its exit status and reaps it, after which it can no longer be
+   waited on or attached to.
+
 CAVEATS
 =======
 
@@ -157,3 +175,8 @@ FLUX RFC
 :doc:`rfc:spec_22`
 
 :doc:`rfc:spec_42`
+
+SEE ALSO
+========
+
+:man1:`flux-sproc`

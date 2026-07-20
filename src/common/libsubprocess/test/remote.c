@@ -812,6 +812,154 @@ void bg_test (flux_t *h,
     flux_future_destroy (f);
 }
 
+/* Start a waitable background subprocess with the given label.  The stdout
+ * and stderr forwarding flags are ignored in background mode (RFC 42);
+ * forwarding is selected later by the attaching client's callbacks.
+ */
+static void attach_bg_start (flux_t *h,
+                             const char *label,
+                             int ac,
+                             char **av)
+{
+    flux_future_t *f;
+    flux_cmd_t *cmd;
+
+    if (!(cmd = flux_cmd_create (ac, av, environ))
+        || flux_cmd_set_label (cmd, label) < 0)
+        BAIL_OUT ("attach_bg_start: flux_cmd_create");
+    f = flux_rexec_bg (h,
+                       SERVER_NAME,
+                       FLUX_NODEID_ANY,
+                       FLUX_SUBPROCESS_FLAGS_WAITABLE,
+                       cmd);
+    if (!f)
+        BAIL_OUT ("attach_bg_start: flux_rexec_bg");
+    ok (flux_rpc_get (f, NULL) == 0,
+        "%s: background exec started", label);
+    flux_future_destroy (f);
+    flux_cmd_destroy (cmd);
+}
+
+/* Attach to a background subprocess and run to completion, checking the
+ * scorecard.  Uses the simple_ops callbacks.
+ */
+static void attach_run_check (flux_t *h,
+                              const char *prefix,
+                              const char *label,
+                              struct simple_scorecard *exp)
+{
+    flux_subprocess_t *p;
+    struct simple_ctx ctx;
+    int rc;
+
+    memset (&ctx, 0, sizeof (ctx));
+    ctx.h = h;
+    p = flux_rexec_attach (h,
+                           SERVER_NAME,
+                           FLUX_NODEID_ANY,
+                           0,
+                           -1,
+                           label,
+                           &simple_ops);
+    ok (p != NULL,
+        "%s: flux_rexec_attach returned a subprocess object", prefix);
+    if (!p)
+        BAIL_OUT ("flux_rexec_attach failed");
+    if (flux_subprocess_aux_set (p, "ctx", &ctx, NULL) < 0)
+        BAIL_OUT ("flux_subprocess_aux_set failed");
+    rc = flux_reactor_run (flux_get_reactor (h), 0);
+    ok (rc >= 0,
+        "%s: client reactor ran successfully", prefix);
+    ok (ctx.scorecard.running == exp->running,
+        "%s: subprocess state=RUNNING was %sreported",
+        prefix, exp->running ? "" : "not ");
+    ok (ctx.scorecard.exited == exp->exited,
+        "%s: subprocess state=EXITED was %sreported",
+        prefix, exp->exited ? "" : "not ");
+    ok (ctx.scorecard.completion == exp->completion,
+        "%s: subprocess completion callback was %sinvoked",
+        prefix, exp->completion ? "" : "not ");
+    ok (ctx.scorecard.exit_nonzero == exp->exit_nonzero,
+        "%s: subprocess did%s exit with nonzero exit code",
+        prefix, exp->exit_nonzero ? "" : " not");
+    ok (ctx.scorecard.stdout_eof == exp->stdout_eof,
+        "%s: subprocess stdout %s EOF",
+        prefix, exp->stdout_eof ? "got" : "did not get");
+    ok (ctx.scorecard.stderr_eof == exp->stderr_eof,
+        "%s: subprocess stderr %s EOF",
+        prefix, exp->stderr_eof ? "got" : "did not get");
+    flux_subprocess_destroy (p);
+}
+
+void attach_test (flux_t *h)
+{
+    struct simple_scorecard exp;
+
+    /* Attach to a running background process: it should report RUNNING,
+     * stream its stdout/stderr EOFs when it exits, and complete with the
+     * exit status.
+     */
+    char *run_av[] = { "/bin/sh", "-c", "sleep 0.2; exit 4", NULL };
+    attach_bg_start (h, "att-run", ARRAY_SIZE (run_av) - 1, run_av);
+    memset (&exp, 0, sizeof (exp));
+    exp.running = 1;
+    exp.exited = 1;
+    exp.completion = 1;
+    exp.exit_nonzero = 1;
+    exp.stdout_eof = 1;
+    exp.stderr_eof = 1;
+    attach_run_check (h, "attach running", "att-run", &exp);
+
+    /* Attach to a background process that closed stdout *before* the attach.
+     * The EOF consumed in background mode is not forwarded, so the server
+     * synthesizes it on attach; without that EOF the client's per-stream
+     * accounting would never balance and completion would not fire.
+     */
+    char *closed_av[] = {
+        "/bin/sh", "-c", "echo hi; exec 1>&-; sleep 0.2; exit 9", NULL
+    };
+    attach_bg_start (h, "att-closed", ARRAY_SIZE (closed_av) - 1, closed_av);
+    /* Pump the reactor so the server observes the stdout close while the
+     * process is still in background mode.
+     */
+    flux_reactor_run (flux_get_reactor (h), FLUX_REACTOR_NOWAIT);
+    memset (&exp, 0, sizeof (exp));
+    exp.running = 1;
+    exp.exited = 1;
+    exp.completion = 1;
+    exp.exit_nonzero = 1;
+    exp.stdout_eof = 1;
+    exp.stderr_eof = 1;
+    attach_run_check (h, "attach stdout-closed-in-bg", "att-closed", &exp);
+
+    /* Attach to a nonexistent label -> the attach RPC fails with ENOENT,
+     * surfaced to the client as the FAILED state.
+     */
+    struct simple_ctx ctx;
+    flux_subprocess_t *p;
+    memset (&ctx, 0, sizeof (ctx));
+    ctx.h = h;
+    p = flux_rexec_attach (h,
+                           SERVER_NAME,
+                           FLUX_NODEID_ANY,
+                           0,
+                           -1,
+                           "att-nope",
+                           &simple_ops);
+    ok (p != NULL,
+        "attach nonexistent: flux_rexec_attach returned a subprocess object");
+    if (p) {
+        if (flux_subprocess_aux_set (p, "ctx", &ctx, NULL) < 0)
+            BAIL_OUT ("flux_subprocess_aux_set failed");
+        flux_reactor_run (flux_get_reactor (h), 0);
+        ok (ctx.scorecard.failed == 1,
+            "attach nonexistent: subprocess reached FAILED state");
+        ok (flux_subprocess_fail_errno (p) == ENOENT,
+            "attach nonexistent: fail errno is ENOENT");
+        flux_subprocess_destroy (p);
+    }
+}
+
 void background_waitable_test (flux_t *h)
 {
     char *cmd_noexist[] = { "/noexist", NULL };
@@ -850,7 +998,10 @@ void background_input_reject_test (flux_t *h)
         BAIL_OUT ("background_input_reject_test: asprintf");
 
     /* Non-streaming (background) + write-credit flag -> EINVAL */
-    f = flux_rpc_pack (h, topic, FLUX_NODEID_ANY, 0,
+    f = flux_rpc_pack (h,
+                       topic,
+                       FLUX_NODEID_ANY,
+                       0,
                        "{s:O s:i s:i}",
                        "cmd", cmd_obj,
                        "flags", SUBPROCESS_REXEC_WRITE_CREDIT,
@@ -863,7 +1014,10 @@ void background_input_reject_test (flux_t *h)
     flux_future_destroy (f);
 
     /* Non-streaming (background) + stdio-fallthrough local flag -> EINVAL */
-    f = flux_rpc_pack (h, topic, FLUX_NODEID_ANY, 0,
+    f = flux_rpc_pack (h,
+                       topic,
+                       FLUX_NODEID_ANY,
+                       0,
                        "{s:O s:i s:i}",
                        "cmd", cmd_obj,
                        "flags", 0,
@@ -874,6 +1028,32 @@ void background_input_reject_test (flux_t *h)
     ok (flux_rpc_get (f, NULL) < 0 && errno == EINVAL,
         "background exec with stdio-fallthrough flag fails with EINVAL");
     flux_future_destroy (f);
+
+    /* Non-streaming (background) + a command with an auxiliary channel ->
+     * EINVAL (implementation restriction; see server_exec_cb()).
+     */
+    flux_cmd_t *chan_cmd;
+    json_t *chan_obj = NULL;
+    if (!(chan_cmd = flux_cmd_create (1, av, environ))
+        || flux_cmd_add_channel (chan_cmd, "TEST_CHANNEL") < 0
+        || !(chan_obj = cmd_tojson (chan_cmd)))
+        BAIL_OUT ("background_input_reject_test: channel cmd setup");
+    f = flux_rpc_pack (h,
+                       topic,
+                       FLUX_NODEID_ANY,
+                       0,
+                       "{s:O s:i s:i}",
+                       "cmd", chan_obj,
+                       "flags", 0,
+                       "local_flags", 0);
+    ok (f != NULL,
+        "sent background exec request with auxiliary channel");
+    errno = 0;
+    ok (flux_rpc_get (f, NULL) < 0 && errno == EINVAL,
+        "background exec with auxiliary channel fails with EINVAL");
+    flux_future_destroy (f);
+    json_decref (chan_obj);
+    flux_cmd_destroy (chan_cmd);
 
     free (topic);
     json_decref (cmd_obj);
@@ -904,6 +1084,8 @@ int main (int argc, char *argv[])
     background_waitable_test (h);
     diag ("background_input_reject_test");
     background_input_reject_test (h);
+    diag ("attach_test");
+    attach_test (h);
 
     test_server_stop (h);
     flux_close (h);
