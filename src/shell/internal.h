@@ -28,7 +28,6 @@ struct flux_shell {
     int broker_rank;
     uid_t broker_owner;
     char hostname [_POSIX_HOST_NAME_MAX + 1];
-    int protocol_fd[2];
 
     optparse_t *p;
     flux_t *h;

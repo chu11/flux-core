@@ -180,11 +180,21 @@ barrier_hang()
 }
 barrier() {
     if [[ ${NNODES} -gt 1 ]]; then
-        echo enter >&1
-        read -u 0 line
-        if [[ ${line##*=} -ne 0 ]]; then
-            exit ${line##*=}
-        fi
+        #  Enter the shell barrier by sending a NORESPONSE job-exec.shell-barrier
+        #  request and blocking for the response matched on topic string,
+        #  mirroring what the real job shell does.  An error response means the
+        #  barrier failed, so exit nonzero as the old byte protocol did on
+        #  "exit=1".
+        flux python -c "
+import flux
+from flux.constants import FLUX_RPC_NORESPONSE, FLUX_MSGTYPE_RESPONSE
+h = flux.Flux()
+h.rpc('job-exec.shell-barrier',
+      {'id': $JOBID, 'rank': $BROKER_RANK},
+      flags=FLUX_RPC_NORESPONSE)
+msg = h.recv(type_mask=FLUX_MSGTYPE_RESPONSE)
+msg.decode()
+" || exit 1
     fi
 }
 

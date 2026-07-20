@@ -65,7 +65,25 @@ struct exec_implementation {
     int  (*cancel)  (struct jobinfo *job);
     json_t * (*stats) (struct jobinfo *job);
     struct idset * (*active_ranks) (struct jobinfo *job);
+
+    /*  Handle a shell-barrier "enter" request from a job shell.  The
+     *  implementation takes ownership of responding to the request (now or
+     *  when the barrier is released) via shell_barrier_respond() or
+     *  shell_barrier_respond_error().  Optional; NULL if the implementation
+     *  has no job shells (e.g. testexec).
+     */
+    int  (*barrier_enter) (struct jobinfo *job, const flux_msg_t *msg);
 };
+
+/*  Respond to a shell-barrier request.  These requests are sent with the
+ *  NORESPONSE flag, so flux_respond(3) will not reply to them; these helpers
+ *  build and send the response by hand.
+ */
+int shell_barrier_respond (flux_t *h, const flux_msg_t *request, const char *s);
+int shell_barrier_respond_error (flux_t *h,
+                                 const flux_msg_t *request,
+                                 int errnum,
+                                 const char *errstr);
 
 /*  Exec job information */
 struct jobinfo {

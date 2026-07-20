@@ -64,6 +64,7 @@ struct exec_ctx {
     struct idset *barrier_pending_ranks;
     int barrier_enter_count;
     int barrier_completion_count;
+    struct flux_msglist *barrier_requests;
 
     /*  terminated_before_barrier will be set to true if one shell terminates
      *  before the first barrier *and* the first exception. This allows other
@@ -77,6 +78,25 @@ struct exec_ctx {
 
     flux_watcher_t *shell_barrier_timer;
 };
+
+static void barrier_release (struct exec_ctx *ctx, int errnum)
+{
+    const flux_msg_t *msg;
+    struct jobinfo *job = ctx->job;
+
+    if (!ctx->barrier_requests)
+        return;
+    while ((msg = flux_msglist_first (ctx->barrier_requests))) {
+        int rc;
+        if (errnum == 0)
+            rc = shell_barrier_respond (job->h, msg, NULL);
+        else
+            rc = shell_barrier_respond_error (job->h, msg, errnum, NULL);
+        if (rc < 0)
+            flux_log_error (job->h, "shell-barrier: error responding to shell");
+        flux_msglist_delete (ctx->barrier_requests);
+    }
+}
 
 static void barrier_timer_cb (flux_reactor_t *r,
                               flux_watcher_t *w,
@@ -118,6 +138,12 @@ static void exec_ctx_destroy (struct exec_ctx *tc)
 {
     if (tc) {
         int saved_errno = errno;
+        /*  Respond with an error to any requests still parked in the
+         *  barrier so those shells exit rather than blocking until killed.
+         */
+        if (tc->job)
+            barrier_release (tc, EIO);
+        flux_msglist_destroy (tc->barrier_requests);
         idset_destroy (tc->barrier_pending_ranks);
         flux_watcher_destroy (tc->shell_barrier_timer);
         free (tc);
@@ -131,12 +157,15 @@ static struct exec_ctx *exec_ctx_create (struct jobinfo *job,
 {
     json_error_t error;
     const char *service;
-    struct exec_ctx *ctx = calloc (1, sizeof (*ctx));
-    flux_reactor_t *r = flux_get_reactor (job->h);
+    flux_reactor_t *r;
+    struct exec_ctx *ctx = NULL;
     double barrier_timeout = config_get_default_barrier_timeout ();
 
-    if (!r || !ctx || !(ctx->barrier_pending_ranks = idset_copy (ranks))) {
-        errprintf (errp, "Out of memory");
+    if (!(r = flux_get_reactor (job->h))
+        || !(ctx = calloc (1, sizeof (*ctx)))
+        || !(ctx->barrier_requests = flux_msglist_create ())
+        || !(ctx->barrier_pending_ranks = idset_copy (ranks))) {
+        errprintf (errp, "%s", strerror (errno));
         goto error;
     }
 
@@ -221,37 +250,65 @@ static void barrier_timer_start (struct exec_ctx *ctx)
 }
 
 
-static int exec_barrier_enter (struct bulk_exec *exec, int rank)
+static int exec_barrier_enter (struct bulk_exec *exec, const flux_msg_t *msg)
 {
     struct exec_ctx *ctx = bulk_exec_aux_get (exec, "ctx");
+    int rank;
 
     if (!ctx)
         return -1;
 
+    if (flux_msg_unpack (msg, "{s:i}", "rank", &rank) < 0)
+        return -1;
+    /*  Reject a request whose rank is out of range or not pending
+     *  to avoid corrupting barrier accounting.
+     */
+    if (rank < 0 || !idset_test (ctx->barrier_pending_ranks, rank)) {
+        flux_error_t error;
+        errprintf (&error, "rank %d is not pending in barrier", rank);
+        if (shell_barrier_respond_error (ctx->job->h,
+                                         msg,
+                                         EINVAL,
+                                         error.text) < 0)
+            flux_log_error (ctx->job->h, "shell-barrier: error responding");
+        return 0;
+    }
     (void) idset_clear (ctx->barrier_pending_ranks, rank);
-    if (++ctx->barrier_enter_count == bulk_exec_total (exec)) {
-        if (bulk_exec_write (exec, "stdin", "exit=0\n", 7) < 0)
-            return -1;
+    ctx->barrier_enter_count++;
+
+    /*
+     *  Terminate barrier with error immediately when a shell enters after
+     *   one or more shells have already exited. The case where a shell exits
+     *   while a barrier is already in progress is handled in exit_cb().
+     */
+    if (ctx->exit_count > 0) {
+        if (shell_barrier_respond_error (ctx->job->h, msg, EIO, NULL) < 0)
+            flux_log_error (ctx->job->h, "shell-barrier: error responding");
+        return 0;
+    }
+
+    if (flux_msglist_append (ctx->barrier_requests, msg) < 0)
+        return -1;
+
+    if (ctx->barrier_enter_count == bulk_exec_total (exec)) {
+        barrier_release (ctx, 0);
         ctx->barrier_enter_count = 0;
         ctx->barrier_completion_count++;
         barrier_timer_stop (ctx);
-    }
-    else if (ctx->barrier_enter_count == 1 && ctx->exit_count > 0) {
-        /*
-         *  Terminate barrier with error immediately when a barrier is
-         *   started after one or more shells have already exited. The
-         *   case where a shell exits while a barrier is already in progress
-         *   is handled in exit_cb().
+        /*  Reset pending ranks for next barrier.  Failure is unlikely
+         *  since the set universe won't expand here.
          */
-        if (bulk_exec_write (exec, "stdin", "exit=1\n", 7) < 0)
-            return -1;
+        if (idset_add (ctx->barrier_pending_ranks,
+                       resource_set_ranks (ctx->job->R)) < 0) {
+            flux_log_error (ctx->job->h,
+                            "shell-barrier: failed to reset pending ranks");
+        }
     }
-
     /*  When the first shell enters the barrier, start a timer after
      *   which the job will be terminated if all shells have not reached
      *   the barrier.
      */
-    if (ctx->barrier_enter_count == 1)
+    else if (ctx->barrier_enter_count == 1)
         barrier_timer_start (ctx);
 
     return 0;
@@ -266,17 +323,7 @@ static void output_cb (struct bulk_exec *exec,
 {
     struct jobinfo *job = arg;
     const char *cmd = flux_cmd_arg (flux_subprocess_get_cmd (p), 0);
-    int rank = flux_subprocess_rank (p);
 
-    if (streq (stream, "stdout")
-        && len == 6
-        && strncmp (data, "enter\n", 6) == 0) {
-        if (exec_barrier_enter (exec, rank) < 0)
-            jobinfo_fatal_error (job,
-                                 errno,
-                                 "Failed to handle barrier");
-        return;
-    }
     jobinfo_log_output (job,
                         flux_subprocess_rank (p),
                         basename_simple (cmd),
@@ -681,20 +728,12 @@ static void exit_cb (struct bulk_exec *exec,
         free (hosts);
     }
 
-    /*  If a shell exited before the first barrier or there is a
-     *   barrier in progress (enter_count > 0), then terminate the
-     *   current/next barrier immediately with error. This will allow
-     *   shells currently waiting or entering the barrier in the future
-     *   to exit immediately, rather than being killed by exec system.
+    /*  Terminate any barrier in progress with error, releasing shells
+     *   currently waiting so they exit immediately rather than being killed
+     *   by the exec system.  Shells that enter the barrier later are
+     *   rejected by exec_barrier_enter() since exit_count is now nonzero.
      */
-    if (ctx->barrier_completion_count == 0
-        || ctx->barrier_enter_count > 0) {
-        if (bulk_exec_write (exec, "stdin", "exit=1\n", 7) < 0)
-            jobinfo_fatal_error (job,
-                                 0,
-                                 "failed to terminate barrier: %s",
-                                 strerror (errno));
-    }
+    barrier_release (ctx, EIO);
 
     /*  If a shell exits due to signal report the shell as lost to
      *  the leader shell. This avoids potential hangs in the leader
@@ -1160,6 +1199,11 @@ static struct idset *active_ranks (struct jobinfo *job)
     return NULL;
 }
 
+static int exec_barrier_enter_op (struct jobinfo *job, const flux_msg_t *msg)
+{
+    return exec_barrier_enter ((struct bulk_exec *) job->data, msg);
+}
+
 struct exec_implementation bulkexec = {
     .name =     "bulk-exec",
     .config =   exec_config,
@@ -1170,6 +1214,7 @@ struct exec_implementation bulkexec = {
     .cancel =   exec_cancel,
     .stats =    exec_stats,
     .active_ranks = active_ranks,
+    .barrier_enter = exec_barrier_enter_op,
 };
 
 /* vi: ts=4 sw=4 expandtab

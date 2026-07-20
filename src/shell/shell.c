@@ -1063,12 +1063,6 @@ static const char *shell_conf_get (const char *name)
     return flux_conf_builtin_get (name, FLUX_CONF_AUTO);
 }
 
-static void get_protocol_fd (int *pfd)
-{
-    pfd[0] = STDIN_FILENO;
-    pfd[1] = STDOUT_FILENO;
-}
-
 struct mustache_arg {
     flux_shell_t *shell;
     flux_shell_task_t *task;
@@ -1380,8 +1374,6 @@ static void shell_initialize (flux_shell_t *shell)
     if (gethostname (shell->hostname, sizeof (shell->hostname)) < 0)
         shell_die_errno (1, "gethostname");
 
-    get_protocol_fd (shell->protocol_fd);
-
     if (!(shell->completion_refs = zhashx_new ()))
         shell_die_errno (1, "zhashx_new");
     zhashx_set_destructor (shell->completion_refs, item_free);
@@ -1500,28 +1492,63 @@ int flux_shell_add_event_context (flux_shell_t *shell,
     return rc;
 }
 
-static int shell_barrier (flux_shell_t *shell, const char *name)
+static int shell_barrier (flux_shell_t *shell)
 {
-    char buf [8];
+    flux_future_t *f;
+    flux_msg_t *msg;
+    struct flux_match match = FLUX_MATCH_RESPONSE;
 
     if (shell->info->shell_size == 1)
         return 0; // NO-OP
 
-    if (dprintf (shell->protocol_fd[1], "enter\n") != 6)
-        shell_die_errno (1, "shell_barrier: dprintf");
-
-    /*  Note: The only expected values currently are "exit=0\n"
-     *   for success and "exit=1\n" for failure. Therefore, if
-     *   read(2) fails, or we don't receive exactly "exit=0\n",
-     *   then this barrier has failed. We exit immediately since
-     *   the reason for the failed barrier has likely been logged
-     *   elsewhere.
+    /*  Enter the barrier by sending a request to job-exec and blocking for
+     *   the response.  A successful (empty) response releases the barrier;
+     *   an error response means the barrier failed.  The request is routed
+     *   to the job-exec instance that owns the job (FLUX_NODEID_ANY).  The
+     *   broker rank is included so job-exec can identify shells that have
+     *   not yet entered.
+     *
+     *  The request is sent with FLUX_RPC_NORESPONSE so that the broker does
+     *   not allocate a matchtag or track it for disconnect: when a large job
+     *   aborts during the barrier, this avoids a storm of disconnect messages
+     *   to the job-exec leader.  Because there is no matchtag, the response
+     *   is matched on topic string; there is at most one barrier outstanding
+     *   per shell, and the response's route stack ensures it is delivered
+     *   here, so the topic match is unambiguous.
      */
-    memset (buf, 0, sizeof (buf));
-    if (read (shell->protocol_fd[0], buf, 7) < 0)
-        shell_die_errno (1, "shell_barrier: read");
-    if (!streq (buf, "exit=0\n"))
+    if (!(f = flux_rpc_pack (shell->h,
+                             "job-exec.shell-barrier",
+                             FLUX_NODEID_ANY,
+                             FLUX_RPC_NORESPONSE,
+                             "{s:I s:i}",
+                             "id", shell->jobid,
+                             "rank", shell->broker_rank)))
+        shell_die_errno (1, "shell_barrier: flux_rpc_pack");
+    flux_future_destroy (f);
+
+    /*  Block waiting for the barrier response.  The reactor is not running
+     *   at this point, so a synchronous flux_recv() is used.
+     */
+    match.topic_glob = "job-exec.shell-barrier";
+    if (!(msg = flux_recv (shell->h, match, 0)))
+        shell_die_errno (1, "shell_barrier: flux_recv");
+    if (flux_response_decode (msg, NULL, NULL) < 0) {
+        /*  EIO is the expected "barrier failed" response: job-exec has
+         *   already raised a job exception describing the cause, so a
+         *   diagnostic here would only duplicate it across every shell.
+         *   Any other error is not recorded elsewhere, so log it.
+         */
+        if (errno != EIO) {
+            const char *errstr;
+            if (flux_response_decode_error (msg, &errstr) == 0)
+                shell_log_error ("shell_barrier: %s", errstr);
+            else
+                shell_log_error ("shell_barrier: %s", strerror (errno));
+        }
+        flux_msg_destroy (msg);
         exit (1);
+    }
+    flux_msg_destroy (msg);
     return 0;
 }
 
@@ -2134,7 +2161,7 @@ int main (int argc, char *argv[])
 
     /* Barrier to ensure initialization has completed across all shells.
      */
-    if (shell_barrier (&shell, "init") < 0)
+    if (shell_barrier (&shell) < 0)
         shell_die_errno (1, "shell_barrier");
 
     /*  Emit an event after barrier completion from rank 0
@@ -2156,7 +2183,7 @@ int main (int argc, char *argv[])
     if (shell_start (&shell) < 0)
         shell_die_errno (1, "shell.start callback(s) failed");
 
-    if (shell_barrier (&shell, "start") < 0)
+    if (shell_barrier (&shell) < 0)
         shell_die_errno (1, "shell_barrier");
 
     /*  Emit an event after barrier completion from rank 0
