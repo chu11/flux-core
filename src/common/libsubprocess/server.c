@@ -84,6 +84,11 @@
  *   a wait is rejected if a client is attached, and an attach is rejected if
  *   a wait is pending (both EBUSY).
  *
+ * - A waitable process retains a bounded amount of its most recent output
+ *   (RETAINED_OUTPUT_MAX) which is returned in the wait response "output"
+ *   array.  Output beyond the cap is dropped oldest-first.  This is distinct
+ *   from attach, which does not replay output produced before the attach.
+ *
  * ATTACH BEHAVIOR
  * ---------------
  * - A client may attach to a running background subprocess (by pid or label)
@@ -152,6 +157,13 @@
 #include "sigchld.h"
 
 extern char **environ;
+
+/* Coarse upper bound on the amount of a waitable background subprocess's
+ * output retained for delivery in the wait response (see wait_notify()).
+ * When exceeded, the oldest whole io objects are dropped so the most recent
+ * output is kept.  This bounds both server memory and wait response size.
+ */
+#define RETAINED_OUTPUT_MAX 8192
 
 /* Keys used to store subprocess server, exec request
  * (i.e. rexec.exec), and 'subprocesses' zlistx handle in the
@@ -361,10 +373,19 @@ static inline void clear_waitable (flux_subprocess_t *p)
 static void wait_notify (subprocess_server_t *s, flux_subprocess_t *p)
 {
     if (is_waitable (p) && !flux_subprocess_active (p) && p->waiter) {
-        if (flux_respond_pack (s->h,
-                               p->waiter,
-                               "{s:i}",
-                               "status", flux_subprocess_status (p)) < 0)
+        int rc;
+        if (p->retained_output && json_array_size (p->retained_output) > 0)
+            rc = flux_respond_pack (s->h,
+                                    p->waiter,
+                                    "{s:i s:O}",
+                                    "status", flux_subprocess_status (p),
+                                    "output", p->retained_output);
+        else
+            rc = flux_respond_pack (s->h,
+                                    p->waiter,
+                                    "{s:i}",
+                                    "status", flux_subprocess_status (p));
+        if (rc < 0)
             llog_error (s, "wait respond pid %d", flux_subprocess_pid (p));
         clear_waitable (p);
     }
@@ -668,6 +689,44 @@ error:
     return rv;
 }
 
+/* Retain a copy of one line/chunk of output from a waitable background
+ * subprocess for later delivery in the wait response.  'data' has length
+ * 'len' (> 0; EOF records are not retained since the wait response is itself
+ * the stream terminator).  Oldest whole io objects are dropped to keep the
+ * total retained data within RETAINED_OUTPUT_MAX.  A best effort operation:
+ * on failure the output is simply not retained.
+ */
+static void proc_retain_output (subprocess_server_t *s,
+                                flux_subprocess_t *p,
+                                const char *stream,
+                                const char *data,
+                                int len)
+{
+    char rankstr[64];
+    json_t *io;
+
+    if (!p->retained_output && !(p->retained_output = json_array ()))
+        return;
+    snprintf (rankstr, sizeof (rankstr), "%d", s->rank);
+    if (!(io = ioencode (stream, rankstr, data, len, false)))
+        return;
+    if (json_array_append_new (p->retained_output, io) < 0)
+        return;
+    p->retained_bytes += len;
+
+    /* Drop oldest io objects until back within the cap, but always keep at
+     * least one so a single oversized record is retained whole (uncapped).
+     */
+    while (p->retained_bytes > RETAINED_OUTPUT_MAX
+           && json_array_size (p->retained_output) > 1) {
+        json_t *old = json_array_get (p->retained_output, 0);
+        int oldlen = 0;
+        if (iodecode (old, NULL, NULL, NULL, &oldlen, NULL) == 0)
+            p->retained_bytes -= oldlen;
+        json_array_remove (p->retained_output, 0);
+    }
+}
+
 static void proc_output_cb (flux_subprocess_t *p, const char *stream)
 {
     subprocess_server_t *s = flux_subprocess_aux_get (p, srvkey);
@@ -715,6 +774,11 @@ static void proc_output_cb (flux_subprocess_t *p, const char *stream)
         else
             llog_info (s, "%s[%d]: %s", label, (int)p->pid, buf);
     }
+    /* A waitable background process retains a bounded amount of its most
+     * recent output for delivery in the wait response (ignore EOF).
+     */
+    if (is_waitable (p) && len)
+        proc_retain_output (s, p, stream, buf, len);
     return;
 
 error:

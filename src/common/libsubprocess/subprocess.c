@@ -163,6 +163,8 @@ static void subprocess_free (flux_subprocess_t *p)
             sigchld_finalize ();
         }
 
+        json_decref (p->retained_output);
+
         free (p);
         errno = saved_errno;
     }
