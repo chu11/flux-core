@@ -133,6 +133,23 @@ static void binary_data (void)
     ok (len == sizeof (buffer),
         "len is correct");
     json_decref (o);
+
+    /* base64 of data whose length is not a multiple of 3 is padded with
+     * '=' characters.  Verify the NULL-data length query returns the exact
+     * decoded length rather than the padded buffer size.
+     */
+    for (int n = 13; n <= 14; n++) {
+        ok ((o = ioencode ("stdout", "1", buffer, n, false)) != NULL,
+            "ioencode of %d binary bytes works", n);
+        ok (json_unpack (o, "{s:s}", "encoding", &encoding) == 0
+            && streq (encoding, "base64"),
+            "ioencode used base64 encoding");
+        ok (iodecode (o, &stream, &rank, NULL, &len, &eof) == 0,
+            "iodecode length query succeeds");
+        ok (len == n,
+            "iodecode length query returns exact len %d (got %d)", n, len);
+        json_decref (o);
+    }
 }
 
 int main (int argc, char *argv[])

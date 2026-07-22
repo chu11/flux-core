@@ -116,8 +116,17 @@ static int decode_data_base64 (char *src,
         if (lenp)
             *lenp = rc;
     }
-    else if (lenp)
-        *lenp = size;
+    else if (lenp) {
+        /* Compute the exact decoded length without decoding: the base64
+         * buffer size overcounts by the number of '=' pad characters.
+         */
+        size_t npad = 0;
+        if (srclen >= 1 && src[srclen - 1] == '=')
+            npad++;
+        if (srclen >= 2 && src[srclen - 2] == '=')
+            npad++;
+        *lenp = size >= npad ? size - npad : 0;
+    }
     return 0;
 }
 
@@ -169,7 +178,10 @@ int iodecode (json_t *o,
     if (datap || lenp) {
         if (data) {
             if (encoding && streq (encoding, "base64")) {
-                if (decode_data_base64 (data, len, &bufp, &bin_len) < 0)
+                if (decode_data_base64 (data,
+                                        len,
+                                        datap ? &bufp : NULL,
+                                        &bin_len) < 0)
                     return -1;
             }
             else {
