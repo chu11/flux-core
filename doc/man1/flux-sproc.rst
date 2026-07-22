@@ -8,7 +8,7 @@ SYNOPSIS
 
 **flux** **sproc** *ps* [*-n*] [*--rank=RANK*] [*--service=SERVICE*] [*--format=FORMAT*]
 **flux** **sproc** *kill* [*-w*] [*--rank=RANK*] [*--service=SERVICE*] *SIGNUM* *PID|LABEL*
-**flux** **sproc** *wait* [*--rank=RANK*] [*--service=SERVICE*] *PID|LABEL*
+**flux** **sproc** *wait* [*-o*] [*--rank=RANK*] [*--service=SERVICE*] *PID|LABEL*
 
 
 DESCRIPTION
@@ -107,6 +107,12 @@ Wait for a waitable subprocess to complete and return its exit status.
 .. option:: -s, --service=NAME
 
    Wait via the specified service. The default is **rexec**.
+
+.. option:: -o, --output
+
+   Write any output retained by the server for the subprocess to stdout and
+   stderr, according to the stream of each output record. The amount of
+   retained output is server-defined and may be incomplete or empty.
 
 .. option:: PID|LABEL
 
