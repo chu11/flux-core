@@ -1473,6 +1473,87 @@ error:
         flux_log_error (h, "%s: flux_respond_error", __FUNCTION__);
 }
 
+static int barrier_respond (flux_t *h,
+                            const flux_msg_t *request,
+                            int errnum,
+                            const char *errstr)
+{
+    flux_msg_t *msg;
+    uint32_t matchtag;
+
+    if (flux_msg_get_matchtag (request, &matchtag) < 0
+        || !(msg = flux_msg_copy (request, false)))
+        return -1;
+    if (flux_msg_set_type (msg, FLUX_MSGTYPE_RESPONSE) < 0
+        || flux_msg_clear_flag (msg, FLUX_MSGFLAG_NORESPONSE) < 0
+        || flux_msg_set_matchtag (msg, matchtag) < 0
+        || (errnum && flux_msg_set_errnum (msg, errnum) < 0)
+        || (errstr && flux_msg_set_string (msg, errstr) < 0)
+        || flux_send_new (h, &msg, 0) < 0) {
+        flux_msg_destroy (msg);
+        return -1;
+    }
+    return 0;
+}
+
+int shell_barrier_respond (flux_t *h, const flux_msg_t *request, const char *s)
+{
+    return barrier_respond (h, request, 0, s);
+}
+
+int shell_barrier_respond_error (flux_t *h,
+                                 const flux_msg_t *request,
+                                 int errnum,
+                                 const char *errstr)
+{
+    if (errnum == 0)
+        errnum = EINVAL;
+    return barrier_respond (h, request, errnum, errstr);
+}
+
+/*  Handle a shell-barrier "enter" request from a job shell.  Look up the
+ *  job and dispatch to the exec implementation, which parks the request
+ *  until the barrier is released (see exec.c).  The reply is the barrier
+ *  exit status: an (empty) success response releases the shell, an error
+ *  response tells it to abort.
+ */
+static void shell_barrier_cb (flux_t *h,
+                              flux_msg_handler_t *mh,
+                              const flux_msg_t *msg,
+                              void *arg)
+{
+    struct job_exec_ctx *ctx = arg;
+    flux_jobid_t id;
+    struct jobinfo *job;
+    flux_error_t error;
+    const char *errmsg = NULL;
+
+    if (flux_request_unpack (msg, NULL, "{s:I}", "id", &id) < 0)
+        goto error;
+    if (!(job = zhashx_lookup (ctx->jobs, &id))) {
+        errprintf (&error, "job not found");
+        errmsg = error.text;
+        errno = ENOENT;
+        goto error;
+    }
+    if (flux_msg_authorize (msg, job->userid) < 0)
+        goto error;
+    if (!job->impl->barrier_enter) {
+        errprintf (&error,
+                   "%s does not support shell barrier",
+                   job->impl->name);
+        errmsg = error.text;
+        errno = ENOSYS;
+        goto error;
+    }
+    if (job->impl->barrier_enter (job, msg) < 0)
+        goto error;
+    return;
+error:
+    if (shell_barrier_respond_error (h, msg, errno, errmsg) < 0)
+        flux_log_error (h, "%s: error responding", __FUNCTION__);
+}
+
 static void expiration_cb (flux_t *h,
                            flux_msg_handler_t *mh,
                            const flux_msg_t *msg,
@@ -1905,6 +1986,11 @@ static const struct flux_msg_handler_spec htab[]  = {
     { FLUX_MSGTYPE_REQUEST,
       "job-exec.critical-ranks",
        critical_ranks_cb,
+       FLUX_ROLE_USER
+    },
+    { FLUX_MSGTYPE_REQUEST,
+      "job-exec.shell-barrier",
+       shell_barrier_cb,
        FLUX_ROLE_USER
     },
     { FLUX_MSGTYPE_REQUEST, "job-exec.expiration", expiration_cb, 0 },
