@@ -341,6 +341,51 @@ class TestSubprocessWait(unittest.TestCase):
         with self.assertRaises(OSError):
             subprocess.wait(h, label="wait-twice").get()
 
+    def test_wait_output_retained(self):
+        """Test wait returns output retained by the server"""
+        h = flux.Flux()
+        rpc = subprocess.rexec_bg(h, ["sh", "-c", "echo hello >&2"], waitable=True)
+        pid = rpc.get_pid()
+        wait_rpc = subprocess.wait(h, pid=pid)
+        wait_rpc.get_status()
+        output = wait_rpc.get_output()
+        self.assertIsInstance(output, list)
+        data = "".join(io["data"] for io in output if io.get("stream") == "stderr")
+        self.assertIn("hello", data)
+
+    def test_wait_output_empty(self):
+        """Test get_output returns empty list when no output retained"""
+        h = flux.Flux()
+        rpc = subprocess.rexec_bg(h, ["true"], waitable=True)
+        pid = rpc.get_pid()
+        wait_rpc = subprocess.wait(h, pid=pid)
+        wait_rpc.get_status()
+        self.assertEqual(wait_rpc.get_output(), [])
+
+    def test_wait_stdout_stderr_properties(self):
+        """Test .stdout/.stderr properties return retained output as bytes"""
+        h = flux.Flux()
+        rpc = subprocess.rexec_bg(
+            h, ["sh", "-c", "echo out; echo err >&2"], waitable=True
+        )
+        pid = rpc.get_pid()
+        wait_rpc = subprocess.wait(h, pid=pid)
+        wait_rpc.get_status()
+        self.assertIsInstance(wait_rpc.stdout, bytes)
+        self.assertIsInstance(wait_rpc.stderr, bytes)
+        self.assertIn(b"out", wait_rpc.stdout)
+        self.assertIn(b"err", wait_rpc.stderr)
+
+    def test_wait_stdout_stderr_empty(self):
+        """Test .stdout/.stderr return empty bytes when no output retained"""
+        h = flux.Flux()
+        rpc = subprocess.rexec_bg(h, ["true"], waitable=True)
+        pid = rpc.get_pid()
+        wait_rpc = subprocess.wait(h, pid=pid)
+        wait_rpc.get_status()
+        self.assertEqual(wait_rpc.stdout, b"")
+        self.assertEqual(wait_rpc.stderr, b"")
+
     def test_wait_alternate_service(self):
         h = flux.Flux()
         with self.assertRaises(OSError) as ctx:
