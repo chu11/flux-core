@@ -11,6 +11,7 @@
 #ifndef _SUBPROCESS_PRIVATE_H
 #define _SUBPROCESS_PRIVATE_H
 
+#include <jansson.h>
 #include <flux/idset.h>
 #include "src/common/libczmqcontainers/czmq_containers.h"
 #include "subprocess.h"
@@ -122,6 +123,8 @@ struct flux_subprocess {
     const flux_msg_t *waiter;   /* subprocess wait request */
     int rexec_flags;            /* RFC 42 exec 'flags' proc was started with */
     bool attached;              /* a client is attached to this bg process */
+    json_t *retained_output;    /* array of recent io objects (waitable bg) */
+    size_t retained_bytes;      /* running total of retained data bytes */
 };
 
 void subprocess_check_completed (flux_subprocess_t *p);

@@ -231,6 +231,11 @@ flux_future_t *flux_rexec_bg (flux_t *h,
  * The future will be fulfilled with the RPC payload `{"status":i}` on
  * process completion, or with an error response if there is an error, and
  * may be unpacked with `flux_rpc_get_unpack(3)`.
+ *
+ * The payload MAY also contain an optional "output" key: an array of RFC 42
+ * I/O objects holding a bounded amount of the subprocess's most recent
+ * output retained by the server.  The retained output MAY be incomplete and
+ * the key is absent if the server retained none.
  */
 flux_future_t *flux_rexec_wait (flux_t *h,
                                 const char *service_name,

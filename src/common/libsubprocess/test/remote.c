@@ -979,6 +979,149 @@ void background_waitable_test (flux_t *h)
     bg_test (h, "stdin-eof", 1, cmd_cat, 0, false);
 }
 
+/* Concatenate the "data" of all retained io objects matching 'stream' in the
+ * wait response "output" array into 'buf' (NUL terminated).  Returns the
+ * number of matching io objects, or -1 if the output key is absent.
+ */
+static int collect_output (json_t *output, const char *stream, char *buf, size_t bufsize)
+{
+    size_t i;
+    int count = 0;
+
+    buf[0] = '\0';
+    if (!output)
+        return -1;
+    for (i = 0; i < json_array_size (output); i++) {
+        const char *s;
+        char *data = NULL;
+        int len = 0;
+        if (iodecode (json_array_get (output, i), &s, NULL, &data, &len, NULL) < 0)
+            continue;
+        if (data && streq (s, stream)) {
+            size_t used = strlen (buf);
+            if (used + len < bufsize) {
+                memcpy (buf + used, data, len);
+                buf[used + len] = '\0';
+            }
+            count++;
+        }
+        free (data);
+    }
+    return count;
+}
+
+/* Start a waitable background subprocess that emits known output, wait for
+ * it, and verify the retained output is returned in the wait response.
+ */
+void background_output_test (flux_t *h)
+{
+    char *av[] = { TEST_SUBPROCESS_DIR "test_echo", "-E", "foo", "bar", NULL };
+    flux_cmd_t *cmd;
+    flux_future_t *f;
+    int status = -1;
+    json_t *output = NULL;
+    char errbuf[1024];
+    int rc;
+
+    if (!(cmd = flux_cmd_create (ARRAY_SIZE (av) - 1, av, environ)))
+        BAIL_OUT ("flux_cmd_create failed");
+    ok (flux_cmd_set_label (cmd, "output") == 0,
+        "output: set cmd label");
+    f = flux_rexec_bg (h,
+                       SERVER_NAME,
+                       FLUX_NODEID_ANY,
+                       FLUX_SUBPROCESS_FLAGS_WAITABLE,
+                       cmd);
+    flux_cmd_destroy (cmd);
+    if (!f)
+        BAIL_OUT ("output: flux_rexec_bg failed");
+    ok (flux_rpc_get (f, NULL) == 0,
+        "output: flux_rexec_bg returned success");
+    flux_future_destroy (f);
+
+    f = flux_rexec_wait (h, SERVER_NAME, FLUX_NODEID_ANY, -1, "output");
+    if (!f)
+        BAIL_OUT ("output: flux_rexec_wait failed");
+    ok (flux_rpc_get_unpack (f, "{s:i s?o}", "status", &status, "output", &output) == 0,
+        "output: wait response unpacked");
+    ok (status == 0,
+        "output: exited 0 (got 0x%04x)", status);
+    rc = collect_output (output, "stderr", errbuf, sizeof (errbuf));
+    ok (rc > 0,
+        "output: wait response contains stderr output (%d objects)", rc);
+    ok (streq (errbuf, "foo\nbar\n"),
+        "output: retained stderr is correct (got '%s')", errbuf);
+    flux_future_destroy (f);
+}
+
+/* Emit far more output than RETAINED_OUTPUT_MAX and verify the wait response
+ * retains only a bounded, most-recent tail: the last line survives, the first
+ * is evicted, and the total retained data does not greatly exceed the cap.
+ */
+void background_output_cap_test (flux_t *h)
+{
+    /* NLINES args x ~LINELEN bytes each greatly exceeds the 8192 byte cap. */
+#define NLINES 40
+#define LINELEN 500
+    char lines[NLINES][LINELEN + 1];
+    char *av[NLINES + 3];
+    flux_cmd_t *cmd;
+    flux_future_t *f;
+    json_t *output = NULL;
+    char outbuf[65536];
+    int status = -1;
+    int i;
+
+    av[0] = TEST_SUBPROCESS_DIR "test_echo";
+    av[1] = "-O";
+    for (i = 0; i < NLINES; i++) {
+        /* Each line is "L<nnnnn>" followed by 'x' padding to LINELEN. */
+        int n = snprintf (lines[i], sizeof (lines[i]), "L%05d", i);
+        memset (lines[i] + n, 'x', LINELEN - n);
+        lines[i][LINELEN] = '\0';
+        av[i + 2] = lines[i];
+    }
+    av[NLINES + 2] = NULL;
+
+    if (!(cmd = flux_cmd_create (NLINES + 2, av, environ)))
+        BAIL_OUT ("flux_cmd_create failed");
+    ok (flux_cmd_set_label (cmd, "cap") == 0,
+        "cap: set cmd label");
+    f = flux_rexec_bg (h,
+                       SERVER_NAME,
+                       FLUX_NODEID_ANY,
+                       FLUX_SUBPROCESS_FLAGS_WAITABLE,
+                       cmd);
+    flux_cmd_destroy (cmd);
+    if (!f)
+        BAIL_OUT ("cap: flux_rexec_bg failed");
+    ok (flux_rpc_get (f, NULL) == 0,
+        "cap: flux_rexec_bg returned success");
+    flux_future_destroy (f);
+
+    f = flux_rexec_wait (h, SERVER_NAME, FLUX_NODEID_ANY, -1, "cap");
+    if (!f)
+        BAIL_OUT ("cap: flux_rexec_wait failed");
+    ok (flux_rpc_get_unpack (f,
+                             "{s:i s?o}",
+                             "status", &status,
+                             "output", &output) == 0,
+        "cap: wait response unpacked");
+    ok (status == 0,
+        "cap: exited 0 (got 0x%04x)", status);
+    (void)collect_output (output, "stdout", outbuf, sizeof (outbuf));
+    ok (strstr (outbuf, "L00039") != NULL,
+        "cap: most recent line retained");
+    ok (strstr (outbuf, "L00000") == NULL,
+        "cap: oldest line evicted");
+    ok (strlen (outbuf) <= 8192 + LINELEN + 1,
+        "cap: retained output bounded near cap (got %zu bytes)",
+        strlen (outbuf));
+    flux_future_destroy (f);
+#undef NLINES
+#undef LINELEN
+}
+
 /* Per RFC 42, the write-credit and stdio-fallthrough flags request input
  * handling and are not permitted in background mode.  Send raw exec RPCs to
  * verify each is rejected.
@@ -1082,6 +1225,10 @@ int main (int argc, char *argv[])
     sigstop_test (h);
     diag ("background_test");
     background_waitable_test (h);
+    diag ("background_output_test");
+    background_output_test (h);
+    diag ("background_output_cap_test");
+    background_output_cap_test (h);
     diag ("background_input_reject_test");
     background_input_reject_test (h);
     diag ("attach_test");

@@ -8,6 +8,7 @@
 # SPDX-License-Identifier: LGPL-3.0
 ###############################################################
 
+import base64
 import json
 import os
 import threading
@@ -228,6 +229,63 @@ class SubprocessWaitRPC(RPC):
                 os.WEXITSTATUS(), etc.
         """
         return self.get()["status"]
+
+    def get_output(self):
+        """
+        Return output retained by the server for a background subprocess.
+
+        The server may retain a bounded, possibly incomplete amount of the
+        most recent output produced by a waitable background subprocess. Each
+        element is an RFC 42 I/O object (a dict with keys ``stream``, ``rank``,
+        ``data``, and optionally ``encoding``). The list is empty if the server
+        retained no output.
+
+        Returns:
+            list: retained I/O objects in the order produced
+        """
+        return self.get().get("output", [])
+
+    def _stream_bytes(self, stream):
+        """Concatenate the decoded data of retained I/O objects for a stream."""
+        result = b""
+        for io in self.get_output():
+            if io.get("stream") != stream:
+                continue
+            data = io.get("data")
+            if data is None:
+                continue
+            if io.get("encoding") == "base64":
+                data = base64.b64decode(data)
+            else:
+                data = data.encode("utf-8", errors="surrogateescape")
+            result += data
+        return result
+
+    @property
+    def stdout(self):
+        """Retained standard output as bytes.
+
+        This concatenates the ``data`` of all retained stdout I/O objects,
+        matching the familiar interface of :obj:`subprocess.CompletedProcess`.
+        The result may be empty if the server retained no stdout.
+
+        Returns:
+            bytes: retained standard output
+        """
+        return self._stream_bytes("stdout")
+
+    @property
+    def stderr(self):
+        """Retained standard error as bytes.
+
+        This concatenates the ``data`` of all retained stderr I/O objects,
+        matching the familiar interface of :obj:`subprocess.CompletedProcess`.
+        The result may be empty if the server retained no stderr.
+
+        Returns:
+            bytes: retained standard error
+        """
+        return self._stream_bytes("stderr")
 
 
 def wait(

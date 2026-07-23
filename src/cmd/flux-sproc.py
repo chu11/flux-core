@@ -9,6 +9,7 @@
 # SPDX-License-Identifier: LGPL-3.0
 ###############################################################
 
+import base64
 import errno
 import logging
 import os
@@ -45,6 +46,27 @@ def pid_or_label(arg):
     except ValueError:
         # arg is not an integer
         return None, str(arg)
+
+
+def print_output(output):
+    """
+    Write retained I/O objects to stdout/stderr by stream.
+
+    Each object is an RFC 42 I/O object as returned by the wait RPC. Data is
+    written to the file object matching its stream ("stdout" to stdout,
+    anything else to stderr) so that streams can be redirected independently.
+    """
+    for io in output:
+        data = io.get("data")
+        if data is None:
+            continue
+        if io.get("encoding") == "base64":
+            data = base64.b64decode(data)
+        else:
+            data = data.encode("utf-8", errors="surrogateescape")
+        fp = sys.stdout if io.get("stream") == "stdout" else sys.stderr
+        fp.buffer.write(data)
+        fp.buffer.flush()
 
 
 def kill(args):
@@ -90,7 +112,10 @@ def wait(args):
         rpc = subprocess.wait(
             h, pid=pid, label=label, service=args.service, nodeid=args.rank
         )
-        exit_with_status(rpc.get_status())
+        status = rpc.get_status()
+        if args.output:
+            print_output(rpc.get_output())
+        exit_with_status(status)
     except OSError as exc:
         LOGGER.error(f"wait: {exc}")
         sys.exit(1)
@@ -164,6 +189,12 @@ def main():
     wait_parser = subparsers.add_parser(
         "wait",
         parents=[common_parser],
+    )
+    wait_parser.add_argument(
+        "-o",
+        "--output",
+        action="store_true",
+        help="write any output retained by the server to stdout/stderr",
     )
     wait_parser.add_argument("pid")
     wait_parser.set_defaults(func=wait)

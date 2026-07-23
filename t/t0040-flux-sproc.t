@@ -162,6 +162,25 @@ test_expect_success 'flux sproc wait on already-reaped process fails' '
 	flux sproc wait already-reaped &&
 	test_must_fail flux sproc wait already-reaped 2>wait-reaped.err
 '
+test_expect_success 'flux sproc wait --output returns retained stderr' '
+	flux exec -r 0 --bg --waitable --label=wait-out \
+		sh -c "echo hello >&2" &&
+	flux sproc wait -o wait-out 2>wait-out.err &&
+	grep hello wait-out.err
+'
+test_expect_success 'flux sproc wait --output routes stdout to stdout' '
+	flux exec -r 0 --bg --waitable --label=wait-out2 \
+		sh -c "echo tothestdout" &&
+	flux sproc wait -o wait-out2 >wait-out2.out 2>wait-out2.err &&
+	grep tothestdout wait-out2.out &&
+	test_must_fail grep tothestdout wait-out2.err
+'
+test_expect_success 'flux sproc wait without --output suppresses retained output' '
+	flux exec -r 0 --bg --waitable --label=wait-noout \
+		sh -c "echo quiet >&2" &&
+	flux sproc wait wait-noout 2>wait-noout.err &&
+	test_must_fail grep quiet wait-noout.err
+'
 test_expect_success 'flux sproc with --service option works' '
 	flux sproc ps --service rexec >service-rexec.out &&
 	test_debug "cat service-rexec.out"
