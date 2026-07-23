@@ -162,4 +162,40 @@ test_expect_success 'updates are reenabled' '
 	  | grep jobspec-update \
 	  | grep attributes.system.queue=\"batch\"
 '
+#
+# Test that queue config changes are picked up on reload.
+# The debug queue initially requires property "debug". We reload
+# config changing it to require property "batch" instead. A job
+# updated into the debug queue after reload must pick up the new
+# constraint ("batch"), not the stale one ("debug").
+#
+test_expect_success 'reload config: change debug queue requires to batch property' '
+	flux config load <<-EOT
+	[queues.batch]
+	requires = [ "batch" ]
+	policy.limits.duration = "1h"
+	policy.jobspec.defaults.system.duration = "1h"
+
+	[queues.debug]
+	requires = [ "batch" ]
+	policy.limits.duration = "1m"
+	policy.jobspec.defaults.system.duration = "1m"
+
+	[queues.other]
+
+	[policy.jobspec.defaults.system]
+	queue = "batch"
+	EOT
+'
+test_expect_success 'queue update uses refreshed requires after reload' '
+	jobid=$(flux submit -t 1m --urgency=hold -q other hostname) &&
+	flux update --wait $jobid queue=debug &&
+	test_debug "flux job info $jobid jobspec | jq .attributes.system.constraints" &&
+	flux job info $jobid jobspec \
+	  | jq -e ".attributes.system.constraints.properties == [\"batch\"]"
+'
+test_expect_success 'cleanup: cancel held job' '
+	flux cancel $jobid &&
+	flux job wait-event $jobid clean
+'
 test_done
