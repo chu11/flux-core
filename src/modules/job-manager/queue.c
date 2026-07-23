@@ -542,12 +542,21 @@ static int queue_configure (const flux_conf_t *conf,
          * named queues default to being enabled/stopped.  On initial
          * module load, job-manager may change that state based on
          * prior checkpointed information.
+         * For queues that already exist, refresh config-derived state
+         * (currently only q->requires) from the new config entry.
          */
         json_object_foreach (queues, name, value) {
-            if (!zhashx_lookup (qctx->named, name)) {
+            if (!(q = zhashx_lookup (qctx->named, name))) {
                 if (!(q = queue_create (name, value)))
                     goto nomem;
                 (void)zhashx_insert (qctx->named, name, q);
+            }
+            else {
+                json_t *requires = NULL;
+                if (json_unpack (value, "{s?O}", "requires", &requires) < 0)
+                    goto nomem;
+                json_decref (q->requires);
+                q->requires = requires;
             }
         }
     }
